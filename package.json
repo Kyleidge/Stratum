@@ -1,9 +1,9 @@
 {
-  "name": "sites-project",
+  "name": "stratus-workbench",
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "dev": "vinext dev",
@@ -11,13 +11,14 @@
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts",
+    "desktop:build": "vite build --config desktop/vite.config.ts",
+    "desktop": "pnpm desktop:build && electron desktop/main.mjs",
+    "desktop:smoke": "electron desktop/main.mjs --smoke",
+    "desktop:package": "pnpm desktop:build && node desktop/package.mjs"
   },
   "dependencies": {
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
-    "react-server-dom-webpack": "19.2.6",
-    "vinext": "1.0.0-beta.5",
     "@base-ui/react": "1.7.0",
     "@shadcn/react": "0.3.0",
     "class-variance-authority": "0.7.1",
@@ -27,16 +28,21 @@
     "embla-carousel-react": "8.5.2",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
+    "react": "19.2.6",
     "react-day-picker": "9.8.1",
+    "react-dom": "19.2.6",
     "react-resizable-panels": "4.5.8",
+    "react-server-dom-webpack": "19.2.6",
     "recharts": "3.8.0",
     "shadcn": "4.18.0",
     "tailwind-merge": "3.6.0",
-    "tw-animate-css": "1.4.0"
+    "tw-animate-css": "1.4.0",
+    "vinext": "1.0.0-beta.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
+    "@electron/packager": "20.3.0",
     "@openai/sites-vite-plugin": "0.2.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -44,6 +50,8 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "electron": "44.2.0",
+    "fake-indexeddb": "6.2.5",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",

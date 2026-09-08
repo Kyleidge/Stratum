@@ -1,92 +1,71 @@
-# Stratum
+# Stratus
 
-A React/TypeScript Sites starter using vinext, Vite, Tailwind CSS v4, and
-Cloudflare Workers. The current homepage is a placeholder; application features
-have not yet been implemented. See AGENTS.md for architecture and conventions.
+A desktop workbench for immutable measurement signals and traceable time-series
+analysis. The included synthetic dyno recording contains three engine ramps.
+Its segments, brake power, fuel use, and specific fuel consumption are calculated
+by the same engine that processes imported recordings.
 
-## Local setup
+## Run
 
-Install Git, Node.js >=22.13.0, and pnpm 11.19.0. If pnpm is not installed:
+Use Node 24 and pnpm 11.19.0 in this local checkout:
 
-```sh
-npm install --global pnpm@11.19.0
-```
-
-From the project directory:
-
-```sh
+```powershell
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm exec install-electron
+pnpm desktop
 ```
 
-On the first install, pnpm may report `ERR_PNPM_IGNORED_BUILDS` for the native
-packages esbuild, sharp, and workerd. Run `pnpm approve-builds`, review the pending
-packages, and select those three if you approve their installation scripts. Then
-rerun `pnpm install --frozen-lockfile`. Keep any resulting project build-approval
-configuration in Git so both computers use the reviewed policy. Do not enable
-all dependency scripts globally.
+For a browser preview, run `pnpm dev` and open its printed local URL. The desktop
+build uses bundled assets and works offline. Browser and desktop workspaces have
+separate local storage.
 
-Open the local URL printed by the development server. No application secrets are
-currently required. Keep any future .env or .dev.vars files local and untracked.
+Create a portable desktop build with `pnpm desktop:package`. On Windows, launch
+`build/releases/Stratus-win32-x64/Stratus.exe`. Keep the entire output folder
+alongside the executable. Packaging on macOS/Linux produces the corresponding
+native bundle. Packages are unsigned development builds.
 
-```sh
-pnpm lint
+## Explore
+
+1. Open **Full recording** to view the three synchronized channels and ramps.
+2. Select any raw signal in **Signal Explorer** to inspect it.
+3. Select **Segment**, use the raw speed input, and configure detection parameters.
+4. Select a segment, then **Filter**, **Calculate**, or **Transform time**.
+   Applying a function creates a new node in the explorer, including when its
+   input is itself derived.
+5. Use **Compare ramps** for a time-aligned overlay, **Data table** for samples,
+   and **Lineage** for the dependency graph.
+6. **Export results** downloads summary statistics and parent IDs as CSV.
+
+Import comma-separated UTF-8 files with time in seconds in the first column.
+Use units in square brackets to enable automatic engineering calculations:
+
+```csv
+Time [s],Engine speed [rpm],Torque [Nm],Fuel flow [kg/h]
+0.00,1500,210,8.4
+0.01,1502,211,8.5
+```
+
+Times must be strictly increasing; empty signal cells remain missing. Imports
+are processed locally in chunks and saved in IndexedDB. Clearing application
+storage deletes that workspace; project backup/interchange is not implemented.
+
+## Validate
+
+```powershell
+pnpm test
 pnpm typecheck
+pnpm lint
 pnpm exec oxfmt --check
 pnpm build
-pnpm start
+pnpm desktop:build
+pnpm desktop:smoke
 ```
 
-`pnpm start` previews the completed build with Wrangler; build first. There is
-currently no automated test suite. `pnpm format` rewrites formatting.
+The test suite exercises numerical results and storage behavior; the native smoke
+check runs the worker and IndexedDB inside a hidden Electron window. The original
+starter has 19 lint issues in its unused UI primitives and mobile hook. New
+application code is checked separately as well.
 
-Initial setup validation: TypeScript passed. Oxlint reported 19 existing issues
-in the starter components and mobile hook. These remain to be addressed during
-application development; the Git setup does not change the app's behavior.
-
-## Working on two computers
-
-Use a separate local clone on each computer, such as a folder under your user
-profile. The original project lives on a network share, which rejects pnpm's
-symlinks. Install dependencies in each local clone rather than sharing them.
-
-Install GitHub CLI for the following commands. After the private GitHub repository
-has been created, sign in to GitHub CLI on
-each computer with an account that can access it:
-
-```sh
-gh auth login --hostname github.com --git-protocol https --web
-gh repo clone OWNER/Stratum
-cd Stratum
-pnpm install --frozen-lockfile
-```
-
-Replace OWNER with the actual GitHub repository owner. Clone into a new local
-folder; preserve the original folder until all work is committed and pushed.
-
-Before starting work in a clean checkout:
-
-```sh
-git status
-git switch main
-git pull --ff-only
-pnpm install --frozen-lockfile
-```
-
-Before changing computers, review and commit the intended files, then push:
-
-```sh
-git diff
-git add <files-you-changed>
-git diff --cached
-git commit -m "Describe the change"
-git push
-```
-
-Uncommitted files do not travel through GitHub. Pull on the other computer before
-editing. Use separate feature branches for simultaneous work. If a fast-forward
-pull fails, reconcile the branches without discarding work or force-pushing.
-
-Commit dependency changes with pnpm-lock.yaml. Keep credentials on each computer
-outside Git. The tracked .openai/hosting.json contains non-secret configuration
-required by Vite, so preserve it in clones.
+See [architecture and limitations](docs/architecture.md) for the processing model,
+units, algorithm details, and path toward multi-gigabyte workloads. This is an
+initial functional prototype, not a complete NI DIAdem replacement.
