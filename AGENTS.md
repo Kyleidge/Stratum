@@ -80,10 +80,35 @@ validation failures and environmental blockers rather than hiding them.
 
 ## Git workflow
 
-Apply this workflow automatically for every task. The user authorizes committing
-and pushing the relevant changes from successful tasks; do not ask again solely
-for those routine Git operations. Follow the active Codex permission controls and
-report any authentication or approval blocker. AGENTS.md does not override them.
+Apply this workflow automatically to the primary agent and every delegated agent.
+After each completed action that changes repository files, commit and push its
+relevant changes before reporting success. A completed action is a coherent
+requested change with its applicable validation complete. Do not wait for the
+user to request syncing or defer finished changes until an unrelated task ends.
+Read-only actions and actions with no file changes do not need an empty commit.
+
+The user authorizes these routine commits and pushes; do not ask again solely for
+them. Follow the active Codex permission controls and report any authentication or
+approval blocker. AGENTS.md does not override those controls.
+
+### Agent coordination and completion
+
+- Include this Git workflow in delegated instructions. Every agent must report
+  its changed files and validation results to the coordinating agent.
+- When agents share a checkout, the coordinating agent owns all staging, commits,
+  rebases, and pushes. Serialize those operations so agents cannot commit each
+  other's unfinished work or race to update the same branch. Subagents hand off
+  their completed changes as ready for coordinator commit/push, then stop editing
+  those files until the coordinating agent confirms the handoff is committed.
+- An agent working in an independent checkout follows the same workflow for its
+  own branch and reports the final commit hash and push result.
+- A delegated change is ready for integration when handed off; its repository
+  workflow is complete only after the coordinator confirms its commit and push,
+  or reports a specific blocker. Do not silently leave finished changes unsynced.
+- Before reporting a successful push, verify that the pushed commit is present on
+  the intended remote branch. Always include the final commit hash and push result
+  in the completion report. If checks, conflicts, authentication, or permissions
+  block safe completion, preserve the work and report the blocker instead.
 
 ### At the beginning of every task
 
@@ -103,7 +128,7 @@ report any authentication or approval blocker. AGENTS.md does not override them.
    pull/rebase, and tell the user. Continue only task work that can safely coexist
    with those changes.
 
-### At the end of every successful task that changed files
+### At the end of every completed action that changed files
 
 1. Run the project's tests/checks appropriate to the change. Read the current
    package scripts rather than assuming an old command is still correct. For a
