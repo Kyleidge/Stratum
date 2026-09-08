@@ -1,0 +1,65 @@
+# Dependencies and package-manager caches (keep lockfiles tracked)
+node_modules/
+.pnpm-store/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Builds, test output, and caches
+.next/
+.vinext/
+out/
+build/
+dist/
+coverage/
+.vite/
+.turbo/
+.cache/
+*.tsbuildinfo
+next-env.d.ts
+playwright-report/
+test-results/
+
+# Local environment and credentials; no .env files belong in Git
+.env*
+.dev.vars*
+.npmrc
+.netrc
+.pypirc
+credentials.json
+secrets.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Local deployment state and scratch output
+.vercel/
+.wrangler/
+outputs/
+work/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Machine-specific editor, Codex, and OS state
+.codex/
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
