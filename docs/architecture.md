@@ -53,6 +53,9 @@ or disk-backed multiresolution plot pyramid yet.
   BSFC. Fuel used is integrated kg/h × seconds / 3.6, expressed in grams.
 - Moving average: trailing sample window with a rolling sum/count. State spans
   storage chunk boundaries; missing samples are excluded.
+- Median, exponential smoothing, and first-order low-pass/high-pass RC filters
+  also retain state across chunks. RC filters use actual sample intervals.
+  See [filter parameters and gap semantics](filters.md) for their contracts.
 - Scale, offset, absolute value, backward derivative, and cumulative trapezoidal
   integral. Integral skips invalid intervals and exposes missing output at gaps;
   its unit explicitly includes seconds.
@@ -120,8 +123,8 @@ multi-gigabyte throughput, peak memory, and arbitrary-depth pipelines have not
 been benchmarked or certified. The first next step for production scale should
 be an on-disk summary pyramid, job prioritization, and a native columnar store.
 
-The starter includes ten selectable operations plus explicit power and BSFC.
-FFT, advanced filters, general formula parsing, arbitrary source generation,
+The workbench includes fourteen selectable operations plus explicit power and BSFC.
+FFT, higher-order filters, general formula parsing, arbitrary source generation,
 native TDMS/MDF import, signed installers, project interchange/backup, and plugin
 execution are not implemented. No user data is uploaded by analysis operations.
 

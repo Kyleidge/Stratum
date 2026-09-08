@@ -1,4 +1,5 @@
 import { CsvParser, Envelope, RollingMean, bsfc, power } from './signal-math';
+import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
 import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
@@ -422,6 +423,16 @@ export class SignalEngine {
     const mean = new RollingMean(
       n.operation === 'smooth' ? n.parameters.value : 1,
     );
+    const median =
+      n.operation === 'median' ? new RollingMedian(n.parameters.value) : null;
+    const exponential =
+      n.operation === 'exponential'
+        ? new ExponentialSmoother(n.parameters.value)
+        : null;
+    const rc =
+      n.operation === 'low-pass' || n.operation === 'high-pass'
+        ? new RcFilter(n.parameters.value, n.operation)
+        : null;
     let previous: Point | undefined;
     let integrated = 0;
     let gridIndex = 0;
@@ -444,6 +455,16 @@ export class SignalEngine {
             break;
           case 'smooth':
             value = mean.next(input);
+            break;
+          case 'median':
+            value = median!.next(input);
+            break;
+          case 'exponential':
+            value = exponential!.next(input);
+            break;
+          case 'low-pass':
+          case 'high-pass':
+            value = rc!.next(t, input);
             break;
           case 'scale':
             value *= n.parameters.value;
@@ -536,6 +557,15 @@ export class SignalEngine {
       (!Number.isInteger(value) || value < 1 || value > 100000)
     )
       throw new Error('Window must be 1–100,000 samples.');
+    if (
+      operation === 'median' &&
+      (!Number.isInteger(value) || value < 1 || value > 1001)
+    )
+      throw new Error('Median window must be 1–1,001 whole samples.');
+    if (operation === 'exponential' && (value <= 0 || value > 1))
+      throw new Error('Smoothing factor must be greater than 0 and at most 1.');
+    if ((operation === 'low-pass' || operation === 'high-pass') && value <= 0)
+      throw new Error('Cutoff frequency must be greater than 0 Hz.');
     if (operation === 'resample' && (value < 0.01 || value > 10000))
       throw new Error('Sample rate must be 0.01–10,000 Hz.');
     if (
@@ -547,6 +577,10 @@ export class SignalEngine {
       );
     const labels: Partial<Record<Operation, string>> = {
       smooth: 'Smoothed',
+      median: 'Median filtered',
+      exponential: 'Exponentially smoothed',
+      'low-pass': 'Low-pass filtered',
+      'high-pass': 'High-pass filtered',
       scale: 'Scaled',
       offset: 'Offset',
       absolute: 'Absolute',

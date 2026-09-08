@@ -81,6 +81,9 @@ type FunctionSpec = {
   parameter: string;
   defaultValue: number;
   unit: string;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 const FUNCTIONS: FunctionSpec[] = [
   {
@@ -102,6 +105,57 @@ const FUNCTIONS: FunctionSpec[] = [
     parameter: 'Window size',
     defaultValue: 25,
     unit: 'samples',
+    min: 1,
+    max: 100000,
+    step: 1,
+  },
+  {
+    operation: 'median',
+    name: 'Median filter',
+    category: 'Filtering',
+    description:
+      'Reject spikes with a trailing window of 1–1,001 samples. Uses available samples at the start and excludes missing values, filling gaps while the window has data.',
+    parameter: 'Window size',
+    defaultValue: 5,
+    unit: 'samples',
+    min: 1,
+    max: 1001,
+    step: 1,
+  },
+  {
+    operation: 'exponential',
+    name: 'Exponential smoothing',
+    category: 'Filtering',
+    description:
+      'Weight each new sample by alpha (0 < alpha ≤ 1). Smaller values smooth more; 1 leaves values unchanged. Restarts after missing samples.',
+    parameter: 'Smoothing factor',
+    defaultValue: 0.2,
+    unit: 'α',
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
+  {
+    operation: 'low-pass',
+    name: 'Low-pass RC filter',
+    category: 'Filtering',
+    description:
+      'Reduce fast changes with a first-order RC filter using actual sample intervals. Starts at the input value and restarts after missing samples. Cutoff must be positive.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 5,
+    unit: 'Hz',
+    min: 0,
+  },
+  {
+    operation: 'high-pass',
+    name: 'High-pass RC filter',
+    category: 'Filtering',
+    description:
+      'Remove slow changes and DC offset with a first-order RC filter using actual sample intervals. Starts at zero and restarts after missing samples. Cutoff must be positive.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 1,
+    unit: 'Hz',
+    min: 0,
   },
   {
     operation: 'scale',
@@ -1290,6 +1344,9 @@ export default function Workbench() {
                         id="function-parameter"
                         type="number"
                         value={parameter}
+                        min={spec.min}
+                        max={spec.max}
+                        step={spec.step ?? 'any'}
                         onChange={(e) => setParameter(e.target.value)}
                       />
                       <span>{spec.unit}</span>
@@ -1542,7 +1599,8 @@ export default function Workbench() {
           ) : dialog === 'functions' ? (
             <>
               <DialogTitle>
-                Function library <span className="count-badge">10</span>
+                Function library{' '}
+                <span className="count-badge">{FUNCTIONS.length}</span>
               </DialogTitle>
               <DialogDescription>
                 Select a function, then configure it in the inspector. Every
@@ -1634,9 +1692,9 @@ export default function Workbench() {
                 Multi-gigabyte throughput has not yet been benchmarked.
               </p>
               <p className="help-note">
-                The library currently includes ten operations. FFT, advanced
-                digital filters, native file formats, plugin execution, and
-                project interchange are future work.
+                The library currently includes {FUNCTIONS.length} operations.
+                FFT, higher-order digital filters, native file formats, plugin
+                execution, and project interchange are future work.
               </p>
             </>
           )}
