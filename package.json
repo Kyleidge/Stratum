@@ -13,6 +13,7 @@
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
     "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts",
+    "test:preview": "electron tests/preview-worker-smoke.mjs",
     "desktop:build": "vite build --config desktop/vite.config.ts",
     "desktop": "pnpm desktop:build && electron desktop/main.mjs",
     "desktop:smoke": "electron desktop/main.mjs --smoke",

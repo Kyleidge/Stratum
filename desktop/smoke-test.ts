@@ -1,11 +1,9 @@
 import type { EngineResponse } from '@/lib/signal-types';
+import { createSignalWorker } from '@/lib/create-signal-worker';
 
 // Native Chromium integration: real worker, IndexedDB persistence, and evaluated results.
 export async function smokeTest() {
-  const worker = new Worker(
-    new URL('../lib/signal.worker.ts', import.meta.url),
-    { type: 'module' },
-  );
+  const worker = createSignalWorker();
   const timeout = setTimeout(() => {
     console.error('STRATUS_SMOKE_FAILED: Engine timed out');
     worker.terminate();

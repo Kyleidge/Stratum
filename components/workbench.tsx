@@ -58,6 +58,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import SignalChart, { formatValue } from '@/components/signal-chart';
+import { createSignalWorker } from '@/lib/create-signal-worker';
 import type {
   EngineRequest,
   EngineResponse,
@@ -284,10 +285,7 @@ export default function Workbench() {
     [],
   );
   useEffect(() => {
-    const instance = new Worker(
-      new URL('../lib/signal.worker.ts', import.meta.url),
-      { type: 'module' },
-    );
+    const instance = createSignalWorker();
     worker.current = instance;
     instance.onmessage = (event: MessageEvent<EngineResponse>) => {
       const r = event.data;

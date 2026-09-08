@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, net, protocol, session } from 'electron';
 import { resolve, relative, isAbsolute, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 app.setName('Stratus');
 protocol.registerSchemesAsPrivileged([
@@ -15,10 +17,16 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 const root = fileURLToPath(new URL('../dist-desktop/', import.meta.url));
-const singleInstance = app.requestSingleInstanceLock();
+const smoke = process.argv.includes('--smoke');
+if (smoke)
+  app.setPath(
+    'userData',
+    mkdtempSync(resolve(tmpdir(), 'stratus-native-smoke-')),
+  );
+// A running user app must not cause a smoke test to exit without testing.
+const singleInstance = smoke || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 let window;
-const smoke = process.argv.includes('--smoke');
 if (smoke)
   setTimeout(() => {
     process.stderr.write('Desktop startup or integration test timed out.\n');

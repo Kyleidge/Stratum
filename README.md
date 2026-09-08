@@ -53,6 +53,7 @@ storage deletes that workspace; project backup/interchange is not implemented.
 
 ```powershell
 pnpm test
+pnpm test:preview # Requires pnpm dev running on localhost:3000
 pnpm typecheck
 pnpm lint
 pnpm exec oxfmt --check

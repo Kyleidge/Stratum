@@ -18,6 +18,9 @@ device; there are no server API routes or cloud signal uploads.
   evaluation, segmentation, and summary exports. `signal-math.ts` holds numerical
   helpers; `signal-types.ts` defines the domain and worker protocol.
 - `lib/signal.worker.ts`: serialized processing away from the UI thread.
+- `lib/create-signal-worker.ts`: shared Vite worker factory. Use its explicit
+  `?worker` import; vinext's source-identity rewrite makes application
+  `import.meta.url` unsuitable for constructing browser worker URLs.
 - `desktop/`: Electron shell and a separate Vite renderer build that shares the
   workbench. Native windows load bundled assets using a restricted custom scheme.
 - `app/globals.css`: Tailwind CSS v4 imports and semantic light/dark theme tokens.
@@ -81,6 +84,11 @@ to address those issues during repository setup.
   immutable derivation chains, resampling, missing data, concurrent writers,
   cancellation, ramp detection, and chunk-boundary filter continuity.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
+- `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
+  worker factory in hidden Chromium with isolated storage. Verifies same-origin
+  script loading, demo initialization, and all three BSFC calculations. Run this
+  when changing worker loading or build configuration; native smoke alone cannot
+  detect vinext's browser-only URL transforms.
 - Full-repository lint still includes the original 19 starter-component issues.
   Keep new application files clean and report the baseline separately.
 
