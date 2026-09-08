@@ -10,8 +10,15 @@ export function segmentTraces(
 ) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   function origin(node: SignalNode): string {
-    const parent = byId.get(node.parents[0]);
-    return parent ? origin(parent) : node.id;
+    let current = node;
+    const seen = new Set<string>();
+    while (current.parents[0] && !seen.has(current.id)) {
+      seen.add(current.id);
+      const parent = byId.get(current.parents[0]);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.id;
   }
   const channel = origin(target);
   return segments.flatMap((segment, index) => {

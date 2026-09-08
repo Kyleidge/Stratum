@@ -15,6 +15,11 @@ signal uploads.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.
 - `components/workbench.tsx`: engineering workspace and worker request client.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
+- `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
+  numbered operation chains with explicit batch collections and independent
+  member branches. Keep exact batch membership; never infer batches from names.
+- `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
+  stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
 - `components/segmentation-editor.tsx`: trigger/range/window editor, read-only
   interval preview, and saved segmentation provenance. Start and end triggers
   independently select raw/derived signals, edges, thresholds, and signed offsets.
@@ -92,11 +97,14 @@ to address those issues during repository setup.
   immutable derivation chains, resampling, missing data, concurrent writers,
   cancellation, generic edge triggers/offsets, manual ranges, overlapping windows,
   derived time axes, segmentation provenance, and chunk-boundary continuity.
+  `tests/signal-history.test.ts` covers collection ordering, atomic batches,
+  independent re-segmentation, sparse extrema, binary chunk alignment, and
+  5,000-stage evaluation/persistence without a configured depth limit.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin
   script loading, demo initialization, BSFC, trigger preview, offsets, crop
-  creation, and window previews. Run this
+  creation, window previews, and independent moving-average/extrema batches. Run this
   when changing worker loading or build configuration; native smoke alone cannot
   detect vinext's browser-only URL transforms.
 - Full-repository lint still includes the original 19 starter-component issues.

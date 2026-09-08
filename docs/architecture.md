@@ -30,8 +30,22 @@ active import. Electron permits one app instance per user profile.
 Derived nodes form an append-only DAG with immutable IDs, operation versions,
 parent IDs, parameters, units, and creation time. Operations always reference
 existing nodes; modifying parameters creates a new node. Multiple-parent
-calculations retain every dependency. The UI presents an expandable tree and a
-recursive lineage view. Repeated segmentation creates another revision.
+calculations retain every dependency. The explorer follows the first data parent
+in numbered operation order; additional inputs remain linked in the history.
+Segmentation and multi-member derivation actions retain explicit batch IDs.
+Shared processing is shown once above expandable member outputs; deviations
+remain under individual members. Repeated actions create separate branches.
+Selecting a collection captures its exact member IDs, and a batch publishes all
+its independent outputs atomically. It never joins samples across segments.
+
+Explorer rows are virtualized and full history is paginated in groups of 50.
+Graph validation, bounds, history traversal, and streaming evaluation use
+iterative algorithms, with no configured operation-depth limit. The evaluator
+uses an explicit stack of pull frames, reuses owned unary buffers, and retains
+filter state across chunks. Binary inputs align samples across unequal chunk
+boundaries. Stateful processing before a crop sees its preceding history;
+processing after a crop begins at that segment. A 5,000-operation fixture verifies
+evaluation, immutable inputs, explorer ordering, and persistence/reopening.
 
 Segments are virtual inclusive sample-time intervals. They reuse original
 columns and skip chunks outside their range. Time shift and align-to-zero change
@@ -59,6 +73,10 @@ or disk-backed multiresolution plot pyramid yet.
 - Scale, offset, absolute value, backward derivative, and cumulative trapezoidal
   integral. Integral skips invalid intervals and exposes missing output at gaps;
   its unit explicitly includes seconds.
+- Min / Max: a sparse signal containing the finite minimum and maximum at their
+  original timestamps, sorted by time. Ties retain the first occurrence, a
+  constant signal yields one point, and all-missing input yields none. The plot
+  displays these extrema as points. Each segment produces its own extrema.
 - Time shift, zero-time alignment, and linear resampling. Resampling preserves
   exact endpoints, limits gaps to five times the initial source spacing, rejects
   non-advancing floating-point grids, and caps output at 100 million samples.
@@ -108,6 +126,11 @@ reopening does not silently recalculate or migrate them. Segmentation only
 creates crops. Power/BSFC is a separate action which validates matching sample
 grid recipes before publishing calculation nodes.
 
+Segmenting a selected collection evaluates each member separately. When a start
+or end trigger selects the first member, that trigger follows the corresponding
+member in each branch; an explicitly selected external trigger stays shared.
+Preview lists identify their input member. Ranges still use recording time.
+
 ## Responsiveness and current limits
 
 The UI receives metadata, 100-row data pages, and time-bucket min/max envelopes,
@@ -119,11 +142,12 @@ CSV input and channel caches are bounded, but many channels and deep derivation
 chains increase concurrent processing buffers. Cold whole-recording plots still
 take a full scan; pagination also scans preceding derived values. Browser disk
 quota and storage eviction apply. The architecture avoids a full-file UI load;
-multi-gigabyte throughput, peak memory, and arbitrary-depth pipelines have not
-been benchmarked or certified. The first next step for production scale should
+multi-gigabyte throughput and peak memory have not been benchmarked or certified.
+There is no fixed operation-depth cap, but finite memory and processing time
+still apply. The first next step for production scale should
 be an on-disk summary pyramid, job prioritization, and a native columnar store.
 
-The workbench includes fourteen selectable operations plus explicit power and BSFC.
+The workbench includes fifteen selectable operations plus explicit power and BSFC.
 FFT, higher-order filters, general formula parsing, arbitrary source generation,
 native TDMS/MDF import, signed installers, project interchange/backup, and plugin
 execution are not implemented. No user data is uploaded by analysis operations.

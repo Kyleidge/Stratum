@@ -11,6 +11,7 @@ export type Operation =
   | 'absolute'
   | 'derivative'
   | 'integral'
+  | 'min-max'
   | 'time-shift'
   | 'zero-time'
   | 'resample'
@@ -28,6 +29,7 @@ export type SignalNode = {
   color: string;
   createdAt: string;
   version: 1;
+  batchId?: string;
 };
 export type Source = {
   id: string;
@@ -48,6 +50,7 @@ export type Segment = {
   start: number;
   end: number;
   nodes: string[];
+  batchId?: string;
   definition?: SegmentationDefinition;
   boundary?: SegmentBoundary;
   // Original prototype records retain their legacy provenance when reopened.
@@ -79,6 +82,7 @@ export type SegmentationDefinition = (
     }
 ) & { boundary: 'clip' | 'discard' };
 export type SegmentBoundary = {
+  inputId?: string;
   start: number;
   end: number;
   requestedStart: number;
@@ -122,10 +126,17 @@ export type EngineRequest =
       parameter: number;
     }
   | {
+      type: 'derive-many';
+      parentIds: string[];
+      operation: Operation;
+      parameter: number;
+    }
+  | {
       type: 'segment' | 'segment-preview';
       sourceId: string;
       definition: SegmentationDefinition;
       targetIds: string[];
+      independently?: boolean;
     }
   | { type: 'segment-metrics'; ids: string[] }
   | { type: 'view'; ids: string[]; range?: [number, number] }

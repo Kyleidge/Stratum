@@ -35,11 +35,16 @@ native bundle. Packages are unsigned development builds.
    **Create segments** saves immutable crop branches. Manual time ranges and
    fixed-duration windows are also available. Raw and derived signals are valid
    trigger inputs and output targets.
-4. Select a segment, then **Filter**, **Calculate**, or **Transform time**.
-   Applying a function creates a new node in the explorer, including when its
-   input is itself derived.
+4. Follow numbered steps in **Signal Explorer**: raw → filter → segment → moving
+   average → Min / Max. Select a collection row to apply the next operation
+   independently to every member. Expand it to inspect members or select just
+   one to create its own branch. Shared steps stay visible once; segments are
+   never concatenated. Creating segments automatically selects their collection.
+   Repeating a function from an earlier step creates a separate branch.
 5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
-   and **Lineage** for the dependency graph.
+   and **Operation history** for the selected signal's complete history and
+   linked inputs. Arrow keys navigate the explorer; its toolbar can reveal the
+   selection or collapse other branches.
 6. **Power & fuel metrics** explicitly adds engineering calculations to compatible
    segments. The demo already includes this calculation step. **Export results**
    downloads summary statistics and parent IDs as CSV.

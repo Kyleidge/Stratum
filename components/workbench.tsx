@@ -63,6 +63,8 @@ import SegmentationEditor, {
 } from '@/components/segmentation-editor';
 import { createSignalWorker } from '@/lib/create-signal-worker';
 import { segmentTraces } from '@/lib/segment-traces';
+import SignalExplorer, { OperationHistory } from '@/components/signal-explorer';
+import { buildExplorer, operationLabels } from '@/lib/signal-explorer';
 import type {
   EngineRequest,
   EngineResponse,
@@ -86,6 +88,16 @@ type FunctionSpec = {
   step?: number;
 };
 const FUNCTIONS: FunctionSpec[] = [
+  {
+    operation: 'min-max',
+    name: 'Min / Max',
+    category: 'Calculation',
+    description:
+      'Find the minimum and maximum finite values, retaining their original timestamps as extrema samples. Missing samples are excluded.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
   {
     operation: 'segment',
     name: 'Segment signals',
@@ -291,6 +303,11 @@ export default function Workbench() {
   const [project, setProject] = useState<Project>(empty);
   const [sourceId, setSourceId] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [operationTargets, setOperationTargets] = useState<{
+    id: string;
+    ids: string[];
+    label: string;
+  }>();
   const [scope, setScope] = useState('');
   const [tab, setTab] = useState('analysis');
   const [compare, setCompare] = useState(false);
@@ -304,8 +321,7 @@ export default function Workbench() {
     null,
   );
   const [query, setQuery] = useState('');
-  const [treeSearch, setTreeSearch] = useState('');
-  const [collapsed, setCollapsed] = useState<string[]>([]);
+
   const [operation, setOperation] = useState<Operation | 'segment'>('segment');
   const [parameter, setParameter] = useState('0');
 
@@ -481,22 +497,49 @@ export default function Workbench() {
       if (result.type === 'project') {
         setProject(result.project);
         if (r.type === 'import') {
+          setOperationTargets(undefined);
           const s = result.project.sources.at(-1)!;
           setSourceId(s.id);
           setSelectedId(s.channels[0]);
           setScope('');
           setZoom(undefined);
         }
-        if (r.type === 'derive') {
-          setSelectedId(result.project.nodes.at(-1)!.id);
+        if (r.type === 'derive' || r.type === 'derive-many') {
+          const outputs = result.project.nodes.slice(project.nodes.length);
+          selectNode(outputs[0], result.project);
           setTab('analysis');
+          if (r.type === 'derive-many') {
+            setOperationTargets({
+              id: `operation:${outputs[0].batchId}`,
+              ids: outputs.map((node) => node.id),
+              label: `${operationLabels[r.operation]} · ${outputs.length} results`,
+            });
+          }
+        }
+        if (r.type === 'segment') {
+          const first = result.project.nodes[project.nodes.length];
+          const model = buildExplorer(result.project, r.sourceId);
+          const group =
+            first &&
+            [...model.entries.values()].find(
+              (entry) =>
+                entry.kind === 'collection' && entry.ids.includes(first.id),
+            );
+          if (first && group) {
+            selectNode(first, result.project);
+            setOperationTargets({
+              id: group.id,
+              ids: group.ids,
+              label: `Segment · ${group.ids.length} intervals`,
+            });
+          }
         }
         setStatus(
           r.type === 'segment'
             ? 'Segments created · source signals unchanged'
             : r.type === 'segment-metrics'
               ? 'Power and fuel metrics created · lineage saved'
-              : r.type === 'derive'
+              : r.type === 'derive' || r.type === 'derive-many'
                 ? 'Derived signal created · lineage saved'
                 : 'Recording imported · raw signals locked',
         );
@@ -514,18 +557,26 @@ export default function Workbench() {
     setParameter(String(fn.defaultValue));
     setDialog(null);
   }
-  function selectNode(n: SignalNode) {
+  function selectNode(n: SignalNode, nextProject = project) {
+    setOperationTargets(undefined);
+    setSourceId(n.sourceId);
     let ancestor: SignalNode | undefined = n;
     let segmentId = '';
-    for (let depth = 0; ancestor && depth < 64; depth++) {
-      const segment = sourceSegments.find((s) =>
-        s.nodes.includes(ancestor!.id),
-      );
+    const visited = new Set<string>();
+    const byId = new Map(nextProject.nodes.map((node) => [node.id, node]));
+    const byNode = new Map(
+      nextProject.segments.flatMap((segment) =>
+        segment.nodes.map((id) => [id, segment] as const),
+      ),
+    );
+    while (ancestor && !visited.has(ancestor.id)) {
+      visited.add(ancestor.id);
+      const segment = byNode.get(ancestor.id);
       if (segment) {
         segmentId = segment.id;
         break;
       }
-      ancestor = project.nodes.find((item) => item.id === ancestor?.parents[0]);
+      ancestor = byId.get(ancestor.parents[0]);
     }
     setScope(segmentId);
     setCompare(false);
@@ -535,6 +586,7 @@ export default function Workbench() {
     setZoom(undefined);
   }
   function selectSegment(id: string) {
+    setOperationTargets(undefined);
     const s = sourceSegments.find((item) => item.id === id);
     setScope(id);
     setZoom(undefined);
@@ -543,11 +595,6 @@ export default function Workbench() {
       setSelectedId(s.nodes[0]);
       setPage(0);
     }
-  }
-  function toggle(id: string) {
-    setCollapsed((old) =>
-      old.includes(id) ? old.filter((v) => v !== id) : [...old, id],
-    );
   }
   async function exportResults() {
     setError('');
@@ -574,44 +621,6 @@ export default function Workbench() {
     } finally {
       setBusy(false);
     }
-  }
-  const matches = (n: SignalNode) =>
-    n.name.toLowerCase().includes(treeSearch.toLowerCase());
-  function nodeRow(n: SignalNode, depth = 0) {
-    return (
-      <button
-        className={`signal-row ${selected?.id === n.id ? 'selected' : ''}`}
-        key={n.id}
-        style={{ paddingLeft: 24 + depth * 14 }}
-        onClick={() => selectNode(n)}
-        title={`${n.name} · ${n.operation}`}
-      >
-        <i className="signal-dot" style={{ background: n.color }} />
-        <span>{n.name}</span>
-        <small>{n.unit}</small>
-        {n.operation === 'raw' ? (
-          <LockKeyhole size={11} />
-        ) : n.operation !== 'crop' ? (
-          <Sigma size={12} />
-        ) : null}
-      </button>
-    );
-  }
-  function childrenOf(id: string, depth: number): React.ReactNode {
-    if (depth > 12) return null;
-    return project.nodes
-      .filter(
-        (n) =>
-          n.parents[0] === id &&
-          n.operation !== 'crop' &&
-          !sourceSegments.some((s) => s.nodes.includes(n.id)),
-      )
-      .map((n) => (
-        <div key={n.id}>
-          {matches(n) && nodeRow(n, depth)}
-          {childrenOf(n.id, depth + 1)}
-        </div>
-      ));
   }
   const range: [number, number] =
     zoom ??
@@ -750,108 +759,41 @@ export default function Workbench() {
               <Plus size={15} />
             </button>
           </div>
-          <label className="search-box">
-            <Search size={14} />
-            <input
-              aria-label="Find a signal"
-              placeholder="Find a signal…"
-              value={treeSearch}
-              onChange={(e) => setTreeSearch(e.target.value)}
+          <div className="explorer-source-picker">
+            <Picker
+              label="Recording"
+              value={source?.id || ''}
+              items={project.sources.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+              onChange={(id) => {
+                const next = project.sources.find((item) => item.id === id);
+                if (!next) return;
+                setSourceId(id);
+                setSelectedId(next.channels[0]);
+                setOperationTargets(undefined);
+                setScope('');
+                setZoom(undefined);
+                setPage(0);
+              }}
             />
-          </label>
-          <div className="tree-scroll">
-            <div className="tree-section-label">
-              SOURCES <span>{project.sources.length}</span>
-            </div>
-            {project.sources.map((s) => (
-              <div key={s.id}>
-                <button
-                  className={`source-row ${source?.id === s.id ? 'active-source' : ''}`}
-                  onClick={() => {
-                    setSourceId(s.id);
-                    setSelectedId(s.channels[0]);
-                    setScope('');
-                    setZoom(undefined);
-                    setPage(0);
-                  }}
-                >
-                  <ChevronDown size={13} />
-                  <FileSpreadsheet size={16} />
-                  <span>
-                    {s.name}
-                    <small>
-                      {s.rows.toLocaleString()} samples ·{' '}
-                      {s.synthetic ? 'demo recording' : 'local CSV'}
-                    </small>
-                  </span>
-                  <LockKeyhole size={12} />
-                </button>
-                {source?.id === s.id && (
-                  <div className="raw-branch">
-                    {raw.filter(matches).map((n) => (
-                      <div key={n.id}>
-                        {nodeRow(n)}
-                        {childrenOf(n.id, 1)}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            <div className="tree-section-label">
-              SEGMENTS <span>{sourceSegments.length}</span>
-            </div>
-            {sourceSegments.map((segment, i) => (
-              <div className="segment-branch" key={segment.id}>
-                <div
-                  className={`segment-row ${scope === segment.id ? 'active-segment' : ''}`}
-                >
-                  <button
-                    className="collapse-button"
-                    aria-label={`${collapsed.includes(segment.id) ? 'Expand' : 'Collapse'} ${segment.name}`}
-                    onClick={() => toggle(segment.id)}
-                  >
-                    {collapsed.includes(segment.id) ? (
-                      <ChevronRight size={13} />
-                    ) : (
-                      <ChevronDown size={13} />
-                    )}
-                  </button>
-                  <button
-                    className="segment-name"
-                    onClick={() => selectSegment(segment.id)}
-                  >
-                    <span
-                      className="segment-icon"
-                      style={{ color: segmentColors[i % 3] }}
-                    >
-                      <Scissors size={14} />
-                    </span>
-                    {segment.name}
-                    <small>{formatValue(segment.end - segment.start)} s</small>
-                  </button>
-                </div>
-                {!collapsed.includes(segment.id) && (
-                  <div className="segment-children">
-                    {segment.nodes
-                      .map((id) => project.nodes.find((n) => n.id === id)!)
-                      .filter(matches)
-                      .map((n) => (
-                        <div key={n.id}>
-                          {nodeRow(n, 1)}
-                          {childrenOf(n.id, 2)}
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            {!sourceSegments.length && source && (
-              <p className="tree-hint">
-                Use Segment to choose edge triggers, time ranges, or windows.
-              </p>
-            )}
           </div>
+          {source && (
+            <SignalExplorer
+              key={source.id}
+              project={project}
+              sourceId={source.id}
+              selectedId={selected?.id || ''}
+              collectionId={operationTargets?.id}
+              onSelect={selectNode}
+              onCollection={(ids, label, id) => {
+                const node = project.nodes.find((item) => item.id === ids[0]);
+                if (node) selectNode(node);
+                setOperationTargets({ ids, label, id });
+              }}
+            />
+          )}
           <div className="source-footer">
             <Database size={15} />
             <div>
@@ -900,7 +842,7 @@ export default function Workbench() {
                 </TabsTrigger>
                 <TabsTrigger value="lineage">
                   <GitBranch />
-                  Lineage
+                  Operation history
                 </TabsTrigger>
               </TabsList>
               <span className="sample-metadata">
@@ -916,6 +858,7 @@ export default function Workbench() {
                     className={!scope && !compare ? 'active' : ''}
                     onClick={() => {
                       setScope('');
+                      setOperationTargets(undefined);
                       setCompare(false);
                       setZoom(undefined);
                       if (raw[0]) setSelectedId(raw[0].id);
@@ -928,6 +871,7 @@ export default function Workbench() {
                     disabled={!sourceSegments.length}
                     onClick={() => {
                       setCompare(true);
+                      setOperationTargets(undefined);
                       setScope('');
                       setZoom(undefined);
                     }}
@@ -942,6 +886,7 @@ export default function Workbench() {
                         aria-label="Return to full recording"
                         onClick={() => {
                           setScope('');
+                          setOperationTargets(undefined);
                           if (raw[0]) setSelectedId(raw[0].id);
                         }}
                       >
@@ -1218,17 +1163,19 @@ export default function Workbench() {
             <TabsContent value="lineage" className="lineage-content">
               <div className="data-title">
                 <div>
-                  <h2>Every result has a history.</h2>
+                  <h2>Order of operations</h2>
                   <p>
-                    Select a signal to inspect its complete dependency graph.
+                    Follow this signal from its source. Linked inputs open their
+                    own histories.
                   </p>
                 </div>
                 <GitBranch size={20} />
               </div>
               {selected && (
-                <Lineage
-                  node={selected}
-                  nodes={project.nodes}
+                <OperationHistory
+                  key={selected.id}
+                  selected={selected}
+                  project={project}
                   onSelect={selectNode}
                 />
               )}
@@ -1275,15 +1222,38 @@ export default function Workbench() {
               </button>
             </div>
             <p className="function-description">{spec.description}</p>
+            {operationTargets && (
+              <div className="operation-targets">
+                <Layers3 size={15} />
+                <div>
+                  <strong>{operationTargets.label}</strong>
+                  <small>
+                    Apply independently to all {operationTargets.ids.length}{' '}
+                    members. No concatenation.
+                  </small>
+                </div>
+                <button
+                  className="icon-button"
+                  aria-label="Use only the selected signal"
+                  onClick={() => setOperationTargets(undefined)}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
             {operation === 'segment' ? (
               source && (
                 <SegmentationEditor
-                  key={source.id}
+                  key={`${source.id}:${operationTargets?.id ?? selected?.id}`}
                   source={source}
                   nodes={project.nodes}
                   segments={sourceSegments}
                   busy={busy}
-                  onPreview={async (definition, targetIds) => {
+                  selectedIds={
+                    operationTargets?.ids ??
+                    (selected ? [selected.id] : source.channels)
+                  }
+                  onPreview={async (definition, targetIds, independently) => {
                     setBusy(true);
                     setStatus('Previewing segment intervals…');
                     setProgress(0);
@@ -1293,6 +1263,7 @@ export default function Workbench() {
                         sourceId: source.id,
                         definition,
                         targetIds,
+                        independently,
                       });
                       if (response.type !== 'segment-plan')
                         throw new Error('Unexpected preview response.');
@@ -1304,13 +1275,14 @@ export default function Workbench() {
                       setBusy(false);
                     }
                   }}
-                  onCreate={(definition, targetIds) => {
+                  onCreate={(definition, targetIds, independently) => {
                     void mutate(
                       {
                         type: 'segment',
                         sourceId: source.id,
                         definition,
                         targetIds,
+                        independently,
                       },
                       'Creating segment branches…',
                     );
@@ -1319,21 +1291,25 @@ export default function Workbench() {
               )
             ) : (
               <>
-                <div className="field-label">Input signal</div>
-                <Picker
-                  label="Input signal"
-                  value={selected?.id || ''}
-                  onChange={(id) => {
-                    const node = project.nodes.find((n) => n.id === id);
-                    if (node) selectNode(node);
-                  }}
-                  items={project.nodes
-                    .filter((n) => n.sourceId === source?.id)
-                    .map((n) => ({
-                      value: n.id,
-                      label: `${n.name}${n.operation === 'raw' ? '' : ` · ${sourceSegments.find((s) => s.nodes.includes(n.id))?.name || n.operation}`}`,
-                    }))}
-                />
+                {!operationTargets && (
+                  <div className="field-label">Input signal</div>
+                )}
+                {!operationTargets && (
+                  <Picker
+                    label="Input signal"
+                    value={selected?.id || ''}
+                    onChange={(id) => {
+                      const node = project.nodes.find((n) => n.id === id);
+                      if (node) selectNode(node);
+                    }}
+                    items={project.nodes
+                      .filter((n) => n.sourceId === source?.id)
+                      .map((n) => ({
+                        value: n.id,
+                        label: `${n.name}${n.operation === 'raw' ? '' : ` · ${sourceSegments.find((s) => s.nodes.includes(n.id))?.name || n.operation}`}`,
+                      }))}
+                  />
+                )}
                 {spec.parameter && (
                   <>
                     <label className="field-label" htmlFor="function-parameter">
@@ -1355,7 +1331,12 @@ export default function Workbench() {
                 )}
                 <div className="output-option">
                   <GitBranch size={15} />
-                  <span>Create new derived signal</span>
+                  <span>
+                    Create{' '}
+                    {operationTargets
+                      ? `${operationTargets.ids.length} independent results`
+                      : 'new derived signal'}
+                  </span>
                   <Check size={14} />
                 </div>
                 <button
@@ -1368,12 +1349,19 @@ export default function Workbench() {
                       return;
                     }
                     void mutate(
-                      {
-                        type: 'derive',
-                        parentId: selected.id,
-                        operation,
-                        parameter: Number(parameter),
-                      },
+                      operationTargets
+                        ? {
+                            type: 'derive-many',
+                            parentIds: operationTargets.ids,
+                            operation,
+                            parameter: Number(parameter),
+                          }
+                        : {
+                            type: 'derive',
+                            parentId: selected.id,
+                            operation,
+                            parameter: Number(parameter),
+                          },
                       'Creating derived signal…',
                     );
                   }}
@@ -1383,7 +1371,9 @@ export default function Workbench() {
                   ) : (
                     <Play size={14} fill="currentColor" />
                   )}
-                  Apply function
+                  {operationTargets
+                    ? `Apply to ${operationTargets.ids.length} segments`
+                    : 'Apply function'}
                 </button>
               </>
             )}
@@ -1440,12 +1430,17 @@ export default function Workbench() {
             </dl>
             <button className="text-button" onClick={() => setTab('lineage')}>
               <GitBranch size={13} />
-              Inspect full lineage
+              Inspect operation history
               <ArrowUpRight size={13} />
             </button>
           </div>
           <div className="quick-functions">
             <div className="section-heading">QUICK FUNCTIONS</div>
+            <button onClick={() => chooseOperation('min-max')}>
+              <Sigma size={15} />
+              <span>Min / Max</span>
+              <ArrowUpRight size={13} />
+            </button>
             <button onClick={() => chooseOperation('smooth')}>
               <Waves size={15} />
               <span>Moving average</span>
@@ -1700,63 +1695,6 @@ export default function Workbench() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function Lineage({
-  node,
-  nodes,
-  onSelect,
-  depth = 0,
-}: {
-  node: SignalNode;
-  nodes: SignalNode[];
-  onSelect: (n: SignalNode) => void;
-  depth?: number;
-}) {
-  if (depth > 15)
-    return <p>Earlier ancestors available by selecting this parent.</p>;
-  return (
-    <div className="lineage-tree">
-      {node.parents.length > 0 && (
-        <div className="lineage-parents">
-          {node.parents.map((id) => {
-            const parent = nodes.find((n) => n.id === id);
-            return parent ? (
-              <Lineage
-                key={id}
-                node={parent}
-                nodes={nodes}
-                onSelect={onSelect}
-                depth={depth + 1}
-              />
-            ) : null;
-          })}
-        </div>
-      )}
-      <button
-        className={`lineage-node ${node.operation === 'raw' ? 'lineage-raw' : ''}`}
-        onClick={() => onSelect(node)}
-      >
-        <span className="lineage-type">
-          {node.operation === 'raw' ? (
-            <LockKeyhole size={13} />
-          ) : (
-            <GitBranch size={13} />
-          )}
-          {node.operation} <small>v{node.version}</small>
-        </span>
-        <strong>{node.name}</strong>
-        <span>
-          {node.unit}
-          {Object.keys(node.parameters).length > 0 &&
-            ` · ${Object.entries(node.parameters)
-              .map(([k, v]) => `${k}: ${formatValue(v, 2)}`)
-              .join(', ')}`}
-        </span>
-        <code>{node.id.slice(0, 8)}</code>
-      </button>
     </div>
   );
 }

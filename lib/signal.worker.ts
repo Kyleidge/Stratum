@@ -33,8 +33,16 @@ globalThis.onmessage = (
         case 'derive':
           await engine.derive(r.parentId, r.operation, r.parameter);
           break;
+        case 'derive-many':
+          await engine.deriveMany(r.parentIds, r.operation, r.parameter);
+          break;
         case 'segment':
-          await engine.segment(r.sourceId, r.definition, r.targetIds);
+          await engine.segment(
+            r.sourceId,
+            r.definition,
+            r.targetIds,
+            r.independently,
+          );
           break;
         case 'segment-preview':
           send({
@@ -44,6 +52,7 @@ globalThis.onmessage = (
               r.sourceId,
               r.definition,
               r.targetIds,
+              r.independently,
             ),
           });
           return;

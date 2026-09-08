@@ -167,6 +167,24 @@ export default function SignalChart({
             </g>
           ))}
           {traces.map((trace) => {
+            if (trace.node.operation === 'min-max')
+              return (
+                <g key={trace.node.id}>
+                  {trace.plot.points
+                    .filter((point) => Number.isFinite(point[1]))
+                    .map(([t, v]) => (
+                      <circle
+                        key={t}
+                        cx={x(t - (trace.offset || 0))}
+                        cy={y(v)}
+                        r="3.5"
+                        fill={trace.color || trace.node.color}
+                      >
+                        <title>{`${v} ${trace.node.unit} at ${t} s`}</title>
+                      </circle>
+                    ))}
+                </g>
+              );
             let drawing = false;
             const d = trace.plot.points
               .map(([t, v]) => {

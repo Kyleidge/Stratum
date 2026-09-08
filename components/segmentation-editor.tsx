@@ -29,11 +29,17 @@ type Props = {
   nodes: SignalNode[];
   segments: Segment[];
   busy: boolean;
+  selectedIds: string[];
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
+    independently: boolean,
   ) => Promise<SegmentationPlan>;
-  onCreate: (definition: SegmentationDefinition, targets: string[]) => void;
+  onCreate: (
+    definition: SegmentationDefinition,
+    targets: string[],
+    independently: boolean,
+  ) => void;
 };
 
 function Choice({
@@ -108,19 +114,20 @@ export default function SegmentationEditor({
   nodes,
   segments,
   busy,
+  selectedIds,
   onPreview,
   onCreate,
 }: Props) {
   const [method, setMethod] =
     useState<SegmentationDefinition['method']>('triggers');
   const [start, setStart] = useState<TriggerForm>({
-    signalId: source.channels[0],
+    signalId: selectedIds[0] ?? source.channels[0],
     edge: 'rising',
     threshold: '900',
     offset: '-20',
   });
   const [end, setEnd] = useState<TriggerForm>({
-    signalId: source.channels[0],
+    signalId: selectedIds[0] ?? source.channels[0],
     edge: 'falling',
     threshold: '900',
     offset: '0',
@@ -135,7 +142,7 @@ export default function SegmentationEditor({
   const [step, setStep] = useState('30');
   const [partial, setPartial] = useState(false);
   const [boundary, setBoundary] = useState<'clip' | 'discard'>('clip');
-  const [target, setTarget] = useState('all');
+  const [target, setTarget] = useState('selection');
   const [preview, setPreview] = useState<{
     key: string;
     plan: SegmentationPlan;
@@ -209,10 +216,19 @@ export default function SegmentationEditor({
     setError('');
     try {
       const config = definition();
-      const targets = target === 'all' ? source.channels : [target];
+      const targets =
+        target === 'selection'
+          ? selectedIds
+          : target === 'all'
+            ? source.channels
+            : [target];
+      const independently = target === 'selection' && targets.length > 1;
       if (previewOnly)
-        setPreview({ key, plan: await onPreview(config, targets) });
-      else onCreate(config, targets);
+        setPreview({
+          key,
+          plan: await onPreview(config, targets, independently),
+        });
+      else onCreate(config, targets, independently);
     } catch (error) {
       setError(
         error instanceof Error
@@ -358,11 +374,24 @@ export default function SegmentationEditor({
         label="Signals to segment"
         value={target}
         items={[
+          {
+            value: 'selection',
+            label:
+              selectedIds.length > 1
+                ? `Each selected member (${selectedIds.length})`
+                : 'Selected operation output',
+          },
           { value: 'all', label: `All ${source.channels.length} raw channels` },
           ...signals,
         ]}
         onChange={setTarget}
       />
+      {target === 'selection' && selectedIds.length > 1 && (
+        <p className="input-hint">
+          Each member is segmented separately. A trigger using the first member
+          follows the corresponding member in each branch.
+        </p>
+      )}
       <div className="field-label">Outside available data</div>
       <Choice
         label="Recording boundary policy"
@@ -389,10 +418,15 @@ export default function SegmentationEditor({
               {plan.ranges.map((range, index) => (
                 <li
                   key={index}
-                  title={`Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
+                  title={`${range.inputId ? `${nodes.find((node) => node.id === range.inputId)?.name} · ` : ''}Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
                 >
                   <span>{String(index + 1).padStart(2, '0')}</span>
                   <code>
+                    {range.inputId && (
+                      <small>
+                        Member {selectedIds.indexOf(range.inputId) + 1} ·{' '}
+                      </small>
+                    )}
                     {time(range.start)} → {time(range.end)}
                   </code>
                   {range.clipped && <span>clip</span>}

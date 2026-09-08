@@ -1,5 +1,6 @@
-import { CsvParser, Envelope, RollingMean, bsfc, power } from './signal-math';
-import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
+import { CsvParser, Envelope, power } from './signal-math';
+import { SignalGraph } from './signal-graph';
+import { executeSignal } from './signal-executor';
 import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
@@ -44,6 +45,21 @@ export class SignalEngine {
   private columnCache = new Map<string, Float64Array>();
   private cacheBytes = 0;
   private revision = 0;
+  private indexedProject?: Project;
+  private indexedGraph?: SignalGraph;
+  private indexedCount = -1;
+  private extremaTimes = new Map<string, number[]>();
+  private graph(): SignalGraph {
+    if (
+      this.indexedProject !== this.project ||
+      this.indexedCount !== this.project.nodes.length
+    ) {
+      this.indexedGraph = new SignalGraph(this.project);
+      this.indexedProject = this.project;
+      this.indexedCount = this.project.nodes.length;
+    }
+    return this.indexedGraph!;
+  }
   private segmentPreviewCache?: { key: string; plan: SegmentationPlan };
   constructor(
     private progress: (message: string, percent: number) => void = () => {},
@@ -173,9 +189,7 @@ export class SignalEngine {
     };
   }
   find(id: string): SignalNode {
-    const n = this.project.nodes.find((node) => node.id === id);
-    if (!n) throw new Error('Signal no longer exists.');
-    return n;
+    return this.graph().find(id);
   }
   async importCsv(file: Blob & { name?: string }, synthetic = false) {
     this.cancelled = false;
@@ -352,355 +366,220 @@ export class SignalEngine {
     return source;
   }
   bounds(id: string): [number, number] {
-    const n = this.find(id);
-    const source = this.project.sources.find((s) => s.id === n.sourceId)!;
-    let [start, end] = n.parents.length
-      ? this.bounds(n.parents[0])
-      : [source.start, source.end];
-    if (n.operation === 'crop') {
-      start = Math.max(start, n.parameters.start);
-      end = Math.min(end, n.parameters.end);
-    }
-    if (n.operation === 'time-shift') {
-      start += n.parameters.value;
-      end += n.parameters.value;
-    }
-    if (n.operation === 'zero-time') {
-      end -= start;
-      start = 0;
-    }
-    return [start, end];
+    this.find(id);
+    return this.graph().ranges.get(id)!;
   }
-  async *evaluate(
+  private async *raw(
     id: string,
-    visiting = new Set<string>(),
     sourceRange?: [number, number],
   ): AsyncGenerator<SeriesChunk> {
-    this.check();
-    if (visiting.has(id) || visiting.size > 64)
-      throw new Error('Invalid or excessively deep signal dependency graph.');
-    const path = new Set(visiting).add(id);
-    const n = this.find(id);
-    if (n.operation === 'raw') {
-      const source = this.project.sources.find((s) => s.id === n.sourceId)!;
-      for (let i = 0; i < source.chunks; i++) {
-        this.check();
-        const bounds = source.chunkRanges[i];
-        if (
-          sourceRange &&
-          (bounds[1] < sourceRange[0] || bounds[0] > sourceRange[1])
-        )
-          continue;
-        const time = await this.column(source.id, i, 'time');
-        const values = await this.column(source.id, i, n.channel!);
-        // Yield a task even on cache hits so cancellation reaches the worker.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        this.check();
-        yield { time: time.slice(), values: values.slice() };
-      }
-      return;
-    }
-    if (n.operation === 'power' || n.operation === 'bsfc') {
-      const right = this.evaluate(n.parents[1], path);
-      for await (const a of this.evaluate(n.parents[0], path)) {
-        const b = await right.next();
-        if (b.done || b.value.time.length !== a.time.length)
-          throw new Error('Inputs must share a sample grid.');
-        const values = new Float64Array(a.time.length);
-        for (let i = 0; i < values.length; i++) {
-          if (a.time[i] !== b.value.time[i])
-            throw new Error('Inputs must share timestamps.');
-          values[i] =
-            n.operation === 'power'
-              ? power(a.values[i], b.value.values[i])
-              : bsfc(a.values[i], b.value.values[i]);
-        }
-        yield { time: a.time, values };
-      }
-      if (!(await right.next()).done) throw new Error('Input lengths differ.');
-      return;
-    }
-    const mean = new RollingMean(
-      n.operation === 'smooth' ? n.parameters.value : 1,
-    );
-    const median =
-      n.operation === 'median' ? new RollingMedian(n.parameters.value) : null;
-    const exponential =
-      n.operation === 'exponential'
-        ? new ExponentialSmoother(n.parameters.value)
-        : null;
-    const rc =
-      n.operation === 'low-pass' || n.operation === 'high-pass'
-        ? new RcFilter(n.parameters.value, n.operation)
-        : null;
-    let previous: Point | undefined;
-    let integrated = 0;
-    let gridIndex = 0;
-    const origin = this.bounds(n.parents[0])[0];
-    const inputRange: [number, number] | undefined =
-      n.operation === 'crop'
-        ? [n.parameters.start, n.parameters.end]
-        : undefined;
-    for await (const chunk of this.evaluate(n.parents[0], path, inputRange)) {
-      const times: number[] = [];
-      const values: number[] = [];
-      for (let i = 0; i < chunk.time.length; i++) {
-        this.check();
-        let t = chunk.time[i];
-        const input = chunk.values[i];
-        let value = input;
-        switch (n.operation) {
-          case 'crop':
-            if (t < n.parameters.start || t > n.parameters.end) continue;
-            break;
-          case 'smooth':
-            value = mean.next(input);
-            break;
-          case 'median':
-            value = median!.next(input);
-            break;
-          case 'exponential':
-            value = exponential!.next(input);
-            break;
-          case 'low-pass':
-          case 'high-pass':
-            value = rc!.next(t, input);
-            break;
-          case 'scale':
-            value *= n.parameters.value;
-            break;
-          case 'offset':
-            value += n.parameters.value;
-            break;
-          case 'absolute':
-            value = Math.abs(value);
-            break;
-          case 'time-shift':
-            t += n.parameters.value;
-            break;
-          case 'zero-time':
-            t -= origin;
-            break;
-          case 'derivative':
-            value = previous ? (input - previous[1]) / (t - previous[0]) : NaN;
-            break;
-          case 'integral':
-            if (
-              previous &&
-              Number.isFinite(input) &&
-              Number.isFinite(previous[1])
-            )
-              integrated += ((input + previous[1]) / 2) * (t - previous[0]);
-            value = Number.isFinite(input) ? integrated : NaN;
-            break;
-          case 'resample': {
-            let nextTime = origin + gridIndex / n.parameters.value;
-            while (nextTime <= t) {
-              this.check();
-              if (times.length >= CHUNK_SIZE) {
-                yield {
-                  time: Float64Array.from(times),
-                  values: Float64Array.from(values),
-                };
-                times.length = 0;
-                values.length = 0;
-                await new Promise<void>((resolve) => setTimeout(resolve, 0));
-                this.check();
-              }
-              times.push(nextTime);
-              values.push(
-                nextTime === t
-                  ? input
-                  : previous && nextTime === previous[0]
-                    ? previous[1]
-                    : previous && t - previous[0] <= n.parameters.maxGap
-                      ? previous[1] +
-                        ((input - previous[1]) * (nextTime - previous[0])) /
-                          (t - previous[0])
-                      : NaN,
-              );
-              const candidate = origin + ++gridIndex / n.parameters.value;
-              if (candidate <= nextTime)
-                throw new Error(
-                  'The output rate is too precise for these timestamps. Align to zero first.',
-                );
-              nextTime = candidate;
-            }
-            previous = [t, input];
-            continue;
-          }
-        }
-        previous = [chunk.time[i], input];
-        times.push(t);
-        values.push(value);
-      }
-      if (times.length)
-        yield {
-          time: Float64Array.from(times),
-          values: Float64Array.from(values),
-        };
+    const node = this.find(id);
+    const source = this.project.sources.find(
+      (item) => item.id === node.sourceId,
+    )!;
+    for (let i = 0; i < source.chunks; i++) {
+      this.check();
+      const bounds = source.chunkRanges[i];
+      if (
+        sourceRange &&
+        (bounds[1] < sourceRange[0] || bounds[0] > sourceRange[1])
+      )
+        continue;
+      const time = await this.column(source.id, i, 'time');
+      const values = await this.column(source.id, i, node.channel!);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      this.check();
+      yield { time: time.slice(), values: values.slice() };
     }
   }
-  async derive(parentId: string, operation: Operation, value: number) {
-    this.cancelled = false;
-    const parent = this.find(parentId);
-    if (!Number.isFinite(value)) throw new Error('Enter a finite parameter.');
-    if (
-      operation === 'raw' ||
-      operation === 'crop' ||
-      operation === 'power' ||
-      operation === 'bsfc'
-    )
-      throw new Error('This operation requires a segment or multiple inputs.');
-    if (
-      operation === 'smooth' &&
-      (!Number.isInteger(value) || value < 1 || value > 100000)
-    )
-      throw new Error('Window must be 1–100,000 samples.');
-    if (
-      operation === 'median' &&
-      (!Number.isInteger(value) || value < 1 || value > 1001)
-    )
-      throw new Error('Median window must be 1–1,001 whole samples.');
-    if (operation === 'exponential' && (value <= 0 || value > 1))
-      throw new Error('Smoothing factor must be greater than 0 and at most 1.');
-    if ((operation === 'low-pass' || operation === 'high-pass') && value <= 0)
-      throw new Error('Cutoff frequency must be greater than 0 Hz.');
-    if (operation === 'resample' && (value < 0.01 || value > 10000))
-      throw new Error('Sample rate must be 0.01–10,000 Hz.');
-    if (
-      operation === 'resample' &&
-      (this.bounds(parentId)[1] - this.bounds(parentId)[0]) * value > 100000000
-    )
-      throw new Error(
-        'This rate would produce over 100 million samples. Choose a lower rate.',
-      );
-    const labels: Partial<Record<Operation, string>> = {
-      smooth: 'Smoothed',
-      median: 'Median filtered',
-      exponential: 'Exponentially smoothed',
-      'low-pass': 'Low-pass filtered',
-      'high-pass': 'High-pass filtered',
-      scale: 'Scaled',
-      offset: 'Offset',
-      absolute: 'Absolute',
-      derivative: 'Derivative',
-      integral: 'Integral',
-      'time-shift': 'Time shifted',
-      'zero-time': 'Zeroed',
-      resample: 'Resampled',
-    };
-    const unit =
-      operation === 'derivative'
-        ? `${parent.unit}/s`
-        : operation === 'integral'
-          ? `${parent.unit}·s`
-          : parent.unit;
-    const n = this.node(
-      parent.sourceId,
-      `${parent.name} · ${labels[operation]}`,
-      unit,
-      operation,
-      [parentId],
-      { value },
+  evaluate(
+    id: string,
+    _visiting = new Set<string>(),
+    sourceRange?: [number, number],
+  ): AsyncGenerator<SeriesChunk> {
+    return executeSignal(
+      id,
+      this.graph(),
+      (input, range) => this.raw(input, range),
+      () => this.check(),
+      sourceRange,
     );
-    n.color = parent.color;
-    if (operation === 'resample') {
-      const first = await this.evaluate(parentId).next();
-      const t = first.value?.time;
-      const spacing = t && t.length > 1 ? t[1] - t[0] : 1 / value;
-      n.parameters.maxGap = spacing * 5;
-      const start = this.bounds(parentId)[0];
-      if (start + 1 / value <= start)
+  }
+  async derive(parentId: string, operation: Operation, value: number) {
+    return (await this.deriveMany([parentId], operation, value))[0];
+  }
+  async deriveMany(parentIds: string[], operation: Operation, value: number) {
+    if (!parentIds.length || new Set(parentIds).size !== parentIds.length)
+      throw new Error('Choose unique inputs for this operation.');
+    const nodes: SignalNode[] = [];
+    const batchId = uid();
+    for (const parentId of parentIds) {
+      this.check();
+      const parent = this.find(parentId);
+      if (!Number.isFinite(value)) throw new Error('Enter a finite parameter.');
+      if (
+        operation === 'raw' ||
+        operation === 'crop' ||
+        operation === 'power' ||
+        operation === 'bsfc'
+      )
         throw new Error(
-          'Align this signal to zero before resampling at this rate.',
+          'This operation requires a segment or multiple inputs.',
         );
+      if (
+        operation === 'smooth' &&
+        (!Number.isInteger(value) || value < 1 || value > 100000)
+      )
+        throw new Error('Window must be 1–100,000 samples.');
+      if (
+        operation === 'median' &&
+        (!Number.isInteger(value) || value < 1 || value > 1001)
+      )
+        throw new Error('Median window must be 1–1,001 whole samples.');
+      if (operation === 'exponential' && (value <= 0 || value > 1))
+        throw new Error(
+          'Smoothing factor must be greater than 0 and at most 1.',
+        );
+      if ((operation === 'low-pass' || operation === 'high-pass') && value <= 0)
+        throw new Error('Cutoff frequency must be greater than 0 Hz.');
+      if (operation === 'resample' && (value < 0.01 || value > 10000))
+        throw new Error('Sample rate must be 0.01–10,000 Hz.');
+      if (
+        operation === 'resample' &&
+        (this.bounds(parentId)[1] - this.bounds(parentId)[0]) * value >
+          100000000
+      )
+        throw new Error(
+          'This rate would produce over 100 million samples. Choose a lower rate.',
+        );
+      const labels: Partial<Record<Operation, string>> = {
+        smooth: 'Smoothed',
+        median: 'Median filtered',
+        exponential: 'Exponentially smoothed',
+        'low-pass': 'Low-pass filtered',
+        'high-pass': 'High-pass filtered',
+        scale: 'Scaled',
+        offset: 'Offset',
+        absolute: 'Absolute',
+        derivative: 'Derivative',
+        integral: 'Integral',
+        'min-max': 'Min / Max',
+        'time-shift': 'Time shifted',
+        'zero-time': 'Zeroed',
+        resample: 'Resampled',
+      };
+      const unit =
+        operation === 'derivative'
+          ? `${parent.unit}/s`
+          : operation === 'integral'
+            ? `${parent.unit}·s`
+            : parent.unit;
+      const n = this.node(
+        parent.sourceId,
+        `${parent.name.split(' · ')[0]} · ${labels[operation]}`,
+        unit,
+        operation,
+        [parentId],
+        { value },
+      );
+      n.color = parent.color;
+      n.batchId = batchId;
+      if (operation === 'resample') {
+        const first = await this.evaluate(parentId).next();
+        const t = first.value?.time;
+        const spacing = t && t.length > 1 ? t[1] - t[0] : 1 / value;
+        n.parameters.maxGap = spacing * 5;
+        const start = this.bounds(parentId)[0];
+        if (start + 1 / value <= start)
+          throw new Error(
+            'Align this signal to zero before resampling at this rate.',
+          );
+      }
+      nodes.push(n);
     }
-    // Validate the graph and limits without materializing the recording.
-    let depth = 0;
-    let cursor = parent;
-    while (cursor.parents.length) {
-      if (++depth >= 60)
-        throw new Error('Maximum derivation depth reached (60).');
-      cursor = this.find(cursor.parents[0]);
-    }
-    await this.save({ ...this.project, nodes: [...this.project.nodes, n] });
-    return n;
+    await this.save({
+      ...this.project,
+      nodes: [...this.project.nodes, ...nodes],
+    });
+    return nodes;
   }
   /** Constant translation from recording time to this node's displayed time. */
   private axisOffset(id: string): number {
-    const node = this.find(id);
-    const offset = node.parents.length ? this.axisOffset(node.parents[0]) : 0;
-    if (node.operation === 'time-shift') return offset + node.parameters.value;
-    if (node.operation === 'zero-time')
-      return offset - this.bounds(node.parents[0])[0];
-    return offset;
+    this.find(id);
+    return this.graph().offsets.get(id)!;
   }
   private async hasSample(
     id: string,
     start: number,
     end: number,
   ): Promise<boolean> {
-    if (end < start) return false;
-    const node = this.find(id);
-    if (node.operation === 'raw') {
-      const source = this.project.sources.find(
-        (item) => item.id === node.sourceId,
-      )!;
-      for (let i = 0; i < source.chunks; i++) {
-        const range = source.chunkRanges[i];
-        if (range[1] < start || range[0] > end) continue;
-        const times = await this.column(source.id, i, 'time');
-        let low = 0;
-        let high = times.length;
-        while (low < high) {
-          const middle = (low + high) >>> 1;
-          if (times[middle] < start) low = middle + 1;
-          else high = middle;
+    let node = this.find(id);
+    while (true) {
+      if (end < start) return false;
+      if (node.operation === 'raw') {
+        const source = this.project.sources.find(
+          (item) => item.id === node.sourceId,
+        )!;
+        for (let i = 0; i < source.chunks; i++) {
+          const range = source.chunkRanges[i];
+          if (range[1] < start || range[0] > end) continue;
+          const times = await this.column(source.id, i, 'time');
+          let low = 0;
+          let high = times.length;
+          while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (times[middle] < start) low = middle + 1;
+            else high = middle;
+          }
+          if (low < times.length && times[low] <= end) return true;
         }
-        if (low < times.length && times[low] <= end) return true;
+        return false;
       }
-      return false;
+      if (node.operation === 'min-max') {
+        let times = this.extremaTimes.get(node.id);
+        if (!times) {
+          times = [];
+          for await (const chunk of this.evaluate(node.id))
+            times.push(...chunk.time);
+          if (this.extremaTimes.size >= 128)
+            this.extremaTimes.delete(this.extremaTimes.keys().next().value!);
+          this.extremaTimes.set(node.id, times);
+        }
+        return times.some((time) => time >= start && time <= end);
+      }
+      if (node.operation === 'crop') {
+        start = Math.max(start, node.parameters.start);
+        end = Math.min(end, node.parameters.end);
+      }
+      if (node.operation === 'resample') {
+        const [origin, last] = this.bounds(node.id);
+        let index = Math.max(
+          0,
+          Math.floor((start - origin) * node.parameters.value),
+        );
+        if (origin + index / node.parameters.value < start) index++;
+        const candidate = origin + index / node.parameters.value;
+        if (candidate > Math.min(end, last)) return false;
+        start = candidate;
+        end = this.bounds(node.parents[0])[1];
+      }
+      const translation =
+        node.operation === 'time-shift'
+          ? node.parameters.value
+          : node.operation === 'zero-time'
+            ? -this.bounds(node.parents[0])[0]
+            : 0;
+      start -= translation;
+      end -= translation;
+      node = this.find(node.parents[0]);
     }
-    if (node.operation === 'crop')
-      return this.hasSample(
-        node.parents[0],
-        Math.max(start, node.parameters.start),
-        Math.min(end, node.parameters.end),
-      );
-    if (node.operation === 'resample') {
-      const [origin, last] = this.bounds(id);
-      let index = Math.max(
-        0,
-        Math.floor((start - origin) * node.parameters.value),
-      );
-      if (origin + index / node.parameters.value < start) index++;
-      const candidate = origin + index / node.parameters.value;
-      return (
-        candidate <= Math.min(end, last) &&
-        this.hasSample(
-          node.parents[0],
-          candidate,
-          this.bounds(node.parents[0])[1],
-        )
-      );
-    }
-    const translation =
-      node.operation === 'time-shift'
-        ? node.parameters.value
-        : node.operation === 'zero-time'
-          ? -this.bounds(node.parents[0])[0]
-          : 0;
-    return this.hasSample(
-      node.parents[0],
-      start - translation,
-      end - translation,
-    );
   }
   private gridRecipe(id: string): string {
     const operations: [Operation, Record<string, number>][] = [];
     let node = this.find(id);
     while (node.operation !== 'raw') {
+      if (node.operation === 'min-max')
+        return JSON.stringify([node.id, operations]);
       if (
         ['crop', 'resample', 'time-shift', 'zero-time'].includes(node.operation)
       )
@@ -735,8 +614,35 @@ export class SignalEngine {
     sourceId: string,
     definition: SegmentationDefinition,
     targetIds: string[],
+    independently = false,
   ): Promise<SegmentationPlan> {
     this.check();
+    if (independently) {
+      if (!targetIds.length || new Set(targetIds).size !== targetIds.length)
+        throw new Error('Choose unique inputs for segmentation.');
+      const combined: SegmentationPlan = {
+        ranges: [],
+        skipped: 0,
+        incomplete: 0,
+      };
+      for (const id of targetIds) {
+        const plan = await this.previewSegments(
+          sourceId,
+          this.memberDefinition(definition, targetIds[0], id),
+          [id],
+        );
+        combined.ranges.push(
+          ...plan.ranges.map((range) => ({ ...range, inputId: id })),
+        );
+        combined.skipped += plan.skipped;
+        combined.incomplete += plan.incomplete;
+        if (combined.ranges.length > 1000)
+          throw new Error(
+            'More than 1,000 segments in this batch. Narrow the settings or select fewer inputs.',
+          );
+      }
+      return combined;
+    }
     const cacheKey = JSON.stringify([sourceId, definition, targetIds]);
     if (cacheKey === this.segmentPreviewCache?.key)
       return structuredClone(this.segmentPreviewCache.plan);
@@ -943,8 +849,14 @@ export class SignalEngine {
     sourceId: string,
     definition: SegmentationDefinition,
     targetIds: string[],
+    independently = false,
   ) {
-    const plan = await this.previewSegments(sourceId, definition, targetIds);
+    const plan = await this.previewSegments(
+      sourceId,
+      definition,
+      targetIds,
+      independently,
+    );
     if (!plan.ranges.length)
       throw new Error(
         'No complete segments match these settings. Preview the triggers, offsets, or time ranges.',
@@ -954,37 +866,45 @@ export class SignalEngine {
       (s) => s.sourceId === sourceId,
     ).length;
     const savedDefinition = structuredClone(definition);
+    const batchId = uid();
     const segments = plan.ranges.map((boundary, index): Segment => {
-      const cropped = targetIds.map((id) => {
-        const parent = this.find(id);
-        const offset = this.axisOffset(id);
-        const triggers =
-          definition.method === 'triggers'
-            ? [definition.start.signalId, definition.end.signalId]
-            : [];
-        const node = this.node(
-          sourceId,
-          parent.name,
-          parent.unit,
-          'crop',
-          [...new Set([id, ...triggers])],
-          {
-            start: boundary.start + offset,
-            end: boundary.end + offset,
-          },
-        );
-        node.color = parent.color;
-        return node;
-      });
+      const recipe = boundary.inputId
+        ? this.memberDefinition(savedDefinition, targetIds[0], boundary.inputId)
+        : savedDefinition;
+      const cropped = (boundary.inputId ? [boundary.inputId] : targetIds).map(
+        (id) => {
+          const parent = this.find(id);
+          const offset = this.axisOffset(id);
+          const triggers =
+            recipe.method === 'triggers'
+              ? [recipe.start.signalId, recipe.end.signalId]
+              : [];
+          const node = this.node(
+            sourceId,
+            parent.name,
+            parent.unit,
+            'crop',
+            [...new Set([id, ...triggers])],
+            {
+              start: boundary.start + offset,
+              end: boundary.end + offset,
+            },
+          );
+          node.color = parent.color;
+          node.batchId = batchId;
+          return node;
+        },
+      );
       nodes.push(...cropped);
       return {
         id: uid(),
         sourceId,
+        batchId,
         name: `Segment ${String(baseIndex + index + 1).padStart(2, '0')}`,
         start: boundary.start,
         end: boundary.end,
         nodes: cropped.map((node) => node.id),
-        definition: savedDefinition,
+        definition: recipe,
         boundary,
       };
     });
@@ -994,6 +914,28 @@ export class SignalEngine {
       segments: [...this.project.segments, ...segments],
     });
     return segments;
+  }
+  private memberDefinition(
+    definition: SegmentationDefinition,
+    first: string,
+    current: string,
+  ): SegmentationDefinition {
+    if (definition.method !== 'triggers') return definition;
+    return {
+      ...definition,
+      start: {
+        ...definition.start,
+        signalId:
+          definition.start.signalId === first
+            ? current
+            : definition.start.signalId,
+      },
+      end: {
+        ...definition.end,
+        signalId:
+          definition.end.signalId === first ? current : definition.end.signalId,
+      },
+    };
   }
   // An explicit calculation step; segmentation itself only creates crop recipes.
   async calculateSegmentMetrics(ids: string[]) {
@@ -1062,16 +1004,22 @@ export class SignalEngine {
     if (node.operation === 'bsfc') {
       // Integrate only intervals valid in BOTH inputs to avoid bias from missing fuel samples.
       const powerInput = this.evaluate(node.parents[1]);
+      let powerChunk: SeriesChunk | undefined;
+      let powerIndex = 0;
       let previous: [number, number, number] | undefined;
       let fuelTotal = 0;
       let energyTotal = 0;
       for await (const fuel of this.evaluate(node.parents[0])) {
-        const p = await powerInput.next();
-        if (p.done) break;
         for (let i = 0; i < fuel.time.length; i++) {
+          if (!powerChunk || powerIndex === powerChunk.time.length) {
+            powerChunk = (await powerInput.next()).value;
+            powerIndex = 0;
+          }
+          if (!powerChunk || powerChunk.time[powerIndex] !== fuel.time[i])
+            throw new Error('Inputs must share timestamps.');
           const t = fuel.time[i];
           const f = fuel.values[i];
-          const watts = p.value.values[i];
+          const watts = powerChunk.values[powerIndex++];
           const valid =
             t >= bounds[0] &&
             t <= bounds[1] &&
