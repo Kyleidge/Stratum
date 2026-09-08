@@ -78,18 +78,74 @@ validation failures and environmental blockers rather than hiding them.
 - Keep Wrangler logs and Miniflare state project-local, as configured in Vite.
 - Preserve existing app behavior and dependencies unless the task needs a change.
 
-## Git and working across computers
+## Git workflow
+
+Apply this workflow automatically for every task. The user authorizes committing
+and pushing the relevant changes from successful tasks; do not ask again solely
+for those routine Git operations. Follow the active Codex permission controls and
+report any authentication or approval blocker. AGENTS.md does not override them.
+
+### At the beginning of every task
+
+1. Check `git status` and the current branch before making changes. Note existing
+   staged, unstaged, and untracked work so it stays separate from the task.
+2. If the working tree is clean and an `origin` remote exists, fetch from origin
+   and pull/rebase the current branch onto its corresponding remote branch before
+   editing. Use the current branch's configured origin upstream when present;
+   otherwise check for the same-named branch on origin. Never guess a different
+   branch or silently switch branches. If no remote branch exists yet, keep the
+   local branch and establish its upstream with the first push. If HEAD is
+   detached or the upstream mapping is ambiguous, report it before syncing.
+3. Never discard, overwrite, reset, or stash existing local changes just to
+   perform a pull. Disable automatic stashing for pull/rebase operations, even if
+   a machine's Git configuration enables it.
+4. If local uncommitted changes make syncing unsafe, preserve them, skip the
+   pull/rebase, and tell the user. Continue only task work that can safely coexist
+   with those changes.
+
+### At the end of every successful task that changed files
+
+1. Run the project's tests/checks appropriate to the change. Read the current
+   package scripts rather than assuming an old command is still correct. For a
+   documentation-only change, check the edited document and `git diff --check`;
+   application changes need the applicable tests, lint, types, and build checks.
+   Report failures or checks that could not run; do not claim they passed.
+2. Review both the working diff and the exact staged diff. Ensure the commit has
+   no secrets, .env files, credentials, temporary files, build output, dependencies,
+   machine-specific files, or unrelated changes. Stage only the task's relevant
+   files or hunks; preserve any pre-existing staged work without committing it.
+3. Commit the relevant changes with a concise descriptive commit message. Do not
+   make an empty commit for a task that leaves no changes.
+4. Before pushing, fetch from origin again. Fetching remote references is safe
+   with a dirty working tree; it does not authorize pulling or rebasing that tree.
+5. Check the fetched remote branch against the current branch. If the remote has
+   moved and is not already an ancestor of the local branch, rebase safely onto
+   that remote branch before pushing. Rebase only with a clean working tree and
+   automatic stashing disabled. If unrelated local changes prevent rebasing, keep
+   them and the task commit, stop before pushing, and tell the user. After a rebase,
+   review the result and rerun checks appropriate to any affected changes.
+6. Push the current branch to origin, using the verified remote branch mapping.
+   Set its upstream on the first push. If origin is missing or authentication or
+   permissions prevent pushing, retain the local commit and report the blocker.
+   If the push is rejected because the remote moved again, fetch and repeat the
+   same safe checks; never bypass them.
+7. Never force-push unless the user explicitly asks. This includes force-with-lease.
+8. If a merge/rebase conflict cannot be resolved confidently, stop and tell the
+   user rather than guessing. Do not discard work to make the operation succeed.
+
+Afterwards, tell the user what was committed, the final commit hash (after any
+rebase), and whether the push succeeded. If no commit or push was made, state why.
+Mention any local changes that remain uncommitted and therefore were not synced.
+
+### Working across computers
 
 - The main branch is `main`. Use a separate local clone on each computer and use
   GitHub to exchange commits; do not edit the same shared network checkout.
-- Before work: inspect `git status`, switch to the intended branch, and run
-  `git pull --ff-only` when the working tree is clean and an upstream exists.
-- Before switching computers: review the diff, commit the intended files, and
-  push. On the other computer, pull and install with the frozen lockfile.
-- For parallel work, use different feature branches. If a fast-forward pull
-  fails, inspect the divergence; do not reset, clean, force-push, or discard work.
-- Keep .env files, credentials, dependencies, builds, caches, logs, and
-  machine-specific configuration out of commits. Review staged files for secrets.
-- Keep secrets separately configured on each computer; do not send them via Git.
+- Follow the start/end sync workflow above when changing computers. Uncommitted
+  changes do not travel through GitHub. Install dependencies from the committed
+  lockfile on each computer instead of sharing node_modules.
+- Use separate feature branches for parallel work. Do not reset, clean, or
+  discard someone else's work when reconciling branch history.
+- Keep secrets separately configured on each computer; never store credentials
+  in tracked files, Git remote URLs, or documentation.
 - .gitattributes normalizes text to LF to prevent line-ending churn.
-- Never store authentication tokens in tracked files, Git remote URLs, or docs.
