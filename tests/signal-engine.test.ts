@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { CsvParser, Envelope, bsfc, power } from '../lib/signal-math';
+import type { SegmentationDefinition } from '../lib/signal-types';
+import { segmentTraces } from '../lib/segment-traces';
 
 async function fixture(csv: string) {
   const e = new SignalEngine(undefined, crypto.randomUUID());
@@ -71,7 +73,14 @@ void test('energy-weighted BSFC excludes intervals with missing inputs', async (
   const { e, s } = await fixture(
     't,Speed [rpm],Torque [Nm],Fuel [kg/h]\n0,2000,100,2\n1,3000,100,\n2,4000,100,6\n3,5000,100,8',
   );
-  const segments = await e.segment(s.channels[0], 1400, 1);
+  const crops = await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 3]], boundary: 'clip' },
+    s.channels,
+  );
+  const segments = await e.calculateSegmentMetrics(
+    crops.map((segment) => segment.id),
+  );
   const n = e.project.nodes.find(
     (n) => segments[0].nodes.includes(n.id) && n.operation === 'bsfc',
   )!;
@@ -116,7 +125,8 @@ void test('three demo ramps create multi-input lineage and exclude idle tails', 
   assert.equal(e.project.segments.length, 3);
   for (const seg of e.project.segments) {
     const speed = await values(e, seg.nodes[0]);
-    assert.ok(speed.at(-1)! >= 1400);
+    assert.ok(speed.at(-1)! > 900);
+    assert.equal(seg.definition?.method, 'triggers');
     const f = e.project.nodes.find(
       (n) => seg.nodes.includes(n.id) && n.operation === 'bsfc',
     )!;
@@ -178,4 +188,445 @@ void test('envelope preserves narrow spikes, time order, and missing gaps', () =
   assert.ok(result.points.some((p) => Number.isNaN(p[1])));
   for (let i = 1; i < result.points.length; i++)
     assert.ok(result.points[i][0] > result.points[i - 1][0]);
+});
+
+function triggers(
+  id: string,
+): Extract<SegmentationDefinition, { method: 'triggers' }> {
+  return {
+    method: 'triggers',
+    start: { signalId: id, edge: 'rising', threshold: 1, offset: 0 },
+    end: { signalId: id, edge: 'falling', threshold: 1, offset: 0 },
+    minimumDuration: 0,
+    boundary: 'clip',
+  };
+}
+const binaryCsv =
+  't,Switch [V]\n0,0\n1,0\n2,2\n3,2\n4,0\n5,0\n6,2\n7,2\n8,0\n9,0';
+
+void test('generic triggers interpolate crossings, preserve provenance, and only create crops', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const before = await values(e, s.channels[0]);
+  const config = triggers(s.channels[0]);
+  const preview = await e.previewSegments(s.id, config, s.channels);
+  assert.equal(e.project.segments.length, 0);
+  assert.deepEqual(
+    preview.ranges.map((range) => [range.start, range.end]),
+    [
+      [1.5, 3.5],
+      [5.5, 7.5],
+    ],
+  );
+  const segments = await e.segment(s.id, config, s.channels);
+  assert.equal(segments[0].name, 'Segment 01');
+  assert.deepEqual(segments[0].definition, config);
+  assert.equal(segments[0].boundary?.startTrigger, 1.5);
+  assert.deepEqual(await values(e, segments[0].nodes[0]), [2, 2]);
+  assert.ok(
+    e.project.nodes.slice(1).every((node) => node.operation === 'crop'),
+  );
+  assert.deepEqual(await values(e, s.channels[0]), before);
+  e.close();
+});
+void test('signed offsets apply after pairing and may produce overlapping, clipped segments', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const config = triggers(s.channels[0]);
+  config.start.offset = -20;
+  config.end.offset = 1;
+  const preview = await e.previewSegments(s.id, config, s.channels);
+  assert.deepEqual(
+    preview.ranges.map((range) => [range.start, range.end]),
+    [
+      [0, 4.5],
+      [0, 8.5],
+    ],
+  );
+  assert.equal(preview.ranges[0].requestedStart, -18.5);
+  assert.ok(preview.ranges.every((range) => range.clipped));
+  const discard = await e.previewSegments(
+    s.id,
+    { ...config, boundary: 'discard' },
+    s.channels,
+  );
+  assert.equal(discard.ranges.length, 0);
+  assert.equal(discard.skipped, 2);
+  config.start.offset = 3;
+  config.end.offset = 0;
+  assert.equal((await e.previewSegments(s.id, config, s.channels)).skipped, 2);
+  config.start.offset = 0;
+  config.minimumDuration = 3;
+  assert.equal((await e.previewSegments(s.id, config, s.channels)).skipped, 2);
+  e.close();
+});
+void test('independent signals ignore repeated starts and ends before a start', async () => {
+  const { e, s } = await fixture(
+    't,Start,End\n0,0,2\n1,0,0\n2,2,0\n3,0,2\n4,2,2\n5,2,0\n6,0,0\n7,2,0\n8,2,0',
+  );
+  const config = triggers(s.channels[0]);
+  config.end.signalId = s.channels[1];
+  const plan = await e.previewSegments(s.id, config, s.channels);
+  assert.deepEqual(
+    plan.ranges.map((range) => [range.start, range.end]),
+    [[1.5, 4.5]],
+  );
+  assert.equal(plan.incomplete, 1);
+  const segments = await e.segment(s.id, config, s.channels);
+  assert.deepEqual(e.find(segments[0].nodes[0]).parents, s.channels);
+  e.close();
+});
+void test('falling starts, rising ends, equality and initially active signals have explicit edge semantics', async () => {
+  const { e, s } = await fixture('t,Switch\n0,2\n1,1\n2,0\n3,1\n4,2\n5,1\n6,0');
+  const config = triggers(s.channels[0]);
+  config.start.edge = 'falling';
+  config.end.edge = 'rising';
+  const plan = await e.previewSegments(s.id, config, s.channels);
+  assert.deepEqual(
+    plan.ranges.map((range) => [range.start, range.end]),
+    [[1, 3]],
+  );
+  assert.equal(plan.incomplete, 1);
+  const initial = await e.previewSegments(
+    s.id,
+    triggers(s.channels[0]),
+    s.channels,
+  );
+  assert.deepEqual(
+    initial.ranges.map((range) => [range.start, range.end]),
+    [[3, 5]],
+  );
+  e.close();
+});
+void test('missing trigger samples break pairs without fabricated crossings', async () => {
+  const { e, s } = await fixture(
+    't,a\n0,0\n1,0\n2,2\n3,\n4,0\n5,0\n6,2\n7,2\n8,0\n9,0',
+  );
+  const plan = await e.previewSegments(
+    s.id,
+    triggers(s.channels[0]),
+    s.channels,
+  );
+  assert.deepEqual(
+    plan.ranges.map((range) => [range.start, range.end]),
+    [[5.5, 7.5]],
+  );
+  assert.equal(plan.incomplete, 1);
+  e.close();
+});
+void test('trigger state crosses persisted chunk boundaries', async () => {
+  const lines = ['t,a'];
+  for (let i = 0; i < 16400; i++)
+    lines.push(`${i},${i >= 16384 && i <= 16388 ? 2 : 0}`);
+  const { e, s } = await fixture(lines.join('\n'));
+  const plan = await e.previewSegments(
+    s.id,
+    triggers(s.channels[0]),
+    s.channels,
+  );
+  assert.deepEqual(
+    plan.ranges.map((range) => [range.start, range.end]),
+    [[16383.5, 16388.5]],
+  );
+  e.close();
+});
+void test('derived triggers and targets map through zeroed and shifted time axes', async () => {
+  const { e, s } = await fixture(
+    binaryCsv
+      .split('\n')
+      .map((line, index) =>
+        index
+          ? `${Number(line.split(',')[0]) + 10},${line.split(',')[1]}`
+          : line,
+      )
+      .join('\n'),
+  );
+  const zero = await e.derive(s.channels[0], 'zero-time', 0);
+  const filtered = await e.derive(zero.id, 'smooth', 1);
+  const shifted = await e.derive(filtered.id, 'time-shift', -5);
+  const target = await e.derive(s.channels[0], 'time-shift', 50);
+  const segments = await e.segment(s.id, triggers(shifted.id), [target.id]);
+  assert.deepEqual(
+    segments.map((segment) => [segment.start, segment.end]),
+    [
+      [11.5, 13.5],
+      [15.5, 17.5],
+    ],
+  );
+  assert.deepEqual((await e.rows(segments[0].nodes[0], 0)).rows, [
+    [62, 2],
+    [63, 2],
+  ]);
+  assert.deepEqual(e.find(segments[0].nodes[0]).parents, [
+    target.id,
+    shifted.id,
+  ]);
+  assert.equal((await e.rows(s.channels[0], 0)).rows[0][0], 10);
+  e.close();
+});
+void test('manual ranges and windows support overlap, partial tails and exclude empty crops', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const manual = await e.previewSegments(
+    s.id,
+    {
+      method: 'ranges',
+      ranges: [
+        [0.1, 0.2],
+        [-1, 2],
+        [3, 5],
+        [20, 30],
+      ],
+      boundary: 'clip',
+    },
+    s.channels,
+  );
+  assert.deepEqual(
+    manual.ranges.map((range) => [range.start, range.end]),
+    [
+      [0, 2],
+      [3, 5],
+    ],
+  );
+  assert.equal(manual.skipped, 2);
+  const windows: SegmentationDefinition = {
+    method: 'windows',
+    start: 0,
+    end: 9,
+    duration: 4,
+    step: 3,
+    includePartial: true,
+    boundary: 'clip',
+  };
+  const plan = await e.previewSegments(s.id, windows, s.channels);
+  assert.deepEqual(
+    plan.ranges.map((range) => [range.start, range.end]),
+    [
+      [0, 4],
+      [3, 7],
+      [6, 9],
+    ],
+  );
+  const full = await e.previewSegments(
+    s.id,
+    { ...windows, includePartial: false },
+    s.channels,
+  );
+  assert.equal(full.ranges.length, 2);
+  assert.equal(full.skipped, 1);
+  e.close();
+});
+void test('segmentation validates inputs before publishing any new nodes', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const config = triggers(s.channels[0]);
+  await assert.rejects(
+    e.segment(
+      s.id,
+      { ...config, start: { ...config.start, threshold: NaN } },
+      s.channels,
+    ),
+    /finite/,
+  );
+  await assert.rejects(
+    e.segment(
+      s.id,
+      { method: 'ranges', ranges: [[4, 3]], boundary: 'clip' },
+      s.channels,
+    ),
+    /later end/,
+  );
+  await assert.rejects(
+    e.segment(
+      s.id,
+      {
+        method: 'windows',
+        start: 0,
+        end: 9,
+        duration: 1,
+        step: 0.001,
+        includePartial: true,
+        boundary: 'clip',
+      },
+      s.channels,
+    ),
+    /1,000/,
+  );
+  await assert.rejects(e.segment(s.id, config, []), /output signal/);
+  const other = await e.importCsv(new File(['t,a\n0,0\n1,1'], 'other.csv'));
+  await assert.rejects(
+    e.segment(s.id, config, other.channels),
+    /same recording/,
+  );
+  assert.equal(e.project.segments.length, 0);
+  assert.equal(e.project.nodes.length, 2);
+  e.close();
+});
+void test('incompatible metric grids fail without publishing broken calculations', async () => {
+  const { e, s } = await fixture(
+    't,Speed [rpm],Torque [Nm]\n0,1000,100\n1,2000,100\n2,3000,100\n3,4000,100',
+  );
+  const shifted = await e.derive(s.channels[0], 'time-shift', 10);
+  const segments = await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 3]], boundary: 'clip' },
+    [shifted.id, s.channels[1]],
+  );
+  const count = e.project.nodes.length;
+  await assert.rejects(
+    e.calculateSegmentMetrics(segments.map((segment) => segment.id)),
+    /matching sample grids/,
+  );
+  assert.equal(e.project.nodes.length, count);
+  e.close();
+});
+void test('segmentation cancellation leaves the existing graph intact', async () => {
+  const e = new SignalEngine((message) => {
+    if (message.includes('Scanning')) e.cancelled = true;
+  }, crypto.randomUUID());
+  await e.open();
+  const source = await e.importCsv(new File([binaryCsv], 'cancel.csv'));
+  await assert.rejects(
+    e.segment(source.id, triggers(source.channels[0]), source.channels),
+    /cancelled/,
+  );
+  assert.equal(e.project.segments.length, 0);
+  assert.equal(e.project.nodes.length, 1);
+  e.close();
+});
+void test('saved segmentation definitions and earlier revisions survive reopening', async () => {
+  const name = crypto.randomUUID();
+  const e = new SignalEngine(undefined, name);
+  await e.open();
+  const s = await e.importCsv(new File([binaryCsv], 'saved.csv'));
+  const first = await e.segment(s.id, triggers(s.channels[0]), s.channels);
+  const before = structuredClone(first);
+  await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 9]], boundary: 'clip' },
+    s.channels,
+  );
+  assert.deepEqual(e.project.segments.slice(0, 2), before);
+  e.close();
+  const reopened = new SignalEngine(undefined, name);
+  await reopened.open();
+  assert.deepEqual(reopened.project.segments.slice(0, 2), before);
+  assert.deepEqual(await values(reopened, first[0].nodes[0]), [2, 2]);
+  reopened.close();
+});
+
+void test('trigger coverage ends break pairing and output coverage clips derived targets', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const [short] = await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 3]], boundary: 'clip' },
+    s.channels,
+  );
+  const config = triggers(s.channels[0]);
+  config.end.signalId = short.nodes[0];
+  const incomplete = await e.previewSegments(s.id, config, s.channels);
+  assert.equal(incomplete.ranges.length, 0);
+  assert.equal(incomplete.incomplete, 1);
+  const target = await e.previewSegments(
+    s.id,
+    triggers(s.channels[0]),
+    short.nodes,
+  );
+  assert.deepEqual(
+    target.ranges.map((range) => [range.start, range.end]),
+    [[1.5, 3]],
+  );
+  assert.ok(target.ranges[0].clipped);
+  e.close();
+});
+void test('preview cache is isolated and manual batch definitions share one snapshot', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const config: SegmentationDefinition = {
+    method: 'ranges',
+    ranges: [
+      [0, 2],
+      [3, 5],
+    ],
+    boundary: 'clip',
+  };
+  const preview = await e.previewSegments(s.id, config, s.channels);
+  preview.ranges[0].start = 999;
+  const saved = await e.segment(s.id, config, s.channels);
+  assert.equal(saved[0].start, 0);
+  assert.equal(saved[0].definition, saved[1].definition);
+  assert.notEqual(saved[0].definition, config);
+  e.close();
+});
+void test('resampled crop tails without output timestamps are excluded', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  const [segment] = await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 3.5]], boundary: 'clip' },
+    s.channels,
+  );
+  const resampled = await e.derive(segment.nodes[0], 'resample', 10);
+  const plan = await e.previewSegments(
+    s.id,
+    { method: 'ranges', ranges: [[3.2, 3.4]], boundary: 'clip' },
+    [resampled.id],
+  );
+  assert.equal(plan.ranges.length, 0);
+  assert.equal(plan.skipped, 1);
+  e.close();
+});
+
+void test('comparison handles heterogeneous targets and aligns shifted crops to their own starts', async () => {
+  const { e, s } = await fixture(
+    't,a [V],b [A]\n0,0,0\n1,1,10\n2,2,20\n3,3,30',
+  );
+  const shifted = await e.derive(s.channels[0], 'time-shift', 10);
+  const config: SegmentationDefinition = {
+    method: 'ranges',
+    ranges: [[1, 3]],
+    boundary: 'clip',
+  };
+  const first = await e.segment(s.id, config, [shifted.id]);
+  const second = await e.segment(s.id, config, [s.channels[1]]);
+  const plots = Object.fromEntries(
+    await Promise.all(
+      [...first, ...second]
+        .flatMap((segment) => segment.nodes)
+        .map(async (id) => [id, await e.plot(id)]),
+    ),
+  );
+  const traces = segmentTraces(
+    e.find(s.channels[0]),
+    e.project.segments,
+    e.project.nodes,
+    plots,
+    ['green'],
+  );
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].offset, 11);
+  assert.equal(traces[0].plot.points[0][0] - traces[0].offset, 0);
+  assert.equal(
+    segmentTraces(e.find(s.channels[1]), first, e.project.nodes, plots, [
+      'green',
+    ]).length,
+    0,
+  );
+  e.close();
+});
+
+void test('metric grid validation stays bounded through deep time-transform chains', async () => {
+  const { e, s } = await fixture(
+    't,Speed [rpm],Torque [Nm]\n0,1000,100\n1,2000,100\n2,3000,100',
+  );
+  let speed = s.channels[0];
+  let torque = s.channels[1];
+  for (let i = 0; i < 30; i++) {
+    speed = (await e.derive(speed, 'time-shift', 1)).id;
+    torque = (await e.derive(torque, 'time-shift', 1)).id;
+  }
+  const segments = await e.segment(
+    s.id,
+    { method: 'ranges', ranges: [[0, 2]], boundary: 'clip' },
+    [speed, torque],
+  );
+  await e.calculateSegmentMetrics(segments.map((segment) => segment.id));
+  const node = e.project.nodes.at(-1)!;
+  assert.equal(node.operation, 'power');
+  assert.ok(Math.abs((await values(e, node.id))[0] - power(100, 1000)) < 1e-10);
+  e.close();
 });

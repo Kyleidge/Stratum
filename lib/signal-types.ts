@@ -44,9 +44,49 @@ export type Segment = {
   start: number;
   end: number;
   nodes: string[];
-  triggerId: string;
+  definition?: SegmentationDefinition;
+  boundary?: SegmentBoundary;
+  // Original prototype records retain their legacy provenance when reopened.
+  triggerId?: string;
+  threshold?: number;
+  minimumDuration?: number;
+};
+export type EdgeTrigger = {
+  signalId: string;
+  edge: 'rising' | 'falling';
   threshold: number;
-  minimumDuration: number;
+  offset: number;
+};
+export type SegmentationDefinition = (
+  | {
+      method: 'triggers';
+      start: EdgeTrigger;
+      end: EdgeTrigger;
+      minimumDuration: number;
+    }
+  | { method: 'ranges'; ranges: [number, number][] }
+  | {
+      method: 'windows';
+      start: number;
+      end: number;
+      duration: number;
+      step: number;
+      includePartial: boolean;
+    }
+) & { boundary: 'clip' | 'discard' };
+export type SegmentBoundary = {
+  start: number;
+  end: number;
+  requestedStart: number;
+  requestedEnd: number;
+  startTrigger?: number;
+  endTrigger?: number;
+  clipped: boolean;
+};
+export type SegmentationPlan = {
+  ranges: SegmentBoundary[];
+  skipped: number;
+  incomplete: number;
 };
 export type Project = {
   sources: Source[];
@@ -78,17 +118,19 @@ export type EngineRequest =
       parameter: number;
     }
   | {
-      type: 'segment';
-      parentId: string;
-      threshold: number;
-      minimumDuration: number;
+      type: 'segment' | 'segment-preview';
+      sourceId: string;
+      definition: SegmentationDefinition;
+      targetIds: string[];
     }
+  | { type: 'segment-metrics'; ids: string[] }
   | { type: 'view'; ids: string[]; range?: [number, number] }
   | { type: 'rows'; id: string; offset: number }
   | { type: 'export'; ids: string[] }
   | { type: 'cancel' };
 export type EngineResponse = { requestId: number } & (
   | { type: 'project'; project: Project }
+  | { type: 'segment-plan'; plan: SegmentationPlan }
   | { type: 'plots'; plots: Plot[] }
   | { type: 'rows'; rows: Point[]; hasMore: boolean }
   | { type: 'export'; blob: Blob }

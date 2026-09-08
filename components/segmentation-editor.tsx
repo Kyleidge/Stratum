@@ -1,0 +1,496 @@
+'use client';
+
+import { useState } from 'react';
+import { Eye, GitBranch, Scissors } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import type {
+  Segment,
+  SegmentationDefinition,
+  SegmentationPlan,
+  SignalNode,
+  Source,
+} from '@/lib/signal-types';
+
+type TriggerForm = {
+  signalId: string;
+  edge: 'rising' | 'falling';
+  threshold: string;
+  offset: string;
+};
+type Props = {
+  source: Source;
+  nodes: SignalNode[];
+  segments: Segment[];
+  busy: boolean;
+  onPreview: (
+    definition: SegmentationDefinition,
+    targets: string[],
+  ) => Promise<SegmentationPlan>;
+  onCreate: (definition: SegmentationDefinition, targets: string[]) => void;
+};
+
+function Choice({
+  label,
+  value,
+  items,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  items: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      items={items}
+      onValueChange={(next) => {
+        if (next) onChange(next);
+      }}
+    >
+      <SelectTrigger className="workbench-select" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function Numeric({
+  label,
+  value,
+  unit = 's',
+  onChange,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="segment-numeric">
+      <span className="field-label">{label}</span>
+      <div className="number-field">
+        <input
+          type="number"
+          step="any"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <span>{unit}</span>
+      </div>
+    </label>
+  );
+}
+
+function number(value: string): number {
+  if (!value.trim() || !Number.isFinite(Number(value)))
+    throw new Error('Enter a finite number in every numeric field.');
+  return Number(value);
+}
+const time = (value: number) => `${Number(value.toFixed(3))} s`;
+
+export default function SegmentationEditor({
+  source,
+  nodes,
+  segments,
+  busy,
+  onPreview,
+  onCreate,
+}: Props) {
+  const [method, setMethod] =
+    useState<SegmentationDefinition['method']>('triggers');
+  const [start, setStart] = useState<TriggerForm>({
+    signalId: source.channels[0],
+    edge: 'rising',
+    threshold: '900',
+    offset: '-20',
+  });
+  const [end, setEnd] = useState<TriggerForm>({
+    signalId: source.channels[0],
+    edge: 'falling',
+    threshold: '900',
+    offset: '0',
+  });
+  const [minimum, setMinimum] = useState('0');
+  const [ranges, setRanges] = useState(
+    `${source.start}, ${Math.min(source.end, source.start + 30)}`,
+  );
+  const [windowStart, setWindowStart] = useState(String(source.start));
+  const [windowEnd, setWindowEnd] = useState(String(source.end));
+  const [duration, setDuration] = useState('30');
+  const [step, setStep] = useState('30');
+  const [partial, setPartial] = useState(false);
+  const [boundary, setBoundary] = useState<'clip' | 'discard'>('clip');
+  const [target, setTarget] = useState('all');
+  const [preview, setPreview] = useState<{
+    key: string;
+    plan: SegmentationPlan;
+  }>();
+  const [error, setError] = useState('');
+  const key = JSON.stringify([
+    method,
+    start,
+    end,
+    minimum,
+    ranges,
+    windowStart,
+    windowEnd,
+    duration,
+    step,
+    partial,
+    boundary,
+    target,
+  ]);
+  const plan = preview?.key === key ? preview.plan : undefined;
+  const signals = nodes
+    .filter((node) => node.sourceId === source.id)
+    .map((node) => ({
+      value: node.id,
+      label: `${node.name} · ${segments.find((segment) => segment.nodes.includes(node.id))?.name ?? node.operation} [${node.unit}]`,
+    }));
+  function definition(): SegmentationDefinition {
+    if (method === 'triggers')
+      return {
+        method,
+        boundary,
+        start: {
+          ...start,
+          threshold: number(start.threshold),
+          offset: number(start.offset),
+        },
+        end: {
+          ...end,
+          threshold: number(end.threshold),
+          offset: number(end.offset),
+        },
+        minimumDuration: number(minimum),
+      };
+    if (method === 'windows')
+      return {
+        method,
+        boundary,
+        start: number(windowStart),
+        end: number(windowEnd),
+        duration: number(duration),
+        step: number(step),
+        includePartial: partial,
+      };
+    return {
+      method,
+      boundary,
+      ranges: ranges
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => {
+          const parts = line.split(',');
+          if (parts.length !== 2)
+            throw new Error(
+              'Enter one start, end pair per line. Times are in seconds.',
+            );
+          return [number(parts[0]), number(parts[1])];
+        }),
+    };
+  }
+  async function run(previewOnly: boolean) {
+    setError('');
+    try {
+      const config = definition();
+      const targets = target === 'all' ? source.channels : [target];
+      if (previewOnly)
+        setPreview({ key, plan: await onPreview(config, targets) });
+      else onCreate(config, targets);
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to segment this recording.',
+      );
+    }
+  }
+  function triggerEditor(
+    label: string,
+    trigger: TriggerForm,
+    update: (value: TriggerForm) => void,
+  ) {
+    const unit = nodes.find((node) => node.id === trigger.signalId)?.unit ?? '';
+    return (
+      <fieldset className="trigger-card">
+        <legend>{label} BOUNDARY</legend>
+        <Choice
+          label={`${label} trigger signal`}
+          value={trigger.signalId}
+          items={signals}
+          onChange={(signalId) => update({ ...trigger, signalId })}
+        />
+        <div className="field-label">Crossing</div>
+        <Choice
+          label={`${label} edge`}
+          value={trigger.edge}
+          items={[
+            { value: 'rising', label: '↗ Rising above' },
+            { value: 'falling', label: '↘ Falling below' },
+          ]}
+          onChange={(edge) => {
+            if (edge === 'rising' || edge === 'falling')
+              update({ ...trigger, edge });
+          }}
+        />
+        <div className="segment-field-pair">
+          <Numeric
+            label={`${label} threshold`}
+            value={trigger.threshold}
+            unit={unit}
+            onChange={(threshold) => update({ ...trigger, threshold })}
+          />
+          <Numeric
+            label={`${label} offset`}
+            value={trigger.offset}
+            onChange={(offset) => update({ ...trigger, offset })}
+          />
+        </div>
+      </fieldset>
+    );
+  }
+  return (
+    <fieldset className="segmentation-editor" disabled={busy}>
+      <div className="field-label">Method</div>
+      <Choice
+        label="Segmentation method"
+        value={method}
+        items={[
+          { value: 'triggers', label: 'Signal edge triggers' },
+          { value: 'ranges', label: 'Manual time ranges' },
+          { value: 'windows', label: 'Fixed-duration windows' },
+        ]}
+        onChange={(value) => {
+          if (value === 'triggers' || value === 'ranges' || value === 'windows')
+            setMethod(value);
+        }}
+      />
+      {method === 'triggers' && (
+        <>
+          {triggerEditor('Start', start, setStart)}
+          {triggerEditor('End', end, setEnd)}
+          <Numeric
+            label="Minimum output duration"
+            value={minimum}
+            onChange={setMinimum}
+          />
+          <p className="input-hint">
+            The first start pairs with the next later end. Offsets apply after
+            pairing; negative values include earlier data. Missing trigger
+            samples break a pair. Filter a signal explicitly if needed.
+          </p>
+        </>
+      )}
+      {method === 'ranges' && (
+        <>
+          <label className="field-label" htmlFor="segment-ranges">
+            Start, end — seconds, one range per line
+          </label>
+          <Textarea
+            id="segment-ranges"
+            className="segment-ranges"
+            rows={4}
+            value={ranges}
+            onChange={(event) => setRanges(event.target.value)}
+          />
+          <p className="input-hint">
+            Use recording time. Overlapping intervals are allowed.
+          </p>
+        </>
+      )}
+      {method === 'windows' && (
+        <>
+          <div className="segment-field-pair">
+            <Numeric
+              label="Range start"
+              value={windowStart}
+              onChange={setWindowStart}
+            />
+            <Numeric
+              label="Range end"
+              value={windowEnd}
+              onChange={setWindowEnd}
+            />
+          </div>
+          <div className="segment-field-pair">
+            <Numeric
+              label="Window duration"
+              value={duration}
+              onChange={setDuration}
+            />
+            <Numeric
+              label="Step between starts"
+              value={step}
+              onChange={setStep}
+            />
+          </div>
+          <label className="segment-checkbox">
+            <input
+              type="checkbox"
+              checked={partial}
+              onChange={(event) => setPartial(event.target.checked)}
+            />
+            Include a shorter final window
+          </label>
+          <p className="input-hint">
+            A step shorter than the duration creates overlapping windows.
+          </p>
+        </>
+      )}
+      <div className="field-label">Signals to segment</div>
+      <Choice
+        label="Signals to segment"
+        value={target}
+        items={[
+          { value: 'all', label: `All ${source.channels.length} raw channels` },
+          ...signals,
+        ]}
+        onChange={setTarget}
+      />
+      <div className="field-label">Outside available data</div>
+      <Choice
+        label="Recording boundary policy"
+        value={boundary}
+        items={[
+          { value: 'clip', label: 'Clip to available interval' },
+          { value: 'discard', label: 'Discard incomplete interval' },
+        ]}
+        onChange={(value) => {
+          if (value === 'clip' || value === 'discard') setBoundary(value);
+        }}
+      />
+      <div className="segment-preview" aria-live="polite">
+        {plan ? (
+          <>
+            <strong>
+              {plan.ranges.length} segments ·{' '}
+              {plan.ranges.filter((range) => range.clipped).length} clipped
+            </strong>
+            <small>
+              {plan.skipped} excluded · {plan.incomplete} unpaired starts
+            </small>
+            <ol>
+              {plan.ranges.map((range, index) => (
+                <li
+                  key={index}
+                  title={`Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
+                >
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <code>
+                    {time(range.start)} → {time(range.end)}
+                  </code>
+                  {range.clipped && <span>clip</span>}
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <small>Preview intervals before creating new branches.</small>
+        )}
+      </div>
+      {error && (
+        <p className="segment-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="segment-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => void run(true)}
+        >
+          <Eye size={14} />
+          Preview
+        </button>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => void run(false)}
+        >
+          <Scissors size={14} />
+          Create segments
+        </button>
+      </div>
+      <p className="input-hint">
+        <GitBranch size={12} /> Creates immutable crop recipes. Calculations
+        remain separate steps.
+      </p>
+    </fieldset>
+  );
+}
+
+export function SegmentProvenance({
+  segment,
+  nodes,
+}: {
+  segment: Segment;
+  nodes: SignalNode[];
+}) {
+  const recipe = segment.definition;
+  const offset = (value: number) => `${value >= 0 ? '+' : ''}${time(value)}`;
+  function triggerText(trigger: {
+    signalId: string;
+    edge: string;
+    threshold: number;
+    offset: number;
+  }) {
+    const signal = nodes.find((node) => node.id === trigger.signalId);
+    return `${signal?.name ?? 'Signal'} ${trigger.edge === 'rising' ? 'rises above' : 'falls below'} ${trigger.threshold} ${signal?.unit ?? ''}; offset ${offset(trigger.offset)}`;
+  }
+  return (
+    <div className="segment-provenance">
+      <div className="section-heading">SAVED SEGMENT RECIPE</div>
+      <p>
+        <strong>{segment.name}</strong> · {time(segment.start)} →{' '}
+        {time(segment.end)} (recording time)
+      </p>
+      {recipe?.method === 'triggers' ? (
+        <>
+          <p>Start: {triggerText(recipe.start)}</p>
+          <p>End: {triggerText(recipe.end)}</p>
+          <p>
+            Minimum output duration {time(recipe.minimumDuration)}. Crossings at{' '}
+            {time(segment.boundary?.startTrigger ?? segment.start)} and{' '}
+            {time(segment.boundary?.endTrigger ?? segment.end)}.
+          </p>
+        </>
+      ) : recipe?.method === 'windows' ? (
+        <p>
+          Window {time(recipe.duration)} · step {time(recipe.step)} ·{' '}
+          {recipe.includePartial ? 'includes' : 'excludes'} shorter final
+          windows.
+        </p>
+      ) : recipe?.method === 'ranges' ? (
+        <p>Explicit time range.</p>
+      ) : (
+        <p>
+          Legacy segmentation definition, retained from the earlier prototype.
+        </p>
+      )}
+      {recipe && (
+        <p>
+          Boundary policy: {recipe.boundary === 'clip' ? 'clip' : 'discard'}.{' '}
+          {segment.boundary?.clipped
+            ? `Clipped from requested ${time(segment.boundary.requestedStart)} → ${time(segment.boundary.requestedEnd)}.`
+            : 'Full requested interval retained.'}
+        </p>
+      )}
+    </div>
+  );
+}

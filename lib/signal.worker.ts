@@ -34,7 +34,21 @@ globalThis.onmessage = (
           await engine.derive(r.parentId, r.operation, r.parameter);
           break;
         case 'segment':
-          await engine.segment(r.parentId, r.threshold, r.minimumDuration);
+          await engine.segment(r.sourceId, r.definition, r.targetIds);
+          break;
+        case 'segment-preview':
+          send({
+            type: 'segment-plan',
+            requestId,
+            plan: await engine.previewSegments(
+              r.sourceId,
+              r.definition,
+              r.targetIds,
+            ),
+          });
+          return;
+        case 'segment-metrics':
+          await engine.calculateSegmentMetrics(r.ids);
           break;
         case 'view': {
           const plots = [];

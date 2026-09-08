@@ -3,9 +3,10 @@
 ## Current purpose and scope
 
 Stratus is a desktop signal-analysis prototype with a Sites browser preview.
-It imports immutable CSV signals, records derived dependencies, detects engine
-ramps, and computes per-segment power and fuel consumption. Data is local to the
-device; there are no server API routes or cloud signal uploads.
+It imports immutable CSV signals, records derived dependencies, segments using
+generic triggers/ranges/windows, and computes explicit per-segment power and fuel
+consumption. Data is local to the device; there are no server API routes or cloud
+signal uploads.
 
 ## Architecture
 
@@ -14,9 +15,16 @@ device; there are no server API routes or cloud signal uploads.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.
 - `components/workbench.tsx`: engineering workspace and worker request client.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
+- `components/segmentation-editor.tsx`: trigger/range/window editor, read-only
+  interval preview, and saved segmentation provenance. Start and end triggers
+  independently select raw/derived signals, edges, thresholds, and signed offsets.
 - `lib/signal-engine.ts`: append-only IndexedDB columns, CSV import, lazy derived
   evaluation, segmentation, and summary exports. `signal-math.ts` holds numerical
   helpers; `signal-types.ts` defines the domain and worker protocol.
+- `lib/segmentation.ts`: stateful generic threshold crossings. No hidden smoothing
+  or engine-ramp heuristics. Pair crossings before applying offsets; retain
+  source-time provenance and translate derived output axes. Segmentation creates
+  crops only; engineering metrics are a separate explicit operation.
 - `lib/signal.worker.ts`: serialized processing away from the UI thread.
 - `lib/create-signal-worker.ts`: shared Vite worker factory. Use its explicit
   `?worker` import; vinext's source-identity rewrite makes application
@@ -82,11 +90,13 @@ to address those issues during repository setup.
 - `pnpm test`: Node test runner with in-memory TypeScript transpilation and
   fake-indexeddb. Tests cover CSV boundaries and validation, numerical units,
   immutable derivation chains, resampling, missing data, concurrent writers,
-  cancellation, ramp detection, and chunk-boundary filter continuity.
+  cancellation, generic edge triggers/offsets, manual ranges, overlapping windows,
+  derived time axes, segmentation provenance, and chunk-boundary continuity.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin
-  script loading, demo initialization, and all three BSFC calculations. Run this
+  script loading, demo initialization, BSFC, trigger preview, offsets, crop
+  creation, and window previews. Run this
   when changing worker loading or build configuration; native smoke alone cannot
   detect vinext's browser-only URL transforms.
 - Full-repository lint still includes the original 19 starter-component issues.

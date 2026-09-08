@@ -1732,3 +1732,124 @@ h1 > span {
     animation-duration: 0.01ms !important;
   }
 }
+.segmentation-editor {
+  border: 0;
+  min-width: 0;
+  padding: 0;
+}
+.trigger-card {
+  border: 1px solid #35464e;
+  border-left: 2px solid #79b89b;
+  border-radius: 4px;
+  padding: 8px 9px 10px;
+  margin-top: 14px;
+  min-width: 0;
+}
+.trigger-card legend {
+  color: #9cb5ad;
+  font-size: 9px;
+  letter-spacing: 0.9px;
+  padding: 0 5px;
+}
+.trigger-card .field-label,
+.segment-field-pair .field-label {
+  font-size: 10px;
+  margin: 8px 0 5px;
+}
+.segment-field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.segment-numeric {
+  min-width: 0;
+}
+.segment-numeric .number-field input {
+  padding: 6px;
+  font-size: 11px;
+}
+.segment-numeric .number-field span {
+  margin: 0 5px;
+}
+.segment-ranges {
+  border-color: #36444d;
+  background: #141c21;
+  font-family: var(--font-mono);
+  color: #c6d8e0;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.segment-checkbox {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 11px;
+  color: #a1b0b9;
+}
+.segment-checkbox input {
+  accent-color: #98e3b9;
+}
+.segment-preview {
+  margin: 14px 0 10px;
+  padding: 10px;
+  border: 1px solid #31413f;
+  background: #172320;
+  border-radius: 4px;
+  color: #a6c7b8;
+}
+.segment-preview strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.segment-preview small {
+  font-size: 10px;
+  color: #93a79f;
+}
+.segment-preview ol {
+  list-style: none;
+  max-height: 140px;
+  overflow: auto;
+  margin: 5px 0 0;
+}
+.segment-preview li {
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 10px;
+}
+.segment-preview li > span {
+  color: #7f958b;
+}
+.segment-actions {
+  display: flex;
+  gap: 7px;
+}
+.segment-actions button {
+  width: auto;
+  flex: 1;
+  padding: 8px 6px;
+  font-size: 11px;
+}
+.segment-error {
+  color: #f1afa4;
+  font-size: 11px;
+  margin: 8px 0;
+}
+.segmentation-editor > .input-hint svg {
+  display: inline;
+  vertical-align: middle;
+}
+.segment-provenance {
+  padding: 12px 16px;
+  border-bottom: 1px solid #303b43;
+}
+.segment-provenance p {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #a6bdb2;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}

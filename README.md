@@ -28,16 +28,24 @@ native bundle. Packages are unsigned development builds.
 
 1. Open **Full recording** to view the three synchronized channels and ramps.
 2. Select any raw signal in **Signal Explorer** to inspect it.
-3. Select **Segment**, use the raw speed input, and configure detection parameters.
+3. Select **Segment** and choose **Signal edge triggers**. Choose a start signal,
+   rising/falling edge, threshold, and offset, then configure the end independently.
+   For example: speed rising above 900 rpm with a −20 s start offset, followed by
+   speed falling below 900 rpm. **Preview** shows intervals and clipping before
+   **Create segments** saves immutable crop branches. Manual time ranges and
+   fixed-duration windows are also available. Raw and derived signals are valid
+   trigger inputs and output targets.
 4. Select a segment, then **Filter**, **Calculate**, or **Transform time**.
    Applying a function creates a new node in the explorer, including when its
    input is itself derived.
-5. Use **Compare ramps** for a time-aligned overlay, **Data table** for samples,
+5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
    and **Lineage** for the dependency graph.
-6. **Export results** downloads summary statistics and parent IDs as CSV.
+6. **Power & fuel metrics** explicitly adds engineering calculations to compatible
+   segments. The demo already includes this calculation step. **Export results**
+   downloads summary statistics and parent IDs as CSV.
 
 Import comma-separated UTF-8 files with time in seconds in the first column.
-Use units in square brackets to enable automatic engineering calculations:
+Use units in square brackets to enable the power and fuel calculation step:
 
 ```csv
 Time [s],Engine speed [rpm],Torque [Nm],Fuel flow [kg/h]

@@ -37,30 +37,42 @@ void app
     // Navigate to a served source document to establish the real HTTP origin
     // without mounting a second workbench that races the test's initial import.
     await window.loadURL(`${origin}/lib/create-signal-worker.ts`);
-    const summaries = await window.webContents.executeJavaScript(`
+    const results = await window.webContents.executeJavaScript(`
     (async () => {
       const { createSignalWorker } = await import('/lib/create-signal-worker.ts');
       const worker = createSignalWorker();
+      let requestId = 0;
+      const send = request => new Promise((resolve, reject) => {
+        worker.onerror = event => reject(new Error(event.message || 'Worker failed to load'));
+        worker.onmessage = ({ data }) => {
+          if (data.type === 'progress') return;
+          if (data.type === 'error') reject(new Error(data.message));
+          else resolve(data);
+        };
+        worker.postMessage({ ...request, requestId: ++requestId });
+      });
       try {
-        return await new Promise((resolve, reject) => {
-          worker.onerror = event => reject(new Error(event.message || 'Worker failed to load'));
-          worker.onmessage = ({ data }) => {
-            if (data.type === 'error') reject(new Error(data.message));
-            if (data.type === 'project') {
-              const nodes = data.project.nodes.filter(node => node.operation === 'bsfc');
-              if (data.project.segments.length !== 3 || nodes.length !== 3) {
-                reject(new Error('Expected three computed demo ramps'));
-                return;
-              }
-              worker.postMessage({ type: 'view', ids: nodes.map(node => node.id), requestId: 2 });
-            }
-            if (data.type === 'plots') resolve(data.plots.map(plot => plot.summary));
-          };
-          worker.postMessage({ type: 'init', requestId: 1 });
-        });
+        const { project } = await send({ type: 'init' });
+        const nodes = project.nodes.filter(node => node.operation === 'bsfc');
+        if (project.segments.length !== 3 || nodes.length !== 3) throw new Error('Expected three computed demo segments');
+        const { plots } = await send({ type: 'view', ids: nodes.map(node => node.id) });
+        const source = project.sources[0];
+        const definition = {
+          method: 'triggers', boundary: 'clip', minimumDuration: 0,
+          start: { signalId: source.channels[0], edge: 'rising', threshold: 900, offset: -20 },
+          end: { signalId: source.channels[0], edge: 'falling', threshold: 900, offset: 0 },
+        };
+        const { plan } = await send({ type: 'segment-preview', sourceId: source.id, definition, targetIds: source.channels });
+        if (plan.ranges.length !== 3 || !plan.ranges[0].clipped || plan.ranges[0].start !== 0) throw new Error('Trigger preview or negative offset failed');
+        const created = await send({ type: 'segment', sourceId: source.id, definition, targetIds: source.channels });
+        if (created.project.segments.length !== 6 || created.project.nodes.length !== project.nodes.length + 12) throw new Error('Generic segmentation must create crops only');
+        const { plan: windows } = await send({ type: 'segment-preview', sourceId: source.id, definition: { method: 'windows', boundary: 'clip', start: 0, end: 180, duration: 60, step: 60, includePartial: false }, targetIds: source.channels });
+        if (windows.ranges.length !== 3) throw new Error('Window preview failed');
+        return { summaries: plots.map(plot => plot.summary), segments: plan.ranges.length, clipped: plan.ranges.filter(range => range.clipped).length };
       } finally { worker.terminate(); }
     })()
   `);
+    const { summaries } = results;
     assert.equal(summaries.length, 3);
     assert.ok(
       summaries.every(
@@ -71,7 +83,7 @@ void app
     assert.ok(requests.length > 0, 'Expected an HTTP worker script request');
     assert.ok(requests.every((url) => new URL(url).origin === origin));
     process.stdout.write(
-      `Preview worker passed: ${requests[0]}\nThree ramps computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\n`,
+      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\n`,
     );
     clearTimeout(timeout);
     window.destroy();

@@ -42,10 +42,9 @@ or disk-backed multiresolution plot pyramid yet.
 
 ## Implemented calculations
 
-- Ramp detection: 15-sample trailing mean, configured threshold and minimum
-  duration, and a minimum positive speed gain. Boundaries are resolved against
-  raw threshold crossings. This is a transparent heuristic, not a general
-  engine-event classifier; plateau splitting and hysteresis are future work.
+- Segmentation: independent start/end signal edge triggers, explicit time ranges,
+  and fixed-duration windows. Generic thresholds work in each signal's own units;
+  there is no implicit smoothing or engine-specific classification.
 - Power: torque in Nm × rpm × 2π / 60,000 gives kW.
 - BSFC: fuel in kg/h × 1,000 / power in kW gives g/kWh. Power at or below 0.1 kW,
   negative fuel, and missing inputs produce missing results.
@@ -62,10 +61,49 @@ or disk-backed multiresolution plot pyramid yet.
   non-advancing floating-point grids, and caps output at 100 million samples.
   Linear interpolation is not anti-aliasing; filter before downsampling.
 
-Signal units for automatic segment power/BSFC are read from bracketed CSV headers:
+Signal units for the explicit segment power/BSFC step come from bracketed headers:
 `[rpm]`, `[Nm]`, and `[kg/h]`. Other units are kept verbatim; there is no general
 unit-conversion engine. A dyno cannot yield distance-based fuel economy from fuel
 flow alone. The demo therefore uses brake-specific fuel consumption.
+
+## Segmentation semantics
+
+For rising edges, the preceding finite value must be at or below the threshold
+and the next value strictly above it; falling edges reverse these comparisons.
+Crossing times are linearly interpolated between adjacent finite samples. An
+initially active signal does not fabricate a crossing. Missing samples reset
+adjacency and cancel an open pair. The first start opens an interval; repeated
+starts are ignored until the first strictly later end closes it. Unmatched starts
+are omitted and counted. Different start and end signals are allowed within one
+recording; both must have valid coverage. Apply a filter as an explicit derived
+node if a trigger needs smoothing. Hysteresis and debounce are not implemented.
+
+Triggers are paired before applying independent signed time offsets. Offsets may
+create overlapping output intervals. Trigger times and all stored segment ranges
+use recording time, translating zeroed/shifted derived inputs back to that axis.
+Each output crop retains its own parent's displayed axis. The boundary policy
+clips to shared output coverage or discards an interval extending outside it.
+Minimum duration applies after offsets and clipping. Reversed, empty, and
+too-short intervals are excluded. Crop membership is inclusive; a sample on a
+shared endpoint can belong to adjacent segments. Boundaries need not coincide
+with sample times, and duration describes the interval rather than sample count.
+
+Manual ranges accept explicit start/end pairs in seconds. Windows accept a
+duration, step between starts, and an optional shorter final window. A step
+shorter than duration creates overlap; a larger step leaves gaps. Requests are
+limited to 1,000 intervals and 10,000 generated crop nodes. Trigger detection
+streams two bounded iterators without retaining every sample or crossing. A
+single preview cache avoids rescanning immutable inputs when creating the same
+recipe immediately afterward. Preview is read-only and reports clipping,
+exclusions, and unpaired starts.
+
+Each saved segment retains the complete definition, trigger events, requested
+and actual boundaries. Crop parents include their data input first, followed by
+distinct trigger dependencies for provenance. Definitions are shared across
+segments in a batch. Earlier prototype segments preserve their legacy definition;
+reopening does not silently recalculate or migrate them. Segmentation only
+creates crops. Power/BSFC is a separate action which validates matching sample
+grid recipes before publishing calculation nodes.
 
 ## Responsiveness and current limits
 
@@ -82,7 +120,7 @@ multi-gigabyte throughput, peak memory, and arbitrary-depth pipelines have not
 been benchmarked or certified. The first next step for production scale should
 be an on-disk summary pyramid, job prioritization, and a native columnar store.
 
-The starter includes ten selectable operations plus automatic power and BSFC.
+The starter includes ten selectable operations plus explicit power and BSFC.
 FFT, advanced filters, general formula parsing, arbitrary source generation,
 native TDMS/MDF import, signed installers, project interchange/backup, and plugin
 execution are not implemented. No user data is uploaded by analysis operations.

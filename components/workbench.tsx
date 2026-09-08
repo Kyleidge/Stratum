@@ -58,7 +58,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import SignalChart, { formatValue } from '@/components/signal-chart';
+import SegmentationEditor, {
+  SegmentProvenance,
+} from '@/components/segmentation-editor';
 import { createSignalWorker } from '@/lib/create-signal-worker';
+import { segmentTraces } from '@/lib/segment-traces';
 import type {
   EngineRequest,
   EngineResponse,
@@ -81,13 +85,13 @@ type FunctionSpec = {
 const FUNCTIONS: FunctionSpec[] = [
   {
     operation: 'segment',
-    name: 'Detect engine ramps',
+    name: 'Segment signals',
     category: 'Segmentation',
     description:
-      'Find sustained speed excursions with positive RPM gain. Each interval becomes a new branch.',
-    parameter: 'Speed threshold',
-    defaultValue: 1400,
-    unit: 'rpm',
+      'Create branches from signal crossings, explicit time ranges, or fixed-duration windows.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
   },
   {
     operation: 'smooth',
@@ -249,8 +253,8 @@ export default function Workbench() {
   const [treeSearch, setTreeSearch] = useState('');
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [operation, setOperation] = useState<Operation | 'segment'>('segment');
-  const [parameter, setParameter] = useState('1400');
-  const [duration, setDuration] = useState('8');
+  const [parameter, setParameter] = useState('0');
+
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<Point[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -435,10 +439,12 @@ export default function Workbench() {
         }
         setStatus(
           r.type === 'segment'
-            ? 'Ramp segments created · source signals unchanged'
-            : r.type === 'derive'
-              ? 'Derived signal created · lineage saved'
-              : 'Recording imported · raw signals locked',
+            ? 'Segments created · source signals unchanged'
+            : r.type === 'segment-metrics'
+              ? 'Power and fuel metrics created · lineage saved'
+              : r.type === 'derive'
+                ? 'Derived signal created · lineage saved'
+                : 'Recording imported · raw signals locked',
         );
       }
     } catch (e) {
@@ -788,8 +794,7 @@ export default function Workbench() {
             ))}
             {!sourceSegments.length && source && (
               <p className="tree-hint">
-                Select a speed signal, then use Segment to detect individual
-                ramps.
+                Use Segment to choose edge triggers, time ranges, or windows.
               </p>
             )}
           </div>
@@ -873,7 +878,7 @@ export default function Workbench() {
                       setZoom(undefined);
                     }}
                   >
-                    Compare ramps
+                    Compare segments
                   </button>
                   {activeSegment && (
                     <span className="active-scope">
@@ -915,7 +920,7 @@ export default function Workbench() {
                 </div>
               </div>
               <div className="segment-ruler">
-                <span>{compare ? 'ALIGNED TO START' : 'DETECTED RAMPS'}</span>
+                <span>{compare ? 'ALIGNED TO START' : 'SEGMENTS'}</span>
                 <div>
                   {sourceSegments.slice(-3).map((s, i) => (
                     <button
@@ -933,22 +938,15 @@ export default function Workbench() {
                 </div>
               </div>
               <div className="charts">
-                {chartNodes.map((node, index) => {
+                {chartNodes.map((node) => {
                   const traces = compare
-                    ? sourceSegments
-                        .map((s, i) => {
-                          const n = project.nodes.find(
-                            (n) => n.id === s.nodes[index],
-                          )!;
-                          return {
-                            node: n,
-                            plot: plots[n.id],
-                            offset: s.start,
-                            color: segmentColors[i % 3],
-                            label: s.name,
-                          };
-                        })
-                        .filter((t) => t.plot)
+                    ? segmentTraces(
+                        node,
+                        sourceSegments,
+                        project.nodes,
+                        plots,
+                        segmentColors,
+                      )
                     : plots[node.id]
                       ? [{ node, plot: plots[node.id] }]
                       : [];
@@ -991,7 +989,22 @@ export default function Workbench() {
                     Segment results{' '}
                     <span className="count-badge">{sourceSegments.length}</span>
                   </span>
-                  <small>Calculated from source signals</small>
+                  <button
+                    className="text-button"
+                    disabled={busy || !sourceSegments.length}
+                    onClick={() =>
+                      void mutate(
+                        {
+                          type: 'segment-metrics',
+                          ids: sourceSegments.map((segment) => segment.id),
+                        },
+                        'Calculating power and fuel metrics…',
+                      )
+                    }
+                  >
+                    <Sigma size={13} />
+                    Power & fuel metrics
+                  </button>
                 </div>
                 <Table className="results-table">
                   <TableHeader>
@@ -1208,123 +1221,119 @@ export default function Workbench() {
               </button>
             </div>
             <p className="function-description">{spec.description}</p>
-            <div className="field-label">Input signal</div>
-            <Picker
-              label="Input signal"
-              value={selected?.id || ''}
-              onChange={(id) => {
-                const node = project.nodes.find((n) => n.id === id);
-                if (node) selectNode(node);
-              }}
-              items={project.nodes
-                .filter(
-                  (n) =>
-                    n.sourceId === source?.id &&
-                    (operation !== 'segment' || n.operation === 'raw'),
-                )
-                .map((n) => ({
-                  value: n.id,
-                  label: `${n.name}${n.operation === 'raw' ? '' : ` · ${sourceSegments.find((s) => s.nodes.includes(n.id))?.name || n.operation}`}`,
-                }))}
-            />
-            {spec.parameter && (
-              <>
-                <label className="field-label" htmlFor="function-parameter">
-                  {spec.parameter}
-                </label>
-                <div className="number-field">
-                  <input
-                    id="function-parameter"
-                    type="number"
-                    value={parameter}
-                    onChange={(e) => setParameter(e.target.value)}
-                  />
-                  <span>{spec.unit}</span>
-                </div>
-              </>
-            )}
-            {operation === 'segment' && (
-              <>
-                <label className="field-label" htmlFor="ramp-duration">
-                  Minimum duration
-                </label>
-                <div className="number-field">
-                  <input
-                    id="ramp-duration"
-                    type="number"
-                    min="0.1"
-                    step="0.1"
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                  />
-                  <span>s</span>
-                </div>
-                <div className="detection-rule">
-                  <span>DETECTION RULE</span>
-                  <code>speed ≥ {parameter || '0'} rpm</code>
-                  <small>15-sample smoothing · positive speed gain</small>
-                </div>
-              </>
-            )}
-            <div className="output-option">
-              <GitBranch size={15} />
-              <span>
-                Create new{' '}
-                {operation === 'segment'
-                  ? 'segment branches'
-                  : 'derived signal'}
-              </span>
-              <Check size={14} />
-            </div>
-            <button
-              className="primary-button"
-              disabled={
-                busy ||
-                !selected ||
-                (operation === 'segment' && selected.operation !== 'raw')
-              }
-              onClick={() => {
-                if (!selected) return;
-                if (
-                  (spec.parameter && !parameter.trim()) ||
-                  (operation === 'segment' && !duration.trim())
-                ) {
-                  setError('Enter all function parameters.');
-                  return;
-                }
-                void mutate(
-                  operation === 'segment'
-                    ? {
+            {operation === 'segment' ? (
+              source && (
+                <SegmentationEditor
+                  key={source.id}
+                  source={source}
+                  nodes={project.nodes}
+                  segments={sourceSegments}
+                  busy={busy}
+                  onPreview={async (definition, targetIds) => {
+                    setBusy(true);
+                    setStatus('Previewing segment intervals…');
+                    setProgress(0);
+                    try {
+                      const response = await request({
+                        type: 'segment-preview',
+                        sourceId: source.id,
+                        definition,
+                        targetIds,
+                      });
+                      if (response.type !== 'segment-plan')
+                        throw new Error('Unexpected preview response.');
+                      setStatus(
+                        `${response.plan.ranges.length} intervals previewed · no signals created`,
+                      );
+                      return response.plan;
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  onCreate={(definition, targetIds) => {
+                    void mutate(
+                      {
                         type: 'segment',
-                        parentId: selected.id,
-                        threshold: Number(parameter),
-                        minimumDuration: Number(duration),
-                      }
-                    : {
+                        sourceId: source.id,
+                        definition,
+                        targetIds,
+                      },
+                      'Creating segment branches…',
+                    );
+                  }}
+                />
+              )
+            ) : (
+              <>
+                <div className="field-label">Input signal</div>
+                <Picker
+                  label="Input signal"
+                  value={selected?.id || ''}
+                  onChange={(id) => {
+                    const node = project.nodes.find((n) => n.id === id);
+                    if (node) selectNode(node);
+                  }}
+                  items={project.nodes
+                    .filter((n) => n.sourceId === source?.id)
+                    .map((n) => ({
+                      value: n.id,
+                      label: `${n.name}${n.operation === 'raw' ? '' : ` · ${sourceSegments.find((s) => s.nodes.includes(n.id))?.name || n.operation}`}`,
+                    }))}
+                />
+                {spec.parameter && (
+                  <>
+                    <label className="field-label" htmlFor="function-parameter">
+                      {spec.parameter}
+                    </label>
+                    <div className="number-field">
+                      <input
+                        id="function-parameter"
+                        type="number"
+                        value={parameter}
+                        onChange={(e) => setParameter(e.target.value)}
+                      />
+                      <span>{spec.unit}</span>
+                    </div>
+                  </>
+                )}
+                <div className="output-option">
+                  <GitBranch size={15} />
+                  <span>Create new derived signal</span>
+                  <Check size={14} />
+                </div>
+                <button
+                  className="primary-button"
+                  disabled={busy || !selected}
+                  onClick={() => {
+                    if (!selected) return;
+                    if (spec.parameter && !parameter.trim()) {
+                      setError('Enter all function parameters.');
+                      return;
+                    }
+                    void mutate(
+                      {
                         type: 'derive',
                         parentId: selected.id,
                         operation,
                         parameter: Number(parameter),
                       },
-                  operation === 'segment'
-                    ? 'Detecting ramp segments…'
-                    : 'Creating derived signal…',
-                );
-              }}
-            >
-              {busy ? (
-                <LoaderCircle size={15} className="spin" />
-              ) : (
-                <Play size={14} fill="currentColor" />
-              )}
-              {operation === 'segment' ? 'Create segments' : 'Apply function'}
-            </button>
-            {operation === 'segment' && selected?.operation !== 'raw' && (
-              <p className="input-hint">
-                Choose a raw speed channel to detect ramps.
-              </p>
+                      'Creating derived signal…',
+                    );
+                  }}
+                >
+                  {busy ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <Play size={14} fill="currentColor" />
+                  )}
+                  Apply function
+                </button>
+              </>
             )}
           </div>
+          {activeSegment && (
+            <SegmentProvenance segment={activeSegment} nodes={project.nodes} />
+          )}
           <div className="inspector-properties">
             <div className="section-heading">
               SIGNAL PROPERTIES
@@ -1589,8 +1598,8 @@ export default function Workbench() {
                 )}
               </div>
               <p className="library-note">
-                Power and BSFC are calculated automatically for segments with
-                rpm, Nm, and kg/h channels. Custom plugins are planned.
+                Use Power & fuel metrics above the results table for segments
+                with rpm, Nm, and kg/h channels. Custom plugins are planned.
               </p>
             </>
           ) : (
@@ -1606,15 +1615,15 @@ export default function Workbench() {
                   synthetic three-ramp recording.
                 </li>
                 <li>
-                  <strong>Segment</strong> a raw speed signal to produce
-                  independent ramp branches.
+                  <strong>Segment</strong> using independent start/end edge
+                  triggers, signed offsets, manual ranges, or windows.
                 </li>
                 <li>
                   <strong>Process</strong> any source or derived signal. New
                   results appear in the explorer.
                 </li>
                 <li>
-                  <strong>Compare</strong> ramps on a relative time axis and
+                  <strong>Compare</strong> segments on a relative time axis and
                   export their statistics.
                 </li>
               </ol>
