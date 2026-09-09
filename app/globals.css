@@ -1899,6 +1899,31 @@ h1 > span {
 .chronological-row:hover {
   background: #24312e;
 }
+.chronological-row.file .step-title strong {
+  color: #d9e4de;
+  font-weight: 600;
+}
+.chronological-row.file-operation .step-title strong {
+  color: #d1d8b0;
+}
+.chronological-row.file-segment .step-number,
+.chronological-row.file-operation .step-number {
+  color: #c9d5a7;
+  border-color: #4b5a41;
+  background: #344132;
+}
+.chronological-row.folder .step-title strong {
+  color: #9db6aa;
+  font-size: 11px;
+}
+.chronological-scroll:focus-visible .focused-step {
+  outline: 1px solid #98e3b9;
+  outline-offset: -1px;
+}
+.segmentation-scope-hint {
+  border-left: 2px solid #688e75;
+  padding-left: 8px;
+}
 .step-toggle {
   width: 17px;
   height: 32px;

@@ -18,6 +18,9 @@ signal uploads.
 - `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
   numbered operation chains with explicit batch collections and independent
   member branches. Keep exact batch membership; never infer batches from names.
+  Files own file-segmentation operations and file segments with synchronized
+  channels. Original signals own signal-only segmentation. Persist explicit
+  segment scope; legacy file scope is inferred only from complete raw coverage.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
 - `components/segmentation-editor.tsx`: trigger/range/window editor, read-only

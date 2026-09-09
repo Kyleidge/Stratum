@@ -64,8 +64,9 @@ void app
         };
         const { plan } = await send({ type: 'segment-preview', sourceId: source.id, definition, targetIds: source.channels });
         if (plan.ranges.length !== 3 || !plan.ranges[0].clipped || plan.ranges[0].start !== 0) throw new Error('Trigger preview or negative offset failed');
-        const created = await send({ type: 'segment', sourceId: source.id, definition, targetIds: source.channels });
+        const created = await send({ type: 'segment', sourceId: source.id, definition, targetIds: source.channels, scope: 'file' });
         if (created.project.segments.length !== 6 || created.project.nodes.length !== project.nodes.length + 12) throw new Error('Generic segmentation must create crops only');
+        if (created.project.segments.slice(-3).some(segment => segment.scope !== 'file' || segment.nodes.length !== source.channels.length)) throw new Error('File segments must retain all original channels');
         const { plan: windows } = await send({ type: 'segment-preview', sourceId: source.id, definition: { method: 'windows', boundary: 'clip', start: 0, end: 180, duration: 60, step: 60, includePartial: false }, targetIds: source.channels });
         if (windows.ranges.length !== 3) throw new Error('Window preview failed');
         const crops = created.project.segments.slice(-3).map(segment => segment.nodes[0]);
@@ -75,6 +76,8 @@ void app
         const extrema = await send({ type: 'derive-many', parentIds: smoothed.map(node => node.id), operation: 'min-max', parameter: 0 });
         const { plots: extremaPlots } = await send({ type: 'view', ids: extrema.project.nodes.slice(-3).map(node => node.id) });
         if (extremaPlots.length !== 3 || extremaPlots.some(plot => plot.summary.count !== 2 || !Number.isFinite(plot.summary.max))) throw new Error('Per-segment extrema failed');
+        const single = await send({ type: 'segment', sourceId: source.id, definition, targetIds: [source.channels[0]], scope: 'signals' });
+        if (single.project.segments.slice(-3).some(segment => segment.scope !== 'signals' || segment.nodes.length !== 1)) throw new Error('Signal-only segmentation changed scope');
         return { summaries: plots.map(plot => plot.summary), segments: plan.ranges.length, clipped: plan.ranges.filter(range => range.clipped).length };
       } finally { worker.terminate(); }
     })()
@@ -90,7 +93,7 @@ void app
     assert.ok(requests.length > 0, 'Expected an HTTP worker script request');
     assert.ok(requests.every((url) => new URL(url).origin === origin));
     process.stdout.write(
-      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nIndependent moving-average and Min / Max batches passed.\n`,
+      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches passed.\n`,
     );
     clearTimeout(timeout);
     window.destroy();

@@ -13,6 +13,7 @@ import type {
   Segment,
   SegmentationDefinition,
   SegmentationPlan,
+  SegmentationScope,
   SeriesChunk,
   SignalNode,
   Source,
@@ -615,8 +616,10 @@ export class SignalEngine {
     definition: SegmentationDefinition,
     targetIds: string[],
     independently = false,
+    scope?: SegmentationScope,
   ): Promise<SegmentationPlan> {
     this.check();
+    this.segmentationScope(sourceId, targetIds, independently, scope);
     if (independently) {
       if (!targetIds.length || new Set(targetIds).size !== targetIds.length)
         throw new Error('Choose unique inputs for segmentation.');
@@ -850,12 +853,20 @@ export class SignalEngine {
     definition: SegmentationDefinition,
     targetIds: string[],
     independently = false,
+    scope?: SegmentationScope,
   ) {
+    const savedScope = this.segmentationScope(
+      sourceId,
+      targetIds,
+      independently,
+      scope,
+    );
     const plan = await this.previewSegments(
       sourceId,
       definition,
       targetIds,
       independently,
+      savedScope,
     );
     if (!plan.ranges.length)
       throw new Error(
@@ -900,6 +911,7 @@ export class SignalEngine {
         id: uid(),
         sourceId,
         batchId,
+        scope: savedScope,
         name: `Segment ${String(baseIndex + index + 1).padStart(2, '0')}`,
         start: boundary.start,
         end: boundary.end,
@@ -914,6 +926,25 @@ export class SignalEngine {
       segments: [...this.project.segments, ...segments],
     });
     return segments;
+  }
+  private segmentationScope(
+    sourceId: string,
+    targetIds: string[],
+    independently: boolean,
+    scope?: SegmentationScope,
+  ): SegmentationScope {
+    const source = this.project.sources.find((item) => item.id === sourceId);
+    if (!source) throw new Error('Choose a recording to segment.');
+    const targets = new Set(targetIds);
+    const entireFile =
+      !independently &&
+      targets.size === source.channels.length &&
+      source.channels.every((id) => targets.has(id));
+    if (scope === 'file' && !entireFile)
+      throw new Error(
+        'File segmentation must include every original channel with shared boundaries.',
+      );
+    return scope ?? (entireFile ? 'file' : 'signals');
   }
   private memberDefinition(
     definition: SegmentationDefinition,

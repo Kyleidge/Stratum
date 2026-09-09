@@ -64,7 +64,11 @@ import SegmentationEditor, {
 import { createSignalWorker } from '@/lib/create-signal-worker';
 import { segmentTraces } from '@/lib/segment-traces';
 import SignalExplorer, { OperationHistory } from '@/components/signal-explorer';
-import { buildExplorer, operationLabels } from '@/lib/signal-explorer';
+import {
+  buildExplorer,
+  operationLabels,
+  type ExplorerEntry,
+} from '@/lib/signal-explorer';
 import type {
   EngineRequest,
   EngineResponse,
@@ -307,6 +311,8 @@ export default function Workbench() {
     id: string;
     ids: string[];
     label: string;
+    kind?: ExplorerEntry['kind'];
+    memberUnit?: 'signals' | 'segments';
   }>();
   const [scope, setScope] = useState('');
   const [tab, setTab] = useState('analysis');
@@ -513,6 +519,8 @@ export default function Workbench() {
               id: `operation:${outputs[0].batchId}`,
               ids: outputs.map((node) => node.id),
               label: `${operationLabels[r.operation]} · ${outputs.length} results`,
+              kind: 'collection',
+              memberUnit: operationTargets?.memberUnit,
             });
           }
         }
@@ -523,14 +531,18 @@ export default function Workbench() {
             first &&
             [...model.entries.values()].find(
               (entry) =>
-                entry.kind === 'collection' && entry.ids.includes(first.id),
+                (entry.kind === 'collection' ||
+                  entry.kind === 'file-segment') &&
+                entry.ids.includes(first.id),
             );
           if (first && group) {
             selectNode(first, result.project);
             setOperationTargets({
               id: group.id,
               ids: group.ids,
-              label: `Segment · ${group.ids.length} intervals`,
+              label: group.label,
+              kind: group.kind,
+              memberUnit: group.memberUnit,
             });
           }
         }
@@ -787,10 +799,10 @@ export default function Workbench() {
               selectedId={selected?.id || ''}
               collectionId={operationTargets?.id}
               onSelect={selectNode}
-              onCollection={(ids, label, id) => {
+              onCollection={({ ids, label, id, kind, memberUnit }) => {
                 const node = project.nodes.find((item) => item.id === ids[0]);
                 if (node) selectNode(node);
-                setOperationTargets({ ids, label, id });
+                setOperationTargets({ ids, label, id, kind, memberUnit });
               }}
             />
           )}
@@ -1222,14 +1234,15 @@ export default function Workbench() {
               </button>
             </div>
             <p className="function-description">{spec.description}</p>
-            {operationTargets && (
+            {operationTargets && operation !== 'segment' && (
               <div className="operation-targets">
                 <Layers3 size={15} />
                 <div>
                   <strong>{operationTargets.label}</strong>
                   <small>
                     Apply independently to all {operationTargets.ids.length}{' '}
-                    members. No concatenation.
+                    {operationTargets.memberUnit ?? 'signals'}. Each produces
+                    its own result.
                   </small>
                 </div>
                 <button
@@ -1249,11 +1262,17 @@ export default function Workbench() {
                   nodes={project.nodes}
                   segments={sourceSegments}
                   busy={busy}
+                  selectionKind={operationTargets?.kind}
                   selectedIds={
                     operationTargets?.ids ??
                     (selected ? [selected.id] : source.channels)
                   }
-                  onPreview={async (definition, targetIds, independently) => {
+                  onPreview={async (
+                    definition,
+                    targetIds,
+                    independently,
+                    targetScope,
+                  ) => {
                     setBusy(true);
                     setStatus('Previewing segment intervals…');
                     setProgress(0);
@@ -1264,6 +1283,7 @@ export default function Workbench() {
                         definition,
                         targetIds,
                         independently,
+                        scope: targetScope,
                       });
                       if (response.type !== 'segment-plan')
                         throw new Error('Unexpected preview response.');
@@ -1275,7 +1295,12 @@ export default function Workbench() {
                       setBusy(false);
                     }
                   }}
-                  onCreate={(definition, targetIds, independently) => {
+                  onCreate={(
+                    definition,
+                    targetIds,
+                    independently,
+                    targetScope,
+                  ) => {
                     void mutate(
                       {
                         type: 'segment',
@@ -1283,6 +1308,7 @@ export default function Workbench() {
                         definition,
                         targetIds,
                         independently,
+                        scope: targetScope,
                       },
                       'Creating segment branches…',
                     );
@@ -1372,7 +1398,7 @@ export default function Workbench() {
                     <Play size={14} fill="currentColor" />
                   )}
                   {operationTargets
-                    ? `Apply to ${operationTargets.ids.length} segments`
+                    ? `Apply to ${operationTargets.ids.length} ${operationTargets.memberUnit ?? 'signals'}`
                     : 'Apply function'}
                 </button>
               </>

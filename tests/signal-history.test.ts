@@ -55,10 +55,12 @@ void test('collections show filter -> segmentation -> moving average -> min/max 
     inputs,
   );
   const model = buildExplorer(e.project, s.id);
-  const summary = explorerRows(model, new Set([s.channels[0], filtered.id]));
+  const summary = explorerRows(model, revealEntry(model, filtered.id)).filter(
+    (row) => row.entry.kind === 'signal' || row.entry.kind === 'collection',
+  );
   assert.deepEqual(
     summary.map((row) => row.entry.label),
-    ['a', 'Median filter', 'Segment', 'Moving average', 'Min / Max'],
+    ['a', 'Median filter', 'Segment signal', 'Moving average', 'Min / Max'],
   );
   assert.deepEqual(
     summary.map((row) => row.step),
@@ -75,19 +77,20 @@ void test('collections show filter -> segmentation -> moving average -> min/max 
     'Expanded outputs retain their segment identities',
   );
   assert.deepEqual(
-    explorerRows(
-      model,
-      revealEntry(model, `operation:${extrema[0].batchId}`),
-    ).map((row) => row.entry.label),
-    ['a', 'Median filter', 'Segment', 'Moving average', 'Min / Max'],
+    explorerRows(model, revealEntry(model, `operation:${extrema[0].batchId}`))
+      .filter(
+        (row) => row.entry.kind === 'signal' || row.entry.kind === 'collection',
+      )
+      .map((row) => row.entry.label),
+    ['a', 'Median filter', 'Segment signal', 'Moving average', 'Min / Max'],
     'Selecting a shared stage must not expand every historical segment member',
   );
   e.close();
 });
 void test('individual deviations stay under their member and separate segmentation revisions never merge', async () => {
   const { engine: e, source: s } = await fixture();
-  const first = await e.segment(s.id, ranges, s.channels);
-  const second = await e.segment(s.id, ranges, s.channels);
+  const first = await e.segment(s.id, ranges, s.channels, false, 'signals');
+  const second = await e.segment(s.id, ranges, s.channels, false, 'signals');
   const modified = await e.derive(first[0].nodes[0], 'offset', 7);
   const model = buildExplorer(e.project, s.id);
   const groups = [...model.entries.values()].filter(
@@ -103,7 +106,7 @@ void test('individual deviations stay under their member and separate segmentati
 });
 void test('re-segmenting a collection creates one shared next stage and independent new branches', async () => {
   const { engine: e, source: s } = await fixture();
-  const first = await e.segment(s.id, ranges, s.channels);
+  const first = await e.segment(s.id, ranges, s.channels, false, 'signals');
   const filtered = await e.deriveMany(
     first.map((segment) => segment.nodes[0]),
     'smooth',
@@ -223,9 +226,11 @@ void test('5,000-stage chains evaluate, display and persist without recursion or
   ]);
   const model = buildExplorer(e.project, s.id);
   const rows = explorerRows(model, revealEntry(model, tail.id));
-  assert.equal(rows.length, 5002);
+  assert.equal(rows.length, 5004);
   assert.equal(rows.at(-1)!.step, 5001);
-  assert.ok(rows.every((row) => row.indent === 0));
+  assert.ok(
+    rows.filter((row) => row.entry.node).every((row) => row.indent === 2),
+  );
   assert.deepEqual(await collect(e, base.id), [
     [0, 1],
     [1, 2],
@@ -282,5 +287,157 @@ void test('energy weighting is independent of binary output chunk boundaries', a
   const plot = await e.plot(e.project.nodes.at(-1)!.id);
   assert.equal(plot.summary.count, 16901);
   assert.ok(Math.abs(plot.summary.weightedMean! - 250) < 1e-8);
+  e.close();
+});
+
+void test('file segments own synchronized channels while signal-only segments stay under originals', async () => {
+  const {
+    engine: e,
+    source: s,
+    name,
+  } = await fixture(
+    't,Speed [rpm],Torque [Nm]\n0,800,10\n1,1200,20\n2,1800,30\n3,800,10\n4,1200,20\n5,1800,30\n6,800,10\n7,1200,20\n8,1800,30\n9,800,10',
+  );
+  const definition: SegmentationDefinition = {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [0, 2],
+      [3, 5],
+      [6, 9],
+    ],
+  };
+  const originals = await Promise.all(s.channels.map((id) => collect(e, id)));
+  const files = await e.segment(s.id, definition, s.channels, false, 'file');
+  const singles = await e.segment(
+    s.id,
+    definition,
+    [s.channels[0]],
+    false,
+    'signals',
+  );
+  assert.ok(
+    files.every(
+      (segment) => segment.scope === 'file' && segment.nodes.length === 2,
+    ),
+  );
+  assert.ok(
+    singles.every(
+      (segment) => segment.scope === 'signals' && segment.nodes.length === 1,
+    ),
+  );
+  const model = buildExplorer(e.project, s.id);
+  assert.deepEqual(model.roots, [`file:${s.id}`]);
+  const fileAction = model.entries.get(`file-operation:${files[0].batchId}`)!;
+  assert.equal(fileAction.parent, `file:${s.id}`);
+  assert.equal(fileAction.members.length, 3);
+  for (const segment of files) {
+    const container = model.entries.get(`file-segment:${segment.id}`)!;
+    assert.equal(container.parent, fileAction.id);
+    assert.deepEqual(container.members, segment.nodes);
+    for (const [index, id] of segment.nodes.entries()) {
+      assert.equal(model.entries.get(id)!.parent, container.id);
+      assert.equal(
+        model.entries.get(id)!.label,
+        e.find(s.channels[index]).name,
+      );
+      assert.deepEqual(e.bounds(id), [segment.start, segment.end]);
+      assert.equal(e.find(id).parents[0], s.channels[index]);
+    }
+  }
+  const signalAction = model.entries.get(
+    `segments:${s.channels[0]}:${singles[0].batchId}`,
+  )!;
+  assert.equal(signalAction.parent, s.channels[0]);
+  assert.equal(model.entries.get(s.channels[0])!.parent, `originals:${s.id}`);
+  const allRows = explorerRows(model, new Set(model.entries.keys()));
+  const signalIds = allRows.flatMap((row) =>
+    row.entry.node ? [row.entry.node.id] : [],
+  );
+  assert.equal(new Set(signalIds).size, e.project.nodes.length);
+  assert.equal(
+    signalIds.length,
+    e.project.nodes.length,
+    'No duplicated signal branches',
+  );
+  assert.deepEqual(
+    await Promise.all(s.channels.map((id) => collect(e, id))),
+    originals,
+  );
+  const filtered = await e.deriveMany(files[0].nodes, 'smooth', 2);
+  const filteredModel = buildExplorer(e.project, s.id);
+  const stage = filteredModel.entries.get(`operation:${filtered[0].batchId}`)!;
+  assert.equal(stage.parent, `file-segment:${files[0].id}`);
+  assert.equal(stage.memberUnit, 'signals');
+  assert.equal(
+    new Set(filtered.map((node) => filteredModel.entries.get(node.id)!.label))
+      .size,
+    2,
+  );
+  const deviation = await e.derive(filtered[0].id, 'offset', 1);
+  assert.equal(
+    buildExplorer(e.project, s.id).entries.get(deviation.id)!.parent,
+    filtered[0].id,
+  );
+  e.close();
+  const reopened = new SignalEngine(undefined, name);
+  await reopened.open();
+  assert.equal(reopened.project.segments[0].scope, 'file');
+  assert.equal(reopened.project.segments[3].scope, 'signals');
+  assert.deepEqual(
+    buildExplorer(reopened.project, s.id).entries.get(fileAction.id)!.members,
+    fileAction.members,
+  );
+  reopened.close();
+});
+
+void test('file scope requires every original channel and shared boundaries before publishing', async () => {
+  const { engine: e, source: s } = await fixture('t,a,b\n0,1,2\n1,2,3\n2,3,4');
+  const definition: SegmentationDefinition = {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [[0, 2]],
+  };
+  const before = e.project.nodes.length;
+  await assert.rejects(
+    e.segment(s.id, definition, [s.channels[0]], false, 'file'),
+    /every original channel/,
+  );
+  await assert.rejects(
+    e.previewSegments(s.id, definition, s.channels, true, 'file'),
+    /shared boundaries/,
+  );
+  assert.equal(e.project.nodes.length, before);
+  assert.equal(e.project.segments.length, 0);
+  e.close();
+});
+
+void test('one-channel recordings retain explicit file versus signal scope and legacy file history', async () => {
+  const { engine: e, source: s } = await fixture();
+  const file = await e.segment(s.id, ranges, s.channels, false, 'file');
+  const signal = await e.segment(s.id, ranges, s.channels, false, 'signals');
+  let model = buildExplorer(e.project, s.id);
+  assert.equal(
+    model.entries.get(`file-operation:${file[0].batchId}`)!.members.length,
+    3,
+  );
+  assert.equal(
+    model.entries.get(`segments:${s.channels[0]}:${signal[0].batchId}`)!.members
+      .length,
+    3,
+  );
+  const legacy = structuredClone(e.project);
+  legacy.segments.slice(0, 3).forEach((segment) => {
+    delete segment.scope;
+  });
+  model = buildExplorer(legacy, s.id);
+  assert.equal(
+    model.entries.get(`file-operation:${file[0].batchId}`)!.members.length,
+    3,
+  );
+  assert.ok(
+    legacy.segments.slice(0, 3).every((segment) => !segment.scope),
+    'Explorer must not rewrite saved recipes',
+  );
   e.close();
 });

@@ -6,6 +6,8 @@ import {
   ChevronRight,
   ChevronsDownUp,
   Crosshair,
+  FileSpreadsheet,
+  FolderOpen,
   GitBranch,
   Layers3,
   LockKeyhole,
@@ -37,7 +39,7 @@ export default function SignalExplorer({
   selectedId: string;
   collectionId?: string;
   onSelect: (node: SignalNode) => void;
-  onCollection: (ids: string[], label: string, id: string) => void;
+  onCollection: (entry: ExplorerEntry) => void;
 }) {
   const model = useMemo(
     () => buildExplorer(project, sourceId),
@@ -53,6 +55,12 @@ export default function SignalExplorer({
   const viewport = useRef<HTMLDivElement>(null);
   const activeId =
     collectionId && model.entries.has(collectionId) ? collectionId : selectedId;
+  const [navigation, setNavigation] = useState<{
+    selection: string;
+    id: string;
+  }>();
+  const navigationId =
+    navigation?.selection === activeId ? navigation.id : activeId;
   const ancestors = useMemo(
     () => revealEntry(model, activeId),
     [model, activeId],
@@ -82,12 +90,12 @@ export default function SignalExplorer({
   }, []);
   const revealed = useRef('');
   useEffect(() => {
-    if (revealed.current === activeId) return;
-    const index = rows.findIndex((row) => row.entry.id === activeId);
+    if (revealed.current === navigationId) return;
+    const index = rows.findIndex((row) => row.entry.id === navigationId);
     if (index < 0) return;
-    revealed.current = activeId;
+    revealed.current = navigationId;
     viewport.current?.scrollTo({ top: Math.max(0, index * 38 - height / 3) });
-  }, [activeId, rows, height]);
+  }, [navigationId, rows, height]);
   function reveal() {
     setQuery('');
     setClosed((old) => new Set([...old].filter((id) => !ancestors.has(id))));
@@ -112,13 +120,10 @@ export default function SignalExplorer({
     });
   }
   function select(entry: ExplorerEntry) {
-    if (entry.kind === 'collection')
-      onCollection(
-        entry.ids,
-        `${entry.label} · ${entry.ids.length} members`,
-        entry.id,
-      );
-    else if (entry.node) onSelect(entry.node);
+    setNavigation({ selection: activeId, id: entry.id });
+    if (entry.node) onSelect(entry.node);
+    else if (entry.ids.length) onCollection(entry);
+    else toggle(entry.id);
   }
   return (
     <>
@@ -164,8 +169,8 @@ export default function SignalExplorer({
         role="tree"
         tabIndex={0}
         aria-activedescendant={
-          visible.some((row) => row.entry.id === activeId)
-            ? `explorer-${activeId}`
+          visible.some((row) => row.entry.id === navigationId)
+            ? `explorer-${navigationId}`
             : undefined
         }
         aria-label="Signals in operation order"
@@ -185,7 +190,7 @@ export default function SignalExplorer({
           )
             return;
           event.preventDefault();
-          const index = rows.findIndex((row) => row.entry.id === activeId);
+          const index = rows.findIndex((row) => row.entry.id === navigationId);
           const entry = rows[Math.max(0, index)].entry;
           const open =
             !closed.has(entry.id) &&
@@ -230,7 +235,7 @@ export default function SignalExplorer({
             const expandable =
               entry.kind === 'collection'
                 ? !!entry.members.length
-                : !!entry.next.length;
+                : !!(entry.next.length || entry.members.length);
             const rowStyle: CSSProperties & { '--step-rail-left': string } = {
               '--step-rail-left': `${37 + Math.min(indent, 6) * 12}px`,
               top: (start + index) * 38,
@@ -244,7 +249,7 @@ export default function SignalExplorer({
                 aria-level={indent + 1}
                 aria-selected={entry.id === activeId}
                 aria-expanded={expandable ? open : undefined}
-                className={`chronological-row ${entry.kind} ${entry.id === activeId ? 'selected-step' : ''}`}
+                className={`chronological-row ${entry.kind} ${entry.id === activeId ? 'selected-step' : ''} ${entry.id === navigationId ? 'focused-step' : ''}`}
                 style={rowStyle}
               >
                 <button
@@ -271,7 +276,11 @@ export default function SignalExplorer({
                   onClick={() => select(entry)}
                 >
                   <span className="step-number">
-                    {entry.node?.operation === 'raw' ? (
+                    {entry.kind === 'file' || entry.kind === 'file-segment' ? (
+                      <FileSpreadsheet size={13} />
+                    ) : entry.kind === 'folder' ? (
+                      <FolderOpen size={13} />
+                    ) : entry.node?.operation === 'raw' ? (
                       <LockKeyhole size={12} />
                     ) : (
                       String(step).padStart(2, '0')
@@ -281,9 +290,11 @@ export default function SignalExplorer({
                     <strong>{entry.label}</strong>
                     <small>{entry.detail}</small>
                   </span>
-                  {entry.kind === 'collection' ? (
+                  {entry.kind === 'collection' ||
+                  entry.kind === 'file-segment' ? (
                     <Layers3 size={13} />
-                  ) : entry.node?.operation === 'crop' ? (
+                  ) : entry.node?.operation === 'crop' ||
+                    entry.kind === 'file-operation' ? (
                     <Scissors size={12} />
                   ) : (entry.node?.parents.length ?? 0) > 1 ? (
                     <span className="step-links">
@@ -301,8 +312,8 @@ export default function SignalExplorer({
       </div>
       <div className="explorer-legend">
         <GitBranch size={12} />
-        Select a step to continue from it. Collections apply independently to
-        every member.
+        File segments keep channels together. Expand Original signals for
+        signal-specific operations.
       </div>
     </>
   );

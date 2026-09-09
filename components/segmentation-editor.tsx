@@ -14,9 +14,11 @@ import type {
   Segment,
   SegmentationDefinition,
   SegmentationPlan,
+  SegmentationScope,
   SignalNode,
   Source,
 } from '@/lib/signal-types';
+import type { ExplorerEntry } from '@/lib/signal-explorer';
 
 type TriggerForm = {
   signalId: string;
@@ -30,15 +32,18 @@ type Props = {
   segments: Segment[];
   busy: boolean;
   selectedIds: string[];
+  selectionKind?: ExplorerEntry['kind'];
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
     independently: boolean,
+    scope: SegmentationScope,
   ) => Promise<SegmentationPlan>;
   onCreate: (
     definition: SegmentationDefinition,
     targets: string[],
     independently: boolean,
+    scope: SegmentationScope,
   ) => void;
 };
 
@@ -115,19 +120,22 @@ export default function SegmentationEditor({
   segments,
   busy,
   selectedIds,
+  selectionKind,
   onPreview,
   onCreate,
 }: Props) {
   const [method, setMethod] =
     useState<SegmentationDefinition['method']>('triggers');
   const [start, setStart] = useState<TriggerForm>({
-    signalId: selectedIds[0] ?? source.channels[0],
+    signalId:
+      selectionKind === 'collection' ? selectedIds[0] : source.channels[0],
     edge: 'rising',
     threshold: '900',
     offset: '-20',
   });
   const [end, setEnd] = useState<TriggerForm>({
-    signalId: selectedIds[0] ?? source.channels[0],
+    signalId:
+      selectionKind === 'collection' ? selectedIds[0] : source.channels[0],
     edge: 'falling',
     threshold: '900',
     offset: '0',
@@ -142,7 +150,9 @@ export default function SegmentationEditor({
   const [step, setStep] = useState('30');
   const [partial, setPartial] = useState(false);
   const [boundary, setBoundary] = useState<'clip' | 'discard'>('clip');
-  const [target, setTarget] = useState('selection');
+  const [target, setTarget] = useState(
+    selectionKind === 'collection' ? 'selection' : 'file',
+  );
   const [preview, setPreview] = useState<{
     key: string;
     plan: SegmentationPlan;
@@ -219,16 +229,20 @@ export default function SegmentationEditor({
       const targets =
         target === 'selection'
           ? selectedIds
-          : target === 'all'
+          : target === 'file'
             ? source.channels
             : [target];
-      const independently = target === 'selection' && targets.length > 1;
+      const independently =
+        target === 'selection' &&
+        targets.length > 1 &&
+        selectionKind === 'collection';
+      const scope: SegmentationScope = target === 'file' ? 'file' : 'signals';
       if (previewOnly)
         setPreview({
           key,
-          plan: await onPreview(config, targets, independently),
+          plan: await onPreview(config, targets, independently, scope),
         });
-      else onCreate(config, targets, independently);
+      else onCreate(config, targets, independently, scope);
     } catch (error) {
       setError(
         error instanceof Error
@@ -283,6 +297,31 @@ export default function SegmentationEditor({
   }
   return (
     <fieldset className="segmentation-editor" disabled={busy}>
+      <div className="field-label">Segment target</div>
+      <Choice
+        label="Segment target"
+        value={target}
+        items={[
+          {
+            value: 'file',
+            label: `Entire file · ${source.channels.length} original signals`,
+          },
+          {
+            value: 'selection',
+            label:
+              selectedIds.length > 1
+                ? `Selected ${selectedIds.length} signals`
+                : 'Single signal · selected output',
+          },
+          ...signals,
+        ]}
+        onChange={setTarget}
+      />
+      <p className="input-hint segmentation-scope-hint">
+        {target === 'file'
+          ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
+          : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
+      </p>
       <div className="field-label">Method</div>
       <Choice
         label="Segmentation method"
@@ -369,29 +408,14 @@ export default function SegmentationEditor({
           </p>
         </>
       )}
-      <div className="field-label">Signals to segment</div>
-      <Choice
-        label="Signals to segment"
-        value={target}
-        items={[
-          {
-            value: 'selection',
-            label:
-              selectedIds.length > 1
-                ? `Each selected member (${selectedIds.length})`
-                : 'Selected operation output',
-          },
-          { value: 'all', label: `All ${source.channels.length} raw channels` },
-          ...signals,
-        ]}
-        onChange={setTarget}
-      />
-      {target === 'selection' && selectedIds.length > 1 && (
-        <p className="input-hint">
-          Each member is segmented separately. A trigger using the first member
-          follows the corresponding member in each branch.
-        </p>
-      )}
+      {target === 'selection' &&
+        selectedIds.length > 1 &&
+        selectionKind === 'collection' && (
+          <p className="input-hint">
+            Each member is segmented separately. A trigger using the first
+            member follows the corresponding member in each branch.
+          </p>
+        )}
       <div className="field-label">Outside available data</div>
       <Choice
         label="Recording boundary policy"
@@ -408,7 +432,8 @@ export default function SegmentationEditor({
         {plan ? (
           <>
             <strong>
-              {plan.ranges.length} segments ·{' '}
+              {plan.ranges.length}{' '}
+              {target === 'file' ? 'file segments' : 'signal segments'} ·{' '}
               {plan.ranges.filter((range) => range.clipped).length} clipped
             </strong>
             <small>
@@ -458,7 +483,9 @@ export default function SegmentationEditor({
           onClick={() => void run(false)}
         >
           <Scissors size={14} />
-          Create segments
+          {target === 'file'
+            ? 'Create file segments'
+            : 'Create signal segments'}
         </button>
       </div>
       <p className="input-hint">
@@ -494,6 +521,13 @@ export function SegmentProvenance({
         <strong>{segment.name}</strong> · {time(segment.start)} →{' '}
         {time(segment.end)} (recording time)
       </p>
+      {segment.scope && (
+        <p>
+          {segment.scope === 'file'
+            ? 'Entire file · shared boundaries across every original signal.'
+            : 'Signal-only segmentation · selected input signals.'}
+        </p>
+      )}
       {recipe?.method === 'triggers' ? (
         <>
           <p>Start: {triggerText(recipe.start)}</p>

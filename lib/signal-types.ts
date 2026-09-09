@@ -51,6 +51,7 @@ export type Segment = {
   end: number;
   nodes: string[];
   batchId?: string;
+  scope?: SegmentationScope;
   definition?: SegmentationDefinition;
   boundary?: SegmentBoundary;
   // Original prototype records retain their legacy provenance when reopened.
@@ -58,6 +59,7 @@ export type Segment = {
   threshold?: number;
   minimumDuration?: number;
 };
+export type SegmentationScope = 'file' | 'signals';
 export type EdgeTrigger = {
   signalId: string;
   edge: 'rising' | 'falling';
@@ -137,6 +139,7 @@ export type EngineRequest =
       definition: SegmentationDefinition;
       targetIds: string[];
       independently?: boolean;
+      scope?: SegmentationScope;
     }
   | { type: 'segment-metrics'; ids: string[] }
   | { type: 'view'; ids: string[]; range?: [number, number] }

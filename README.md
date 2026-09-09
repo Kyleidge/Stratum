@@ -27,8 +27,12 @@ native bundle. Packages are unsigned development builds.
 ## Explore
 
 1. Open **Full recording** to view the three synchronized channels and ramps.
-2. Select any raw signal in **Signal Explorer** to inspect it.
-3. Select **Segment** and choose **Signal edge triggers**. Choose a start signal,
+2. Expand the file in **Signal Explorer**. **Segment file** operations own file
+   segments, each containing its synchronized channels. **Original signals** owns
+   the raw channels and their individual operation chains. Signals appear once.
+3. Select **Segment**. **Entire file** is the default target; each interval keeps
+   every original channel together. Choose **Single signal** or a specific signal
+   for signal-only segmentation beneath that input. Choose **Signal edge triggers** and a start signal,
    rising/falling edge, threshold, and offset, then configure the end independently.
    For example: speed rising above 900 rpm with a −20 s start offset, followed by
    speed falling below 900 rpm. **Preview** shows intervals and clipping before
@@ -39,7 +43,8 @@ native bundle. Packages are unsigned development builds.
    average → Min / Max. Select a collection row to apply the next operation
    independently to every member. Expand it to inspect members or select just
    one to create its own branch. Shared steps stay visible once; segments are
-   never concatenated. Creating segments automatically selects their collection.
+   never concatenated. Creating file segments selects the first file segment;
+   creating signal segments selects their collection.
    Repeating a function from an earlier step creates a separate branch.
 5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
    and **Operation history** for the selected signal's complete history and

@@ -30,8 +30,14 @@ active import. Electron permits one app instance per user profile.
 Derived nodes form an append-only DAG with immutable IDs, operation versions,
 parent IDs, parameters, units, and creation time. Operations always reference
 existing nodes; modifying parameters creates a new node. Multiple-parent
-calculations retain every dependency. The explorer follows the first data parent
-in numbered operation order; additional inputs remain linked in the history.
+calculations retain every dependency. The explorer starts with the recording file.
+File segmentation appears once as an operation with file-segment children, each
+containing all original channels cropped to the same interval. A sibling Original
+signals folder contains the raw signals and their individual operation chains.
+Signal-only segmentation stays under its data input; its trigger signal is a
+linked dependency, not its display parent. Additional inputs remain linked in
+the history. Signals are displayed once, and structural folders do not count as
+processing steps.
 Segmentation and multi-member derivation actions retain explicit batch IDs.
 Shared processing is shown once above expandable member outputs; deviations
 remain under individual members. Repeated actions create separate branches.
@@ -125,6 +131,14 @@ segments in a batch. Earlier prototype segments preserve their legacy definition
 reopening does not silently recalculate or migrate them. Segmentation only
 creates crops. Power/BSFC is a separate action which validates matching sample
 grid recipes before publishing calculation nodes.
+
+New segment records persist `scope: file | signals`. File scope requires the
+complete set of original channels and shared boundaries, validated before preview
+or publication. The editor defaults to Entire file; individual signals and existing
+signal collections are explicit alternatives. A one-channel recording can still
+distinguish file scope from signal scope. Legacy records without this marker
+display as file segments when their crop data parents cover every original
+channel, preserving stored recipes and IDs without a data migration.
 
 Segmenting a selected collection evaluates each member separately. When a start
 or end trigger selects the first member, that trigger follows the corresponding

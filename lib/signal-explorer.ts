@@ -39,7 +39,13 @@ export function operationDetail(node: SignalNode): string {
 }
 export type ExplorerEntry = {
   id: string;
-  kind: 'signal' | 'collection';
+  kind:
+    | 'signal'
+    | 'collection'
+    | 'file'
+    | 'folder'
+    | 'file-operation'
+    | 'file-segment';
   label: string;
   detail: string;
   ids: string[];
@@ -48,6 +54,7 @@ export type ExplorerEntry = {
   members: string[];
   next: string[];
   sequence: number;
+  memberUnit?: 'signals' | 'segments';
 };
 export type ExplorerModel = {
   entries: Map<string, ExplorerEntry>;
@@ -64,7 +71,55 @@ export function buildExplorer(
   sourceId: string,
 ): ExplorerModel {
   const entries = new Map<string, ExplorerEntry>();
+  const source = project.sources.find((item) => item.id === sourceId);
+  if (!source) return { entries, roots: [] };
+  const fileId = `file:${sourceId}`;
+  const originalsId = `originals:${sourceId}`;
   const nodes = project.nodes.filter((node) => node.sourceId === sourceId);
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const fileSegments = new Set(
+    project.segments
+      .filter((segment) => {
+        if (segment.sourceId !== sourceId || segment.scope === 'signals')
+          return false;
+        // Older recordings have no scope marker. Complete raw-channel coverage is
+        // sufficient to display them as file segments without rewriting history.
+        const parents = new Set(
+          segment.nodes.flatMap((id) => {
+            const node = byId.get(id);
+            return node?.operation === 'crop' ? [node.parents[0]] : [];
+          }),
+        );
+        return (
+          parents.size === source.channels.length &&
+          source.channels.every((id) => parents.has(id))
+        );
+      })
+      .map((segment) => segment.id),
+  );
+  entries.set(fileId, {
+    id: fileId,
+    kind: 'file',
+    label: source.name,
+    detail: `${source.channels.length} original signals · ${source.rows.toLocaleString()} samples`,
+    ids: source.channels,
+    members: [],
+    next: [],
+    sequence: -2,
+    memberUnit: 'signals',
+  });
+  entries.set(originalsId, {
+    id: originalsId,
+    kind: 'folder',
+    label: 'Original signals',
+    detail: `${source.channels.length} immutable signals`,
+    ids: source.channels,
+    parent: fileId,
+    members: source.channels,
+    next: [],
+    sequence: Number.MAX_SAFE_INTEGER,
+    memberUnit: 'signals',
+  });
   const segmentByNode = new Map(
     project.segments.flatMap((segment) =>
       segment.nodes.map((id) => [id, segment] as const),
@@ -90,7 +145,7 @@ export function buildExplorer(
       detail: operationDetail(node),
       ids: [node.id],
       node,
-      parent: node.parents[0],
+      parent: node.operation === 'raw' ? originalsId : node.parents[0],
       members: [],
       next: [],
       sequence,
@@ -114,6 +169,7 @@ export function buildExplorer(
     }
   }
   const owner = new Map<string, string>();
+  for (const id of source.channels) owner.set(id, originalsId);
   function group(
     id: string,
     members: SignalNode[],
@@ -121,6 +177,7 @@ export function buildExplorer(
     label: string,
     detail: string,
   ) {
+    const memberUnit = entries.get(parent)?.memberUnit ?? 'segments';
     entries.set(id, {
       id,
       kind: 'collection',
@@ -131,11 +188,15 @@ export function buildExplorer(
       members: members.map((node) => node.id),
       next: [],
       sequence: entries.get(members[0].id)!.sequence,
+      memberUnit,
     });
     for (const node of members) {
       const entry = entries.get(node.id)!;
       entry.parent = id;
-      entry.label = memberNames.get(node.id) ?? node.name;
+      entry.label =
+        memberUnit === 'signals'
+          ? node.name
+          : (memberNames.get(node.id) ?? node.name);
       entry.detail = `${operationLabels[node.operation]} · ${operationDetail(node)}`;
       owner.set(node.id, id);
     }
@@ -160,10 +221,61 @@ export function buildExplorer(
   // Re-segmenting a collection remains one shared stage, with all new intervals
   // expandable beneath it; per-member deviations retain their own branches.
   for (const { batchId, members, segment } of actions) {
+    if (
+      segment &&
+      members.every((node) => fileSegments.has(segmentByNode.get(node.id)!.id))
+    ) {
+      const actionId = `file-operation:${batchId}`;
+      const grouped = new Map<string, SignalNode[]>();
+      for (const node of members) {
+        const id = segmentByNode.get(node.id)!.id;
+        const channels = grouped.get(id) ?? [];
+        channels.push(node);
+        grouped.set(id, channels);
+      }
+      entries.set(actionId, {
+        id: actionId,
+        kind: 'file-operation',
+        label: 'Segment file',
+        detail: `${grouped.size} file segments · all ${source.channels.length} signals`,
+        ids: [],
+        parent: fileId,
+        members: [...grouped.keys()].map((id) => `file-segment:${id}`),
+        next: [],
+        sequence: entries.get(members[0].id)!.sequence,
+      });
+      for (const [id, channels] of grouped) {
+        const saved = segmentByNode.get(channels[0].id)!;
+        const segmentId = `file-segment:${id}`;
+        entries.set(segmentId, {
+          id: segmentId,
+          kind: 'file-segment',
+          label: `File ${saved.name.toLowerCase()}`,
+          detail: `${Number(saved.start.toFixed(3))}–${Number(saved.end.toFixed(3))} s · ${channels.length} signals`,
+          ids: channels.map((node) => node.id),
+          parent: actionId,
+          members: channels.map((node) => node.id),
+          next: [],
+          sequence: entries.get(channels[0].id)!.sequence,
+          memberUnit: 'signals',
+        });
+        for (const node of channels) {
+          const entry = entries.get(node.id)!;
+          entry.parent = segmentId;
+          entry.label = byId.get(node.parents[0])!.name;
+          entry.detail = `Segmented signal · ${node.unit}`;
+          owner.set(node.id, segmentId);
+        }
+      }
+      continue;
+    }
     const parent = owner.get(members[0].parents[0]);
     const collection = parent && entries.get(parent);
     if (
       collection &&
+      (segment
+        ? collection.kind === 'collection'
+        : collection.kind === 'collection' || members.length > 1) &&
       members.every((node) => owner.get(node.parents[0]) === parent) &&
       new Set(members.map((node) => node.parents[0])).size ===
         collection.ids.length &&
@@ -190,7 +302,7 @@ export function buildExplorer(
           `segments:${input}:${batchId}`,
           outputs,
           input,
-          'Segment',
+          'Segment signal',
           `${outputs.length} interval${outputs.length === 1 ? '' : 's'}`,
         );
     }
@@ -239,12 +351,24 @@ export function explorerRows(
     rows.push({ entry, indent: row.indent, step: row.step });
     const open = expanded.has(entry.id) || !!search;
     if (entry.kind === 'collection' || open) {
-      for (const id of entry.next.toReversed())
+      for (const id of entry.next.toReversed()) {
+        const next = model.entries.get(id)!;
+        const operation =
+          next.kind === 'collection' ||
+          next.kind === 'file-operation' ||
+          (next.node && next.node.operation !== 'raw');
         stack.push({
           id,
-          indent: row.indent + (entry.next.length > 1 ? 1 : 0),
-          step: row.step + 1,
+          indent:
+            row.indent +
+            (entry.kind === 'file' ||
+            entry.kind === 'folder' ||
+            entry.next.length > 1
+              ? 1
+              : 0),
+          step: row.step + (operation ? 1 : 0),
         });
+      }
     }
     if (open)
       for (const id of entry.members.toReversed())
@@ -259,7 +383,7 @@ export function revealEntry(model: ExplorerModel, id: string): Set<string> {
   while (entry) {
     // Shared successors are visible without opening the members of a collection.
     // Only expand a collection when the selected path enters one of its members.
-    if (entry.kind === 'signal' || (child && entry.members.includes(child)))
+    if (entry.kind !== 'collection' || (child && entry.members.includes(child)))
       open.add(entry.id);
     child = entry.id;
     entry = entry.parent ? model.entries.get(entry.parent) : undefined;

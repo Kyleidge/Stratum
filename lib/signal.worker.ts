@@ -42,6 +42,7 @@ globalThis.onmessage = (
             r.definition,
             r.targetIds,
             r.independently,
+            r.scope,
           );
           break;
         case 'segment-preview':
@@ -53,6 +54,7 @@ globalThis.onmessage = (
               r.definition,
               r.targetIds,
               r.independently,
+              r.scope,
             ),
           });
           return;
