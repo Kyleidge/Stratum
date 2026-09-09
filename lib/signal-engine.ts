@@ -4,6 +4,21 @@ import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
 import { restoreSegmentationOperations } from './segmentation-operation';
+import {
+  migrateRegionHistory,
+  nextSequence,
+  regionBindings,
+  regionContains,
+} from './region-model';
+import { REGION_EXAMPLES } from './region-types';
+import type {
+  RegionSettings,
+  RegionPlan,
+  RegionSet,
+  Region,
+  FunctionSettings,
+  FunctionRun,
+} from './region-types';
 import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
@@ -311,7 +326,7 @@ export class SignalEngine {
       throw error;
     }
   }
-  async demo() {
+  async demo(withAnalysis = true) {
     const existing = this.project.sources.find((s) => s.synthetic);
     if (existing) return existing;
     const lines = [
@@ -347,6 +362,7 @@ export class SignalEngine {
       type: 'text/csv',
     });
     const source = await this.importCsv(file, true);
+    if (!withAnalysis) return source;
     const segments = await this.segment(
       source.id,
       {
@@ -415,6 +431,473 @@ export class SignalEngine {
     });
     return run;
   }
+  async initializeRegions() {
+    const migrated = migrateRegionHistory(this.project);
+    if (migrated !== this.project) await this.save(migrated);
+  }
+  async previewRegions(settings: RegionSettings): Promise<RegionPlan> {
+    this.check();
+    const source = this.project.sources.find(
+      (item) => item.id === settings.sourceId,
+    );
+    if (!source) throw new Error('Choose a recording.');
+    if (!settings.name.trim()) throw new Error('Name this region set.');
+    const parent = settings.parentSetId
+      ? this.project.regionSets?.find((set) => set.id === settings.parentSetId)
+      : undefined;
+    if (settings.parentSetId && (!parent || parent.sourceId !== source.id))
+      throw new Error('Parent regions must use this recording’s clock.');
+    const selected = settings.parentRegionIds;
+    if (
+      parent &&
+      selected &&
+      (!selected.length ||
+        new Set(selected).size !== selected.length ||
+        selected.some(
+          (id) => !parent.regions.some((region) => region.id === id),
+        ))
+    )
+      throw new Error('Choose valid parent regions.');
+    if (!parent && settings.timeReference === 'parent')
+      throw new Error('Relative times require parent regions.');
+    if (
+      settings.previousId &&
+      !this.project.regionSets?.some(
+        (set) => set.id === settings.previousId && set.sourceId === source.id,
+      )
+    )
+      throw new Error('The previous region version is unavailable.');
+    const domains = parent
+      ? parent.regions.filter(
+          (region) => !selected || selected.includes(region.id),
+        )
+      : [undefined];
+    const plan: RegionPlan = { regions: [], skipped: 0, incomplete: 0 };
+    for (const region of domains) {
+      this.check();
+      const domain: [number, number] = region
+        ? [region.start, region.end]
+        : [source.start, source.end];
+      const offset =
+        settings.timeReference === 'parent' && region ? region.start : 0;
+      const definition = structuredClone(settings.definition);
+      if (definition.method === 'ranges')
+        definition.ranges = definition.ranges.map(([a, b]) => [
+          a + offset,
+          b + offset,
+        ]);
+      if (definition.method === 'windows') {
+        if (
+          ![
+            definition.start,
+            definition.end,
+            definition.duration,
+            definition.step,
+          ].every(Number.isFinite) ||
+          definition.end <= definition.start ||
+          definition.duration <= 0 ||
+          definition.step <= 0
+        )
+          throw new Error(
+            'Use a finite interval and positive window duration and step.',
+          );
+        definition.start += offset;
+        definition.end += offset;
+        // Tail handling is relative to each parent, never to another parent's extent.
+        definition.end = Math.min(definition.end, domain[1]);
+        if (definition.end <= definition.start) {
+          plan.skipped++;
+          continue;
+        }
+      }
+      const intervals = await this.previewSegments(
+        source.id,
+        definition,
+        [source.channels[0]],
+        false,
+        'signals',
+        region ? domain : undefined,
+        true,
+      );
+      plan.regions.push(
+        ...intervals.ranges.map((boundary) => ({
+          start: boundary.start,
+          end: boundary.end,
+          parentRegionId: region?.id,
+          boundary,
+          endInclusive:
+            boundary.end === domain[1] &&
+            (region?.endInclusive ?? boundary.end === source.end),
+        })),
+      );
+      plan.skipped += intervals.skipped;
+      plan.incomplete += intervals.incomplete;
+      if (plan.regions.length > 1000)
+        throw new Error(
+          'This batch exceeds 1,000 regions. Select fewer parents or increase the window step.',
+        );
+    }
+    return plan;
+  }
+  async createRegions(settings: RegionSettings): Promise<RegionSet> {
+    const plan = await this.previewRegions(settings);
+    if (!plan.regions.length)
+      throw new Error(
+        'No complete regions match. Preview the crossings or choose time ranges inside the parent.',
+      );
+    const previous = this.project.regionSets?.find(
+      (set) => set.id === settings.previousId,
+    );
+    const set: RegionSet = {
+      ...structuredClone(settings),
+      id: uid(),
+      name: settings.name.trim(),
+      version: previous
+        ? Math.max(
+            previous.version,
+            ...(this.project.regionSets ?? [])
+              .filter(
+                (set) =>
+                  set.name === settings.name.trim() &&
+                  set.sourceId === settings.sourceId,
+              )
+              .map((set) => set.version),
+          ) + 1
+        : 1,
+      sequence: nextSequence(this.project),
+      createdAt: new Date().toISOString(),
+      regions: plan.regions.map((region, index) => ({
+        ...region,
+        id: uid(),
+        name: `${settings.name.trim()} ${String(index + 1).padStart(2, '0')}`,
+      })),
+    };
+    await this.save({
+      ...this.project,
+      regionSets: [...(this.project.regionSets ?? []), set],
+    });
+    return set;
+  }
+  async applyRegionFunction(settings: FunctionSettings): Promise<FunctionRun> {
+    this.check();
+    const before = this.project;
+    const binary =
+      settings.operation === 'power' || settings.operation === 'bsfc';
+    const inputs = settings.inputIds;
+    const secondary = settings.secondaryIds ?? [];
+    if (!inputs.length || new Set(inputs).size !== inputs.length)
+      throw new Error('Choose unique input signals.');
+    if (binary && !secondary.length)
+      throw new Error('Choose the second input for this calculation.');
+    for (const id of [...inputs, ...secondary])
+      if (this.find(id).sourceId !== settings.sourceId)
+        throw new Error('Inputs must use the same recording.');
+    const set = settings.regionSetId
+      ? before.regionSets?.find((item) => item.id === settings.regionSetId)
+      : undefined;
+    if (settings.regionSetId && (!set || set.sourceId !== settings.sourceId))
+      throw new Error('Choose regions from this recording.');
+    if (
+      settings.regionIds &&
+      (!set ||
+        !settings.regionIds.length ||
+        settings.regionIds.some(
+          (id) => !set.regions.some((region) => region.id === id),
+        ))
+    )
+      throw new Error('Choose valid processing regions.');
+    const bindings = regionBindings(before);
+    const allRegions = new Map(
+      (before.regionSets ?? []).flatMap((item) =>
+        item.regions.map((region) => [region.id, region] as const),
+      ),
+    );
+    const contexts = set
+      ? set.regions.filter(
+          (region) =>
+            !settings.regionIds || settings.regionIds.includes(region.id),
+        )
+      : [undefined];
+    const jobs: {
+      input: string;
+      second?: string;
+      region?: Region;
+      boundId?: string;
+    }[] = [];
+    for (const region of contexts) {
+      const eligible = (id: string) =>
+        !region ||
+        !bindings.has(id) ||
+        regionContains(before, bindings.get(id)!, region.id, allRegions);
+      const firstIds = inputs.filter(eligible);
+      const secondIds = secondary.filter(eligible);
+      for (const input of firstIds) {
+        const boundId = region?.id ?? bindings.get(input);
+        let second: string | undefined;
+        if (binary) {
+          const matched = secondIds.filter(
+            (id) =>
+              !bindings.has(id) ||
+              (boundId &&
+                regionContains(before, bindings.get(id)!, boundId, allRegions)),
+          );
+          if (matched.length !== 1)
+            throw new Error(
+              'Choose one matching second input per region. Select a signal or one result family.',
+            );
+          second = matched[0];
+        }
+        jobs.push({
+          input,
+          second,
+          region:
+            region ?? (second && boundId ? allRegions.get(boundId) : undefined),
+          boundId,
+        });
+      }
+    }
+    if (!jobs.length)
+      throw new Error(
+        'The selected result family does not contain these regions. Use its own regions, child regions, or a full-recording signal.',
+      );
+    if (jobs.length > 10000)
+      throw new Error('Limit this operation to 10,000 results per batch.');
+    const internal: SignalNode[] = [];
+    const outputs: SignalNode[] = [];
+    const run: FunctionRun = {
+      ...structuredClone(settings),
+      id: uid(),
+      createdAt: new Date().toISOString(),
+      sequence: nextSequence(before),
+      outputs: [],
+      skipped: 0,
+    };
+    try {
+      for (const job of jobs) {
+        this.check();
+        const previousInternalCount = internal.length;
+        const ids = [job.input, ...(job.second ? [job.second] : [])];
+        const scoped: string[] = [];
+        let populated = true;
+        for (const id of ids) {
+          if (!job.region || bindings.get(id) === job.region.id) {
+            scoped.push(id);
+            continue;
+          }
+          const offset = this.axisOffset(id);
+          const start = Math.max(this.bounds(id)[0], job.region.start + offset);
+          const end = Math.min(this.bounds(id)[1], job.region.end + offset);
+          const endExclusive =
+            end === job.region.end + offset && !job.region.endInclusive;
+          if (
+            end < start ||
+            !(await this.hasSample(id, start, end, endExclusive))
+          ) {
+            populated = false;
+            break;
+          }
+          const parent = this.find(id);
+          const view = this.node(
+            settings.sourceId,
+            parent.name,
+            parent.unit,
+            'crop',
+            [id],
+            { start, end, endExclusive: endExclusive ? 1 : 0 },
+          );
+          view.internal = true;
+          internal.push(view);
+          scoped.push(view.id);
+        }
+        if (!populated) {
+          internal.length = previousInternalCount;
+          run.skipped++;
+          continue;
+        }
+        this.project = {
+          ...before,
+          nodes: [...before.nodes, ...internal, ...outputs],
+        };
+        let result: SignalNode;
+        if (binary) {
+          if (this.gridRecipe(scoped[0]) !== this.gridRecipe(scoped[1]))
+            throw new Error(
+              'Inputs need matching sample grids and time transformations.',
+            );
+          const a = this.find(scoped[0]),
+            b = this.find(scoped[1]);
+          if (
+            settings.operation === 'power' &&
+            (!/^n[· ]?m$/i.test(a.unit) || b.unit.toLowerCase() !== 'rpm')
+          )
+            throw new Error(
+              'Brake power requires torque [Nm] followed by speed [rpm].',
+            );
+          if (
+            settings.operation === 'bsfc' &&
+            (!/^kg\/h$/i.test(a.unit) || b.unit.toLowerCase() !== 'kw')
+          )
+            throw new Error(
+              'Specific fuel consumption requires fuel flow [kg/h] followed by power [kW].',
+            );
+          result = this.node(
+            settings.sourceId,
+            settings.operation === 'power'
+              ? 'Brake power'
+              : 'Specific fuel consumption',
+            settings.operation === 'power' ? 'kW' : 'g/kWh',
+            settings.operation,
+            scoped,
+          );
+        } else
+          result = (
+            await this.deriveMany(
+              [scoped[0]],
+              settings.operation,
+              settings.parameter,
+              false,
+            )
+          )[0];
+        result.batchId = run.id;
+        outputs.push(result);
+        run.outputs.push({
+          signalId: result.id,
+          inputId: job.input,
+          regionId: job.boundId,
+        });
+      }
+    } finally {
+      this.project = before;
+    }
+    if (!outputs.length)
+      throw new Error(
+        'The selected signals have no samples inside these regions.',
+      );
+    if (!run.regionSetId) {
+      const associated = (before.regionSets ?? []).filter((item) =>
+        run.outputs.every((output) =>
+          item.regions.some((region) => region.id === output.regionId),
+        ),
+      );
+      if (associated.length === 1) run.regionSetId = associated[0].id;
+    }
+    await this.save({
+      ...before,
+      nodes: [...before.nodes, ...internal, ...outputs],
+      functionRuns: [...(before.functionRuns ?? []), run],
+    });
+    return run;
+  }
+  async regionExample(key: string) {
+    if (!REGION_EXAMPLES.some((item) => item.key === key))
+      throw new Error('Choose an available example.');
+    const existing = this.project.regionExamples?.find(
+      (item) => item.key === key,
+    );
+    if (existing) return existing;
+    const source = await this.demo(false);
+    const base =
+      key !== 'ramps' ? await this.regionExample('ramps') : undefined;
+    let set: RegionSet;
+    let run: FunctionRun;
+    if (key === 'ramps') {
+      set = await this.createRegions({
+        sourceId: source.id,
+        name: 'Ramps',
+        timeReference: 'recording',
+        definition: {
+          method: 'triggers',
+          boundary: 'clip',
+          minimumDuration: 0,
+          start: {
+            signalId: source.channels[0],
+            edge: 'rising',
+            threshold: 900,
+            offset: 0,
+          },
+          end: {
+            signalId: source.channels[0],
+            edge: 'falling',
+            threshold: 900,
+            offset: 0,
+          },
+        },
+      });
+      const filtered = await this.applyRegionFunction({
+        sourceId: source.id,
+        inputIds: [source.channels[1]],
+        operation: 'low-pass',
+        parameter: 5,
+      });
+      const smooth = await this.applyRegionFunction({
+        sourceId: source.id,
+        inputIds: filtered.outputs.map((output) => output.signalId),
+        regionSetId: set.id,
+        operation: 'smooth',
+        parameter: 25,
+      });
+      run = await this.applyRegionFunction({
+        sourceId: source.id,
+        inputIds: smooth.outputs.map((output) => output.signalId),
+        operation: 'min-max',
+        parameter: 0,
+      });
+    } else if (key === 'fuel') {
+      set = this.project.regionSets!.find(
+        (item) => item.id === base!.regionSetId,
+      )!;
+      const powerRun = await this.applyRegionFunction({
+        sourceId: source.id,
+        operation: 'power',
+        parameter: 0,
+        inputIds: [source.channels[1]],
+        secondaryIds: [source.channels[0]],
+        regionSetId: set.id,
+      });
+      run = await this.applyRegionFunction({
+        sourceId: source.id,
+        operation: 'bsfc',
+        parameter: 0,
+        inputIds: [source.channels[2]],
+        secondaryIds: powerRun.outputs.map((output) => output.signalId),
+        regionSetId: set.id,
+      });
+    } else {
+      set = await this.createRegions({
+        sourceId: source.id,
+        name: key === 'nested' ? 'Ramp windows' : 'Overlapping windows',
+        parentSetId: base!.regionSetId,
+        timeReference: 'parent',
+        definition: {
+          method: 'windows',
+          boundary: 'clip',
+          start: 0,
+          end: 180,
+          duration: 10,
+          step: key === 'nested' ? 10 : 5,
+          includePartial: true,
+        },
+      });
+      run = await this.applyRegionFunction({
+        sourceId: source.id,
+        inputIds: [source.channels[1]],
+        regionSetId: set.id,
+        operation: 'min-max',
+        parameter: 0,
+      });
+    }
+    const example = {
+      key,
+      sourceId: source.id,
+      regionSetId: set.id,
+      runId: run.id,
+    };
+    await this.save({
+      ...this.project,
+      regionExamples: [...(this.project.regionExamples ?? []), example],
+    });
+    return example;
+  }
   private async *raw(
     id: string,
     sourceRange?: [number, number],
@@ -454,7 +937,12 @@ export class SignalEngine {
   async derive(parentId: string, operation: Operation, value: number) {
     return (await this.deriveMany([parentId], operation, value))[0];
   }
-  async deriveMany(parentIds: string[], operation: Operation, value: number) {
+  async deriveMany(
+    parentIds: string[],
+    operation: Operation,
+    value: number,
+    persist = true,
+  ) {
     if (
       !FUNCTIONS.some(
         (spec) => spec.operation !== 'segment' && spec.operation === operation,
@@ -551,10 +1039,11 @@ export class SignalEngine {
       }
       nodes.push(n);
     }
-    await this.save({
-      ...this.project,
-      nodes: [...this.project.nodes, ...nodes],
-    });
+    if (persist)
+      await this.save({
+        ...this.project,
+        nodes: [...this.project.nodes, ...nodes],
+      });
     return nodes;
   }
   /** Constant translation from recording time to this node's displayed time. */
@@ -566,6 +1055,7 @@ export class SignalEngine {
     id: string,
     start: number,
     end: number,
+    endExclusive = false,
   ): Promise<boolean> {
     let node = this.find(id);
     while (true) {
@@ -585,7 +1075,11 @@ export class SignalEngine {
             if (times[middle] < start) low = middle + 1;
             else high = middle;
           }
-          if (low < times.length && times[low] <= end) return true;
+          if (
+            low < times.length &&
+            (endExclusive ? times[low] < end : times[low] <= end)
+          )
+            return true;
         }
         return false;
       }
@@ -599,10 +1093,19 @@ export class SignalEngine {
             this.extremaTimes.delete(this.extremaTimes.keys().next().value!);
           this.extremaTimes.set(node.id, times);
         }
-        return times.some((time) => time >= start && time <= end);
+        return times.some(
+          (time) => time >= start && (endExclusive ? time < end : time <= end),
+        );
       }
       if (node.operation === 'crop') {
         start = Math.max(start, node.parameters.start);
+        if (node.parameters.end < end)
+          endExclusive = node.parameters.endExclusive === 1;
+        else if (
+          node.parameters.end === end &&
+          node.parameters.endExclusive === 1
+        )
+          endExclusive = true;
         end = Math.min(end, node.parameters.end);
       }
       if (node.operation === 'resample') {
@@ -613,9 +1116,14 @@ export class SignalEngine {
         );
         if (origin + index / node.parameters.value < start) index++;
         const candidate = origin + index / node.parameters.value;
-        if (candidate > Math.min(end, last)) return false;
+        if (
+          candidate > Math.min(end, last) ||
+          (endExclusive && candidate === end)
+        )
+          return false;
         start = candidate;
         end = this.bounds(node.parents[0])[1];
+        endExclusive = false;
       }
       const translation =
         node.operation === 'time-shift'
@@ -636,22 +1144,56 @@ export class SignalEngine {
         return JSON.stringify([node.id, operations]);
       if (
         ['crop', 'resample', 'time-shift', 'zero-time'].includes(node.operation)
-      )
-        operations.push([node.operation, node.parameters]);
+      ) {
+        const last = operations.at(-1);
+        if (node.operation === 'crop' && last?.[0] === 'crop') {
+          const a = last[1],
+            b = node.parameters;
+          const end = Math.min(a.end, b.end);
+          last[1] = {
+            start: Math.max(a.start, b.start),
+            end,
+            endExclusive:
+              (a.end === end && a.endExclusive === 1) ||
+              (b.end === end && b.endExclusive === 1)
+                ? 1
+                : 0,
+          };
+        } else
+          operations.push([
+            node.operation,
+            node.operation === 'crop'
+              ? {
+                  ...node.parameters,
+                  endExclusive: node.parameters.endExclusive ?? 0,
+                }
+              : node.parameters,
+          ]);
+      }
       node = this.find(node.parents[0]);
     }
     return JSON.stringify([node.sourceId, operations]);
   }
   private async *triggerEvents(
     trigger: EdgeTrigger,
+    domain?: [number, number],
   ): AsyncGenerator<TriggerEvent> {
     const detector = new CrossingDetector(trigger);
     const offset = this.axisOffset(trigger.signalId);
     let last: number | undefined;
     const [first, end] = this.bounds(trigger.signalId);
-    for await (const chunk of this.evaluate(trigger.signalId)) {
+    for await (const chunk of this.evaluate(
+      trigger.signalId,
+      new Set(),
+      domain ? [domain[0] + offset, domain[1] + offset] : undefined,
+    )) {
       for (let i = 0; i < chunk.time.length; i++) {
         const time = chunk.time[i] - offset;
+        if (domain && time < domain[0]) continue;
+        if (domain && time >= domain[1]) {
+          if (last !== undefined) yield { time: last, kind: 'finish' };
+          return;
+        }
         last = time;
         const event = detector.next(time, chunk.values[i]);
         if (event) yield event;
@@ -670,6 +1212,8 @@ export class SignalEngine {
     targetIds: string[],
     independently = false,
     scope?: SegmentationScope,
+    domain?: [number, number],
+    pointersOnly = false,
   ): Promise<SegmentationPlan> {
     this.check();
     this.segmentationScope(sourceId, targetIds, independently, scope);
@@ -699,7 +1243,13 @@ export class SignalEngine {
       }
       return combined;
     }
-    const cacheKey = JSON.stringify([sourceId, definition, targetIds]);
+    const cacheKey = JSON.stringify([
+      sourceId,
+      definition,
+      targetIds,
+      domain,
+      pointersOnly,
+    ]);
     if (cacheKey === this.segmentPreviewCache?.key)
       return structuredClone(this.segmentPreviewCache.plan);
     const source = this.project.sources.find((s) => s.id === sourceId);
@@ -714,7 +1264,9 @@ export class SignalEngine {
         );
       return node;
     };
-    const limits: [number, number] = [source.start, source.end];
+    const limits: [number, number] = domain
+      ? [Math.max(source.start, domain[0]), Math.min(source.end, domain[1])]
+      : [source.start, source.end];
     for (const id of targetIds) {
       fromSource(id);
       const offset = this.axisOffset(id);
@@ -781,8 +1333,8 @@ export class SignalEngine {
         )
           throw new Error('Minimum duration must be zero or positive.');
         const streams = [
-          this.triggerEvents(definition.start),
-          this.triggerEvents(definition.end),
+          this.triggerEvents(definition.start, domain),
+          this.triggerEvents(definition.end, domain),
         ];
         const events = await Promise.all(
           streams.map((stream) => stream.next()),
@@ -882,6 +1434,10 @@ export class SignalEngine {
       );
     const populated = [];
     for (const range of plan.ranges) {
+      if (pointersOnly) {
+        populated.push(range);
+        continue;
+      }
       let valid = true;
       for (const id of targetIds) {
         const offset = this.axisOffset(id);
@@ -1155,11 +1711,19 @@ export class SignalEngine {
   }
   async exportSummary(ids: string[]) {
     const lines = [
-      'Signal,Operation,Unit,Valid samples,Minimum,Maximum,Mean,Time integral,Parents',
+      'Signal,Operation,Unit,Valid samples,Minimum,Maximum,Mean,Time integral,Parents,Function ID,Region set,Region version,Region,Start (s),End (s),End inclusive,Energy-weighted mean',
     ];
     const quote = (v: string) => `"${v.replace(/"/g, '""')}"`;
     for (const id of ids) {
       const n = this.find(id);
+      const run = this.project.functionRuns?.find((item) =>
+        item.outputs.some((output) => output.signalId === id),
+      );
+      const output = run?.outputs.find((item) => item.signalId === id);
+      const set = this.project.regionSets?.find((item) =>
+        item.regions.some((region) => region.id === output?.regionId),
+      );
+      const region = set?.regions.find((item) => item.id === output?.regionId);
       const { summary: s } = await this.plot(id);
       lines.push(
         [
@@ -1172,6 +1736,14 @@ export class SignalEngine {
           s.mean,
           s.integral,
           quote(n.parents.join(';')),
+          quote(run?.id ?? ''),
+          quote(set?.name ?? ''),
+          set?.version ?? '',
+          quote(region?.name ?? ''),
+          region?.start ?? '',
+          region?.end ?? '',
+          region ? String(region.endInclusive) : '',
+          s.weightedMean ?? '',
         ].join(','),
       );
     }

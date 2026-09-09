@@ -30,35 +30,57 @@ active import. Electron permits one app instance per user profile.
 Derived nodes form an append-only DAG with immutable IDs, operation versions,
 parent IDs, parameters, units, and creation time. Operations always reference
 existing nodes; modifying parameters creates a new node. Multiple-parent
-calculations retain every dependency. The explorer starts with the recording file.
-File segmentation appears once as an operation with file-segment children, each
-containing all original channels cropped to the same interval. A sibling Original
-signals folder contains the raw signals and their individual operation chains.
-Signal-only segmentation stays under its data input; its trigger signal is a
-linked dependency, not its display parent. Additional inputs remain linked in
-the history. Signals are displayed once, and structural folders do not count as
-processing steps.
-Segmentation and multi-member derivation actions retain explicit batch IDs.
-Shared processing is shown once above expandable member outputs; deviations
-remain under individual members. Repeated actions create separate branches.
-Selecting a collection captures its exact member IDs, and a batch publishes all
-its independent outputs atomically. It never joins samples across segments.
+calculations retain every dependency.
 
-Explorer rows are virtualized and full history is paginated in groups of 50.
+The active workspace (`region-workbench.tsx`) separates three concepts:
+
+- Signals: raw columns and lazy derived recipes.
+- Region sets: versioned collections of time intervals on the recording clock.
+  Creating regions writes metadata only. A child records its parent region ID and
+  parent set version. Editing appends a version; existing references stay pinned.
+- Function runs: one invocation, its exact inputs, parameter, processing scope,
+  and output family. Each output records its input and region ID. Min / Max is
+  presented as a result table, backed by sparse extrema nodes for provenance.
+
+The left history is virtualized with one item per region/function invocation.
+Region/results tables are paginated (25 rows), and charts show at most six traces.
+Input links expose prior operations; nested region tables identify their parents.
+View selection never silently changes processing scope. Batch application uses
+region ancestry to map each input family member to its own descendants, rather
+than multiplying every member by every region. No operation concatenates regions.
+
+Applying a function within regions creates internal crop recipes only for its
+chosen inputs. A new filter resets at each region start. An already filtered
+input retains its earlier history. Node creation and the function record publish
+atomically. Empty scopes are excluded and counted; invalid batches leave no
+partial graph. New interval membership is start-inclusive/end-exclusive, except
+at an inclusive parent/recording endpoint. Overlap remains intentional.
+
+Nested segmentation uses one or all selected parents independently. Manual ranges
+and windows may be relative to each parent's start. Triggers always evaluate on
+recording time; offsets apply after pairing, and pairs never cross parent bounds.
+Windows can overlap or retain short tails. There is no nesting-depth cap. Each
+request is limited to 1,000 regions or 10,000 function outputs.
+
+Existing segmentation operations migrate to region sets without modifying their
+signal recipes, IDs, samples or inclusive endpoint semantics. Old calculations
+become function history records with their actual input IDs, including binary
+inputs. Legacy tree/editor modules and worker requests remain for compatibility
+and regression coverage; new UI entrypoints use the region workflow.
+
 Graph validation, bounds, history traversal, and streaming evaluation use
 iterative algorithms, with no configured operation-depth limit. The evaluator
 uses an explicit stack of pull frames, reuses owned unary buffers, and retains
 filter state across chunks. Binary inputs align samples across unequal chunk
-boundaries. Stateful processing before a crop sees its preceding history;
-processing after a crop begins at that segment. A 5,000-operation fixture verifies
-evaluation, immutable inputs, explorer ordering, and persistence/reopening.
+boundaries. A 5,000-operation fixture verifies evaluation and persistence; a
+5,000-level region fixture checks ancestry without recursion.
 
-Segments are virtual inclusive sample-time intervals. They reuse original
-columns and skip chunks outside their range. Time shift and align-to-zero change
-the evaluated axis. Derived evaluation streams chunks through filters and
-calculations; it does not materialize an entire derived recording. A bounded
-cache holds at most 64 plot summaries. There is no persistent derived-value cache
-or disk-backed multiresolution plot pyramid yet.
+Raw crops and bounded raw trigger scans skip chunks outside their range. Stateful
+predecessors still see their preceding history. Time shift and zero-time alignment
+change the signal axis while region bounds stay on the recording clock. Evaluation
+streams chunks without materializing whole derived recordings. At most 64 plot
+summaries are cached. A persistent derived-value cache and disk-backed plot pyramid
+remain future work; multi-gigabyte throughput has not been benchmarked.
 
 ## Implemented calculations
 
@@ -93,7 +115,7 @@ Signal units for the explicit segment power/BSFC step come from bracketed header
 unit-conversion engine. A dyno cannot yield distance-based fuel economy from fuel
 flow alone. The demo therefore uses brake-specific fuel consumption.
 
-## Segmentation semantics
+## Trigger semantics and legacy segmentation compatibility
 
 For rising edges, the preceding finite value must be at or below the threshold
 and the next value strictly above it; falling edges reverse these comparisons.
@@ -111,7 +133,7 @@ use recording time, translating zeroed/shifted derived inputs back to that axis.
 Each output crop retains its own parent's displayed axis. The boundary policy
 clips to shared output coverage or discards an interval extending outside it.
 Minimum duration applies after offsets and clipping. Reversed, empty, and
-too-short intervals are excluded. Crop membership is inclusive; a sample on a
+too-short intervals are excluded. Legacy crop membership is inclusive; a sample on a
 shared endpoint can belong to adjacent segments. Boundaries need not coincide
 with sample times, and duration describes the interval rather than sample count.
 
@@ -123,6 +145,8 @@ streams two bounded iterators without retaining every sample or crossing. A
 single preview cache avoids rescanning immutable inputs when creating the same
 recipe immediately afterward. Preview is read-only and reports clipping,
 exclusions, and unpaired starts.
+
+The following describes the retained legacy segment protocol. New region sets use the model above.
 
 Each saved segment retains the complete definition, trigger events, requested
 and actual boundaries. Crop parents include their data input first, followed by

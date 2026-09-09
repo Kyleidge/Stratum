@@ -20,6 +20,28 @@ globalThis.onmessage = (
     engine.cancelled = false;
     try {
       switch (r.type) {
+        case 'init-regions':
+          await engine.open();
+          await engine.initializeRegions();
+          if (!(engine.project.regionExamples ?? []).length)
+            await engine.regionExample('ramps');
+          break;
+        case 'region-example':
+          await engine.regionExample(r.key);
+          break;
+        case 'region-create':
+          await engine.createRegions(r.settings);
+          break;
+        case 'region-function':
+          await engine.applyRegionFunction(r.settings);
+          break;
+        case 'region-preview':
+          send({
+            type: 'region-plan',
+            requestId,
+            plan: await engine.previewRegions(r.settings),
+          });
+          return;
         case 'init':
           await engine.open();
           if (!engine.project.sources.length) await engine.demo();

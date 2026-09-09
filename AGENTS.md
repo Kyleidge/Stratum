@@ -13,9 +13,22 @@ signal uploads.
 - React 19 and strict TypeScript, with Next-style App Router conventions supplied
   by vinext. Use the existing vinext/Vite commands rather than replacing the stack.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.
-- `components/workbench.tsx`: engineering workspace and worker request client.
+- `components/region-workbench.tsx`: active desktop/browser workspace. Regions
+  are reusable recording-time pointers, not automatic channel copies. The left
+  history has one item per invocation; region/results tables keep families compact.
+- `hooks/use-signal-engine.ts`: worker request client using `init-regions`.
+- `lib/region-types.ts` and `lib/region-model.ts`: region versions, parent links,
+  function invocations, ancestry and legacy migration. Never mutate an existing
+  region version or retarget its children/results. View selection must remain
+  independent of processing scope. Nested segmentation scans each parent separately.
+  New intervals exclude their end unless it is an inclusive parent/recording end;
+  migrated legacy intervals retain inclusive endpoints. Test with `pnpm test`,
+  which includes `tests/regions.test.ts` and the earlier numerical suites.
+- `components/region-editor.tsx`, `region-function-editor.tsx`, `region-history.tsx`:
+  saved settings, explicit scopes and a virtualized chronological history.
+- `components/workbench.tsx`: retained legacy workspace for compatibility.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
-- `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
+- Legacy `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
   numbered operation chains with explicit batch collections and independent
   member branches. Keep exact batch membership; never infer batches from names.
   Files own file-segmentation operations and file segments with synchronized

@@ -132,6 +132,25 @@ void app
         worker = createSignalWorker();
         const reopened = await send({ type: 'init' });
         if (JSON.stringify(reopened.project) !== JSON.stringify(restored.project)) throw new Error('Legacy replacement did not persist or duplicated operations');
+        const regionInit = await send({ type: 'init-regions' });
+        if (!regionInit.project.regionSets.length) throw new Error('Region workspace did not initialize');
+        for (const key of ['ramps','nested','overlap','fuel']) {
+          const opened = await send({ type: 'region-example', key });
+          const example = opened.project.regionExamples.find(item => item.key === key);
+          const set = opened.project.regionSets.find(item => item.id === example.regionSetId);
+          const run = opened.project.functionRuns.find(item => item.id === example.runId);
+          if (run.outputs.length !== set.regions.length) throw new Error('Region example lost independent outputs');
+          const result = await send({ type: 'view', ids: run.outputs.map(output => output.signalId) });
+          if (result.plots.some(plot => !Number.isFinite(plot.summary.min))) throw new Error('Region example failed evaluation');
+          const before = opened.project.nodes.length;
+          const settings = { sourceId: set.sourceId, name: 'Nested smoke ranges', parentSetId: set.id, parentRegionIds: [set.regions[0].id], timeReference: 'parent', definition: { method: 'ranges', boundary: 'clip', ranges: [[0,1],[1,2]] } };
+          const preview = await send({ type: 'region-preview', settings });
+          if (preview.plan.regions.length !== 2) throw new Error('Nested preview failed');
+          const created = await send({ type: 'region-create', settings });
+          if (created.project.nodes.length !== before) throw new Error('Region creation copied signals');
+          const applied = await send({ type: 'region-function', settings: { sourceId: set.sourceId, inputIds: [source.channels[1]], regionSetId: created.project.regionSets.at(-1).id, operation: 'min-max', parameter: 0 } });
+          if (applied.project.functionRuns.at(-1).outputs.length !== 2) throw new Error('Scoped function failed');
+        }
         return { summaries: plots.map(plot => plot.summary), segments: plan.ranges.length, clipped: plan.ranges.filter(range => range.clipped).length };
       } finally { worker.terminate(); }
     })()
@@ -147,7 +166,7 @@ void app
     assert.ok(requests.length > 0, 'Expected an HTTP worker script request');
     assert.ok(requests.every((url) => new URL(url).origin === origin));
     process.stdout.write(
-      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches, all four selectable examples, and persistent replacement of incomplete legacy operations passed.\n`,
+      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nLegacy operations, all four region examples, nested preview/creation, and scoped functions passed through the HTTP worker.\n`,
     );
     clearTimeout(timeout);
     window.destroy();

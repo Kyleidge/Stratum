@@ -1,3 +1,11 @@
+import type {
+  FunctionRun,
+  RegionExample,
+  RegionPlan,
+  RegionRequest,
+  RegionSet,
+} from './region-types';
+
 export type Operation =
   | 'raw'
   | 'crop'
@@ -30,6 +38,7 @@ export type SignalNode = {
   createdAt: string;
   version: 1;
   batchId?: string;
+  internal?: boolean;
 };
 export type Source = {
   id: string;
@@ -113,6 +122,9 @@ export type Project = {
   segments: Segment[];
   segmentationOperations?: SegmentationOperation[];
   examples?: ExampleRun[];
+  regionSets?: RegionSet[];
+  functionRuns?: FunctionRun[];
+  regionExamples?: RegionExample[];
 };
 export type ExampleRun = {
   key: string;
@@ -135,6 +147,7 @@ export type Summary = {
 };
 export type Plot = { id: string; points: Point[]; summary: Summary };
 export type EngineRequest =
+  | RegionRequest
   | { type: 'init' }
   | { type: 'import'; file: File }
   | { type: 'demo' }
@@ -165,6 +178,7 @@ export type EngineRequest =
   | { type: 'export'; ids: string[] }
   | { type: 'cancel' };
 export type EngineResponse = { requestId: number } & (
+  | { type: 'region-plan'; plan: RegionPlan }
   | { type: 'project'; project: Project }
   | { type: 'segment-plan'; plan: SegmentationPlan }
   | { type: 'plots'; plots: Plot[] }

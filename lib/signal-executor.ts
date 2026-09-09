@@ -140,7 +140,12 @@ export async function* executeSignal(
           let value = input;
           switch (node.operation) {
             case 'crop':
-              if (t < node.parameters.start || t > node.parameters.end)
+              if (
+                t < node.parameters.start ||
+                t > node.parameters.end ||
+                (node.parameters.endExclusive === 1 &&
+                  t === node.parameters.end)
+              )
                 continue;
               break;
             case 'smooth':

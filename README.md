@@ -2,7 +2,7 @@
 
 A desktop workbench for immutable measurement signals and traceable time-series
 analysis. The included synthetic dyno recording contains three engine ramps.
-Its segments, brake power, fuel use, and specific fuel consumption are calculated
+Its regions, filters, brake power, and specific fuel consumption are calculated
 by the same engine that processes imported recordings.
 
 ## Run
@@ -26,47 +26,35 @@ native bundle. Packages are unsigned development builds.
 
 ## Explore
 
-1. Open **Full recording** to view the synchronized channels and three ramps.
-   Use **Worked examples** in the explorer to select RPM triggers with a −20 s
-   offset, explicit ranges, 60-second windows, or a complete median filter →
-   Segment → moving average → Min / Max chain. Each runs real calculations on
-   the shared demo recording; selecting it again reopens its existing results
-   and loads its actual Segment settings in the function editor.
-2. Expand the file in **Signal Explorer**. Each **Segment** operation owns file
-   segments, each containing its synchronized channels. **Original signals** owns
-   the raw channels and their individual operation chains. Signals appear once.
-   Use the arrow to expand outputs. Double-click **Segment** (or press Enter/F2)
-   to open that operation's saved settings. Preview changes and choose **Create
-   revised segments** to preserve the original operation while creating a revision.
-   Older operations with missing settings are automatically replaced with
-   explicit time-range settings on opening the workspace. Their existing
-   boundaries, signal IDs, and downstream results are preserved.
-3. Select **Segment**. **Entire file** is the default target; each interval keeps
-   every original channel together. Choose **Single signal** or a specific signal
-   for signal-only segmentation beneath that input. Choose **Signal edge triggers** and a start signal,
-   rising/falling edge, threshold, and offset, then configure the end independently.
-   For example: speed rising above 900 rpm with a −20 s start offset, followed by
-   speed falling below 900 rpm. **Preview** shows intervals and clipping before
-   **Create segments** saves immutable crop branches. Manual time ranges and
-   fixed-duration windows are also available. Raw and derived signals are valid
-   trigger inputs and output targets.
-4. Follow numbered steps in **Signal Explorer**: raw → filter → segment → moving
-   average → Min / Max. Select a collection row to apply the next operation
-   independently to every member. Expand it to inspect members or select just
-   one to create its own branch. Shared steps stay visible once; segments are
-   never concatenated. Creating segments clears stale search/collapse overrides,
-   selects and expands their **Segment** operation, and scrolls it into view.
-   A creation notice provides **Show in tree** and **Settings** shortcuts.
-   Each function invocation appears once, including batches spanning multiple
-   input branches; output signals are marked with an arrow instead of a step.
-   Repeating a function from an earlier step creates a separate branch.
-5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
-   and **Operation history** for the selected signal's complete history and
-   linked inputs. Arrow keys navigate the explorer; its toolbar can reveal the
-   selection or collapse other branches.
-6. **Power & fuel metrics** explicitly adds engineering calculations to compatible
-   segments. The demo already includes this calculation step. **Export results**
-   downloads summary statistics and parent IDs as CSV.
+1. Choose **Worked examples** in the left panel: ramp filtering and statistics,
+   nested 10-second windows, overlapping windows, or power and fuel consumption.
+   These run real calculations. Selecting one again reopens its saved results.
+2. **Function history** has one item per invocation. Region sets and calculations
+   share a chronological list. Select an item to inspect its saved settings;
+   input links let you follow earlier operations. Results stay in a table instead
+   of multiplying the tree by every region and channel.
+3. Use **Segment** to create reusable time regions. Configure rising/falling
+   triggers (including signed offsets), manual ranges, or fixed-duration windows.
+   Regions point to recording times and do not create signal copies.
+4. To segment a segment, select a region set and choose **Segment within set**,
+   or select a row and choose **Segment this region**. Choose all or one parent,
+   and use recording times or times relative to each parent start. Each parent is
+   scanned independently; child regions are clipped to it or discarded.
+5. **Process regions** chooses signals or a result family and explicitly applies
+   a function within a region set. Each new function has independent state per
+   region. Filtering a whole signal before applying a region retains its earlier
+   filter history. Processing scope is separate from the region selected for viewing.
+6. Min / Max produces one table row per input and region. Other functions produce
+   a signal or result family; the table shows their statistics. **Export results**
+   includes region names, versions, boundaries, units, and provenance.
+7. Changing a saved region operation creates a new version. Existing children and
+   calculations keep their original version. Arbitrary operation depth and nested
+   region depth are supported; a creation batch is limited to 1,000 regions or
+   10,000 calculated results. Overlapping regions remain independent.
+
+Older workspaces are adapted without deleting or changing signal recipes. Legacy
+inclusive endpoints are retained; newly created regions include their start and
+exclude their end, except at an inclusive recording/parent endpoint.
 
 Import comma-separated UTF-8 files with time in seconds in the first column.
 Use units in square brackets to enable the power and fuel calculation step:
@@ -100,7 +88,9 @@ starter has 19 lint issues in its unused UI primitives and mobile hook. New
 application code is checked separately as well.
 `signal-functions.test.ts` checks independently calculated values and defaults
 for every single-input library function, plus all four persistent examples.
-Explorer regressions cover revealing results after search/collapse and keeping
+`regions.test.ts` checks nested pointers, version pinning, state boundaries,
+family mapping, all new examples, and legacy migration. Legacy explorer
+regressions cover keeping
 one function item for partial or mixed input batches. The preview integration
 also runs every selectable example through the actual HTTP worker module.
 
