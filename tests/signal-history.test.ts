@@ -8,6 +8,7 @@ import {
   buildExplorer,
   explorerRows,
   revealEntry,
+  revealExplorer,
 } from '../lib/signal-explorer';
 import type { SegmentationDefinition, SignalNode } from '../lib/signal-types';
 
@@ -29,6 +30,119 @@ const ranges: SegmentationDefinition = {
   ],
   boundary: 'clip',
 };
+
+void test('one invocation stays one function item for signal subsets and mixed branches', async () => {
+  const { engine, source } = await fixture(
+    't,a,b,c\n0,1,2,3\n1,2,3,4\n2,3,4,5\n3,4,5,6',
+  );
+  try {
+    const definition: SegmentationDefinition = {
+      method: 'ranges',
+      boundary: 'clip',
+      ranges: [
+        [0, 1],
+        [2, 3],
+      ],
+    };
+    const segments = await engine.segment(
+      source.id,
+      definition,
+      source.channels.slice(0, 2),
+      false,
+      'signals',
+    );
+    const mixed = [segments[0].nodes[0], source.channels[2]];
+    const outputs = await engine.deriveMany(mixed, 'offset', 2);
+    const nextSegments = await engine.segment(
+      source.id,
+      definition,
+      outputs.map((node) => node.id),
+      true,
+      'signals',
+    );
+    const deviation = await engine.derive(
+      nextSegments[0].nodes[0],
+      'absolute',
+      0,
+    );
+    const model = buildExplorer(engine.project, source.id);
+    for (const batchId of [segments[0].batchId, nextSegments[0].batchId])
+      assert.equal(
+        [...model.entries.values()].filter(
+          (entry) => entry.segmentationId === batchId,
+        ).length,
+        1,
+      );
+    const batch = model.entries.get(`operation:${outputs[0].batchId}`)!;
+    assert.equal(batch.label, 'Value offset');
+    assert.deepEqual(
+      batch.ids,
+      outputs.map((node) => node.id),
+    );
+    assert.ok(outputs.every((node) => model.entries.get(node.id)!.output));
+    assert.equal(
+      model.entries.get(deviation.id)!.parent,
+      nextSegments[0].nodes[0],
+    );
+    assert.equal(
+      model.entries.has(`operation:${deviation.batchId}`),
+      false,
+      'A single derived signal is already the function item',
+    );
+    const nodes = explorerRows(model, new Set(model.entries.keys())).flatMap(
+      (row) => (row.entry.node ? [row.entry.node.id] : []),
+    );
+    assert.equal(nodes.length, engine.project.nodes.length);
+    assert.equal(
+      new Set(nodes).size,
+      nodes.length,
+      'Each output appears exactly once',
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('explicit reveal clears a stale search and opens a collapsed Segment, keeping other branches closed', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const segments = await engine.segment(
+      source.id,
+      ranges,
+      source.channels,
+      false,
+      'file',
+    );
+    const model = buildExplorer(engine.project, source.id);
+    const id = `file-operation:${segments[0].batchId}`;
+    const visibility = revealExplorer(model, id, {
+      query: 'old search',
+      expanded: new Set(),
+      closed: new Set(model.entries.keys()),
+    });
+    const rows = explorerRows(
+      model,
+      new Set(
+        [...visibility.expanded].filter((key) => !visibility.closed.has(key)),
+      ),
+      visibility.query,
+    );
+    assert.equal(visibility.query, '');
+    assert.deepEqual(
+      rows
+        .filter((row) => row.entry.kind === 'file-segment')
+        .map((row) => row.entry.id),
+      segments.map((segment) => `file-segment:${segment.id}`),
+    );
+    assert.ok(
+      !rows.some((row) => row.entry.node),
+      'Reveal the resulting file segments without opening all channels',
+    );
+    assert.ok(visibility.closed.has(`originals:${source.id}`));
+  } finally {
+    engine.close();
+  }
+});
 async function collect(engine: SignalEngine, id: string) {
   const points: [number, number][] = [];
   for await (const chunk of engine.evaluate(id))

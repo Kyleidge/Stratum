@@ -56,6 +56,7 @@ export type ExplorerEntry = {
   sequence: number;
   memberUnit?: 'signals' | 'segments';
   segmentationId?: string;
+  output?: boolean;
 };
 export type ExplorerModel = {
   entries: Map<string, ExplorerEntry>;
@@ -195,6 +196,7 @@ export function buildExplorer(
     });
     for (const node of members) {
       const entry = entries.get(node.id)!;
+      entry.output = true;
       entry.parent = id;
       entry.label =
         memberUnit === 'signals'
@@ -265,6 +267,7 @@ export function buildExplorer(
         });
         for (const node of channels) {
           const entry = entries.get(node.id)!;
+          entry.output = true;
           entry.parent = segmentId;
           entry.label = byId.get(node.parents[0])!.name;
           entry.detail = `Segmented signal · ${node.unit}`;
@@ -277,9 +280,7 @@ export function buildExplorer(
     const collection = parent && entries.get(parent);
     if (
       collection &&
-      (segment
-        ? collection.kind === 'collection'
-        : collection.kind === 'collection' || members.length > 1) &&
+      (segment ? collection.kind === 'collection' : members.length > 1) &&
       members.every((node) => owner.get(node.parents[0]) === parent) &&
       new Set(members.map((node) => node.parents[0])).size ===
         collection.ids.length &&
@@ -295,22 +296,38 @@ export function buildExplorer(
           : `${operationDetail(members[0])} · ${members.length} results`,
         segment ? batchId : undefined,
       );
-    } else if (segment) {
-      const inputs = new Map<string, SignalNode[]>();
-      for (const node of members) {
-        const list = inputs.get(node.parents[0]) ?? [];
-        list.push(node);
-        inputs.set(node.parents[0], list);
+    } else if (segment || members.length > 1) {
+      // A batch is one invocation, including subsets and inputs from different
+      // branches. Anchor at their nearest common ancestor; retain the actual
+      // input links on each output instead of duplicating the function row.
+      const inputs = [...new Set(members.map((node) => node.parents[0]))];
+      let anchor = inputs[0];
+      if (inputs.length > 1) {
+        const common = new Set<string>();
+        let cursor: string | undefined = anchor;
+        while (cursor) {
+          common.add(cursor);
+          cursor = entries.get(cursor)?.parent;
+        }
+        for (const input of inputs.slice(1)) {
+          const path = new Set<string>();
+          cursor = input;
+          while (cursor) {
+            path.add(cursor);
+            cursor = entries.get(cursor)?.parent;
+          }
+          for (const id of common) if (!path.has(id)) common.delete(id);
+        }
+        anchor = common.values().next().value ?? fileId;
       }
-      for (const [input, outputs] of inputs)
-        group(
-          `segments:${input}:${batchId}`,
-          outputs,
-          input,
-          'Segment',
-          `${outputs.length} interval${outputs.length === 1 ? '' : 's'}`,
-          batchId,
-        );
+      group(
+        segment ? `segments:${anchor}:${batchId}` : `operation:${batchId}`,
+        members,
+        anchor,
+        segment ? 'Segment' : operationLabels[members[0].operation],
+        `${members.length} ${segment ? 'intervals' : 'results'} · ${inputs.length} inputs`,
+        segment ? batchId : undefined,
+      );
     }
   }
   const roots: string[] = [];
@@ -398,4 +415,27 @@ export function revealEntry(model: ExplorerModel, id: string): Set<string> {
     entry = entry.parent ? model.entries.get(entry.parent) : undefined;
   }
   return open;
+}
+
+export type ExplorerVisibility = {
+  query: string;
+  expanded: Set<string>;
+  closed: Set<string>;
+};
+
+/** Explicit navigation overrides search/collapse and opens just this result. */
+export function revealExplorer(
+  model: ExplorerModel,
+  id: string,
+  previous?: ExplorerVisibility,
+): ExplorerVisibility {
+  const open = revealEntry(model, id);
+  if (model.entries.get(id)?.members.length) open.add(id);
+  return {
+    query: '',
+    expanded: new Set([...(previous?.expanded ?? []), ...open]),
+    closed: new Set(
+      [...(previous?.closed ?? [])].filter((key) => !open.has(key)),
+    ),
+  };
 }

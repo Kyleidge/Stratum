@@ -25,6 +25,12 @@ signal uploads.
   opens saved settings; disclosure arrows expand outputs. `segmentation-operation.ts`
   reads isolated settings snapshots, with a legacy fallback. New operations store
   complete input IDs/definitions atomically with outputs; revisions append history.
+  Explicit creation/reveal commands clear stale search/collapse overrides and
+  open the new operation's outputs. Each invocation stays one function item,
+  including partial/mixed batches, anchored at its inputs' common ancestor.
+- `lib/signal-functions.ts`: exposed function catalog shared by the UI, runtime
+  operation validation, and numerical coverage tests. `lib/signal-examples.ts`
+  defines four worked examples; the engine persists their recipe IDs for reuse.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
 - `components/segmentation-editor.tsx`: trigger/range/window editor, read-only

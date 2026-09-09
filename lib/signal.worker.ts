@@ -27,6 +27,9 @@ globalThis.onmessage = (
         case 'demo':
           await engine.demo();
           break;
+        case 'example':
+          await engine.example(r.key);
+          break;
         case 'import':
           await engine.importCsv(r.file);
           break;

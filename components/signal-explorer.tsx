@@ -22,6 +22,7 @@ import {
   operationDetail,
   operationLabels,
   revealEntry,
+  revealExplorer,
   type ExplorerEntry,
 } from '@/lib/signal-explorer';
 import { SignalGraph } from '@/lib/signal-graph';
@@ -32,6 +33,7 @@ export default function SignalExplorer({
   sourceId,
   selectedId,
   collectionId,
+  revealRequest,
   onSelect,
   onCollection,
   onSelectOperation,
@@ -41,6 +43,7 @@ export default function SignalExplorer({
   sourceId: string;
   selectedId: string;
   collectionId?: string;
+  revealRequest?: { id: string; serial: number };
   onSelect: (node: SignalNode) => void;
   onCollection: (entry: ExplorerEntry) => void;
   onSelectOperation: (entryId: string) => void;
@@ -50,11 +53,20 @@ export default function SignalExplorer({
     () => buildExplorer(project, sourceId),
     [project, sourceId],
   );
-  const [expanded, setExpanded] = useState<Set<string>>(() =>
-    revealEntry(model, selectedId),
-  );
-  const [query, setQuery] = useState('');
-  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const [visibility, setVisibility] = useState(() => ({
+    ...revealExplorer(model, collectionId ?? selectedId),
+    request: revealRequest,
+  }));
+  // A creation/reveal command invalidates old search and collapse overrides in
+  // this render, so the new row exists before the scrolling effect runs.
+  const view =
+    visibility.request === revealRequest
+      ? visibility
+      : {
+          ...revealExplorer(model, revealRequest?.id ?? selectedId, visibility),
+          request: revealRequest,
+        };
+  const { expanded, closed, query } = view;
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(600);
   const viewport = useRef<HTMLDivElement>(null);
@@ -93,36 +105,38 @@ export default function SignalExplorer({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const revealed = useRef('');
+  const revealed = useRef({ id: '', serial: -1 });
   useEffect(() => {
-    if (revealed.current === navigationId) return;
+    const serial = revealRequest?.serial ?? 0;
+    if (
+      revealed.current.id === navigationId &&
+      revealed.current.serial === serial
+    )
+      return;
     const index = rows.findIndex((row) => row.entry.id === navigationId);
     if (index < 0) return;
-    revealed.current = navigationId;
+    revealed.current = { id: navigationId, serial };
     viewport.current?.scrollTo({ top: Math.max(0, index * 38 - height / 3) });
-  }, [navigationId, rows, height]);
+  }, [navigationId, rows, height, revealRequest]);
   function reveal() {
-    setQuery('');
-    setClosed((old) => new Set([...old].filter((id) => !ancestors.has(id))));
-    setExpanded((old) => new Set([...old, ...ancestors]));
-    const full = explorerRows(model, new Set([...expanded, ...ancestors]));
+    const next = revealExplorer(model, activeId, view);
+    setVisibility({ ...next, request: revealRequest });
+    const full = explorerRows(model, next.expanded);
     const index = full.findIndex((row) => row.entry.id === activeId);
     viewport.current?.scrollTo({ top: Math.max(0, index * 38 - height / 3) });
   }
   function toggle(id: string) {
     const open = !closed.has(id) && (expanded.has(id) || ancestors.has(id));
-    setClosed((old) => {
-      const next = new Set(old);
-      if (open) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-    setExpanded((old) => {
-      const next = new Set(old);
-      if (open) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    const nextClosed = new Set(closed);
+    const nextExpanded = new Set(expanded);
+    if (open) {
+      nextClosed.add(id);
+      nextExpanded.delete(id);
+    } else {
+      nextClosed.delete(id);
+      nextExpanded.add(id);
+    }
+    setVisibility({ ...view, closed: nextClosed, expanded: nextExpanded });
   }
   function select(entry: ExplorerEntry) {
     setNavigation({ selection: activeId, id: entry.id });
@@ -140,7 +154,7 @@ export default function SignalExplorer({
           placeholder="Find signals or operations…"
           value={query}
           onChange={(event) => {
-            setQuery(event.target.value);
+            setVisibility({ ...view, query: event.target.value });
             viewport.current?.scrollTo({ top: 0 });
           }}
         />
@@ -160,8 +174,7 @@ export default function SignalExplorer({
           aria-label="Collapse other branches"
           title="Collapse other branches"
           onClick={() => {
-            setExpanded(new Set());
-            setClosed(new Set());
+            setVisibility({ ...view, expanded: new Set(), closed: new Set() });
             viewport.current?.scrollTo({ top: 0 });
           }}
         >
@@ -285,7 +298,7 @@ export default function SignalExplorer({
                 <button
                   className="step-main"
                   tabIndex={-1}
-                  title={`${step === 0 ? 'Source' : `Step ${step}`} · ${entry.label} · ${entry.detail}${entry.segmentationId ? ' · Double-click to open settings' : ''}${entry.node?.parents.length && entry.node.parents.length > 1 ? ` · ${entry.node.parents.length - 1} linked inputs` : ''}`}
+                  title={`${entry.output ? 'Output' : step === 0 ? 'Source' : `Step ${step}`} · ${entry.label} · ${entry.detail}${entry.segmentationId ? ' · Double-click to open settings' : ''}${entry.node?.parents.length && entry.node.parents.length > 1 ? ` · ${entry.node.parents.length - 1} linked inputs` : ''}`}
                   onClick={() => select(entry)}
                   onDoubleClick={() => {
                     if (entry.segmentationId) onOpenOperation(entry);
@@ -296,6 +309,8 @@ export default function SignalExplorer({
                       <FileSpreadsheet size={13} />
                     ) : entry.kind === 'folder' ? (
                       <FolderOpen size={13} />
+                    ) : entry.output ? (
+                      <span title="Output signal">↳</span>
                     ) : entry.node?.operation === 'raw' ? (
                       <LockKeyhole size={12} />
                     ) : (

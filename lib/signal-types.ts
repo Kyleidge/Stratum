@@ -112,6 +112,13 @@ export type Project = {
   nodes: SignalNode[];
   segments: Segment[];
   segmentationOperations?: SegmentationOperation[];
+  examples?: ExampleRun[];
+};
+export type ExampleRun = {
+  key: string;
+  sourceId: string;
+  segmentationId: string;
+  outputIds: string[];
 };
 export type Chunk = { time: Float64Array; values: Float64Array[] };
 export type SeriesChunk = { time: Float64Array; values: Float64Array };
@@ -131,6 +138,7 @@ export type EngineRequest =
   | { type: 'init' }
   | { type: 'import'; file: File }
   | { type: 'demo' }
+  | { type: 'example'; key: string }
   | {
       type: 'derive';
       parentId: string;

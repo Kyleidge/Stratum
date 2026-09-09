@@ -62,6 +62,8 @@ import SegmentationEditor, {
   SegmentProvenance,
 } from '@/components/segmentation-editor';
 import { createSignalWorker } from '@/lib/create-signal-worker';
+import { FUNCTIONS } from '@/lib/signal-functions';
+import { EXAMPLES } from '@/lib/signal-examples';
 import { segmentTraces } from '@/lib/segment-traces';
 import { segmentationOperation } from '@/lib/segmentation-operation';
 import SignalExplorer, { OperationHistory } from '@/components/signal-explorer';
@@ -83,179 +85,6 @@ import type {
   SignalNode,
 } from '@/lib/signal-types';
 
-type FunctionSpec = {
-  operation: Operation | 'segment';
-  name: string;
-  category: string;
-  description: string;
-  parameter: string;
-  defaultValue: number;
-  unit: string;
-  min?: number;
-  max?: number;
-  step?: number;
-};
-const FUNCTIONS: FunctionSpec[] = [
-  {
-    operation: 'min-max',
-    name: 'Min / Max',
-    category: 'Calculation',
-    description:
-      'Find the minimum and maximum finite values, retaining their original timestamps as extrema samples. Missing samples are excluded.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'segment',
-    name: 'Segment signals',
-    category: 'Segmentation',
-    description:
-      'Create branches from signal crossings, explicit time ranges, or fixed-duration windows.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'smooth',
-    name: 'Moving average',
-    category: 'Filtering',
-    description:
-      'A trailing sample window reduces noise. Missing samples are excluded from the mean.',
-    parameter: 'Window size',
-    defaultValue: 25,
-    unit: 'samples',
-    min: 1,
-    max: 100000,
-    step: 1,
-  },
-  {
-    operation: 'median',
-    name: 'Median filter',
-    category: 'Filtering',
-    description:
-      'Reject spikes with a trailing window of 1–1,001 samples. Uses available samples at the start and excludes missing values, filling gaps while the window has data.',
-    parameter: 'Window size',
-    defaultValue: 5,
-    unit: 'samples',
-    min: 1,
-    max: 1001,
-    step: 1,
-  },
-  {
-    operation: 'exponential',
-    name: 'Exponential smoothing',
-    category: 'Filtering',
-    description:
-      'Weight each new sample by alpha (0 < alpha ≤ 1). Smaller values smooth more; 1 leaves values unchanged. Restarts after missing samples.',
-    parameter: 'Smoothing factor',
-    defaultValue: 0.2,
-    unit: 'α',
-    min: 0,
-    max: 1,
-    step: 0.05,
-  },
-  {
-    operation: 'low-pass',
-    name: 'Low-pass RC filter',
-    category: 'Filtering',
-    description:
-      'Reduce fast changes with a first-order RC filter using actual sample intervals. Starts at the input value and restarts after missing samples. Cutoff must be positive.',
-    parameter: 'Cutoff frequency',
-    defaultValue: 5,
-    unit: 'Hz',
-    min: 0,
-  },
-  {
-    operation: 'high-pass',
-    name: 'High-pass RC filter',
-    category: 'Filtering',
-    description:
-      'Remove slow changes and DC offset with a first-order RC filter using actual sample intervals. Starts at zero and restarts after missing samples. Cutoff must be positive.',
-    parameter: 'Cutoff frequency',
-    defaultValue: 1,
-    unit: 'Hz',
-    min: 0,
-  },
-  {
-    operation: 'scale',
-    name: 'Scale signal',
-    category: 'Calculation',
-    description: 'Multiply every sample by a constant factor.',
-    parameter: 'Scale factor',
-    defaultValue: 1.1,
-    unit: '×',
-  },
-  {
-    operation: 'offset',
-    name: 'Offset signal',
-    category: 'Calculation',
-    description: 'Add a constant to every sample in the selected signal.',
-    parameter: 'Value offset',
-    defaultValue: 10,
-    unit: 'units',
-  },
-  {
-    operation: 'absolute',
-    name: 'Absolute value',
-    category: 'Calculation',
-    description:
-      'Create the magnitude of each sample, retaining its time axis.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'derivative',
-    name: 'Differentiate',
-    category: 'Calculation',
-    description:
-      'First-order backward difference using actual sample times. The first sample is undefined.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'integral',
-    name: 'Integrate',
-    category: 'Calculation',
-    description:
-      'Cumulative trapezoidal integration. Missing intervals are skipped; output units include seconds.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'zero-time',
-    name: 'Align to zero',
-    category: 'Time manipulation',
-    description:
-      'Start the selected signal at t = 0. Source timestamps remain unchanged.',
-    parameter: '',
-    defaultValue: 0,
-    unit: '',
-  },
-  {
-    operation: 'time-shift',
-    name: 'Shift time',
-    category: 'Time manipulation',
-    description:
-      'Move the entire time axis by a fixed offset, including negative offsets.',
-    parameter: 'Time offset',
-    defaultValue: 5,
-    unit: 's',
-  },
-  {
-    operation: 'resample',
-    name: 'Resample',
-    category: 'Time manipulation',
-    description:
-      'Linear interpolation on a uniform grid. Gaps above 5 initial source intervals stay empty. Filter before downsampling.',
-    parameter: 'Output rate',
-    defaultValue: 50,
-    unit: 'Hz',
-  },
-];
 const empty: Project = { sources: [], nodes: [], segments: [] };
 const segmentColors = ['#61d9b0', '#ac9cfa', '#edb477'];
 function bytes(value: number) {
@@ -319,6 +148,13 @@ export default function Workbench() {
     memberUnit?: 'signals' | 'segments';
   }>();
   const [selectedOperationId, setSelectedOperationId] = useState<string>();
+  const [revealRequest, setRevealRequest] = useState<{
+    id: string;
+    serial: number;
+  }>();
+  const [createdSegmentId, setCreatedSegmentId] = useState<string>();
+  const [exampleKey, setExampleKey] = useState('');
+  const [segmentDraft, setSegmentDraft] = useState<SegmentationOperation>();
   const [segmentSettings, setSegmentSettings] =
     useState<SegmentationOperation>();
   const [settingsError, setSettingsError] = useState('');
@@ -356,6 +192,13 @@ export default function Workbench() {
     (s) => s.sourceId === source?.id,
   );
   const activeSegment = sourceSegments.find((s) => s.id === scope);
+  const exampleSpec = EXAMPLES.find((item) => item.key === exampleKey);
+  const exampleRun = (project.examples ?? []).find(
+    (item) => item.key === exampleKey && item.sourceId === source?.id,
+  );
+  const createdSegment = (project.segmentationOperations ?? []).find(
+    (item) => item.id === createdSegmentId && item.sourceId === source?.id,
+  );
   const spec = FUNCTIONS.find((f) => f.operation === operation)!;
   const currentSummary = selected ? plots[selected.id]?.summary : undefined;
   const raw = project.nodes.filter(
@@ -531,48 +374,55 @@ export default function Workbench() {
           selectNode(outputs[0], result.project);
           setTab('analysis');
           if (r.type === 'derive-many') {
-            setOperationTargets({
-              id: `operation:${outputs[0].batchId}`,
-              ids: outputs.map((node) => node.id),
-              label: `${operationLabels[r.operation]} · ${outputs.length} results`,
-              kind: 'collection',
-              memberUnit: operationTargets?.memberUnit,
-            });
+            const model = buildExplorer(result.project, outputs[0].sourceId);
+            const group = model.entries.get(`operation:${outputs[0].batchId}`);
+            if (group) {
+              setOperationTargets({
+                id: group.id,
+                ids: outputs.map((node) => node.id),
+                label: `${operationLabels[r.operation]} · ${outputs.length} results`,
+                kind: 'collection',
+                memberUnit: operationTargets?.memberUnit,
+              });
+            }
           }
+          const model = buildExplorer(result.project, outputs[0].sourceId);
+          revealOperation(
+            model.entries.has(`operation:${outputs[0].batchId}`)
+              ? `operation:${outputs[0].batchId}`
+              : outputs[0].id,
+          );
         }
         if (r.type === 'segment') {
-          const first = result.project.nodes[project.nodes.length];
-          const model = buildExplorer(result.project, r.sourceId);
-          const group =
-            first &&
-            [...model.entries.values()].find(
-              (entry) =>
-                (entry.kind === 'collection' ||
-                  entry.kind === 'file-segment') &&
-                entry.ids.includes(first.id),
-            );
-          if (first && group) {
-            selectNode(first, result.project);
-            setOperationTargets({
-              id: group.id,
-              ids: group.ids,
-              label: group.label,
-              kind: group.kind,
-              memberUnit: group.memberUnit,
-            });
-            setSelectedOperationId(
-              group.segmentationId ? group.id : group.parent,
+          const saved = (result.project.segmentationOperations ?? []).at(-1);
+          if (saved) {
+            showSegmentation(saved.id, result.project);
+            setCreatedSegmentId(saved.id);
+          }
+        }
+        if (r.type === 'example') {
+          const run = (result.project.examples ?? []).find(
+            (item) => item.key === r.key,
+          );
+          if (run) {
+            setExampleKey(r.key);
+            setOperation('segment');
+            showSegmentation(run.segmentationId, result.project);
+            setSegmentDraft(
+              segmentationOperation(result.project, run.segmentationId),
             );
           }
         }
         setStatus(
           r.type === 'segment'
             ? 'Segments created · source signals unchanged'
-            : r.type === 'segment-metrics'
-              ? 'Power and fuel metrics created · lineage saved'
-              : r.type === 'derive' || r.type === 'derive-many'
-                ? 'Derived signal created · lineage saved'
-                : 'Recording imported · raw signals locked',
+            : r.type === 'example'
+              ? 'Example ready · select a step or double-click Segment for its settings'
+              : r.type === 'segment-metrics'
+                ? 'Power and fuel metrics created · lineage saved'
+                : r.type === 'derive' || r.type === 'derive-many'
+                  ? 'Derived signal created · lineage saved'
+                  : 'Recording imported · raw signals locked',
         );
         return result.project;
       }
@@ -581,11 +431,41 @@ export default function Workbench() {
       setError(message);
       onFailure?.(message);
       setStatus('Ready');
+      if (r.type === 'segment') throw new Error(message);
     } finally {
       setBusy(false);
     }
   }
+  function revealOperation(id: string) {
+    setRevealRequest((previous) => ({
+      id,
+      serial: (previous ? previous.serial : 0) + 1,
+    }));
+  }
+  function showSegmentation(id: string, nextProject = project) {
+    const saved = segmentationOperation(nextProject, id);
+    if (!saved) return;
+    const model = buildExplorer(nextProject, saved.sourceId);
+    const entry = [...model.entries.values()].find(
+      (item) => item.segmentationId === id,
+    );
+    const segment = nextProject.segments.find(
+      (item) => item.id === saved.segmentIds[0],
+    );
+    const first = nextProject.nodes.find(
+      (item) => item.id === (segment ? segment.nodes[0] : undefined),
+    );
+    if (!entry || !first) return;
+    selectNode(first, nextProject);
+    // A file Segment is a container, not an implicit selection of the first
+    // segment's channels. Choose an output explicitly before batch processing.
+    if (entry.ids.length) setOperationTargets({ ...entry });
+    setSelectedOperationId(entry.id);
+    setTab('analysis');
+    revealOperation(entry.id);
+  }
   function chooseOperation(next: Operation | 'segment') {
+    setSegmentDraft(undefined);
     setSelectedOperationId(undefined);
     const fn = FUNCTIONS.find((f) => f.operation === next)!;
     setOperation(next);
@@ -593,6 +473,7 @@ export default function Workbench() {
     setDialog(null);
   }
   function selectNode(n: SignalNode, nextProject = project) {
+    setSegmentDraft(undefined);
     setSelectedOperationId(undefined);
     setOperationTargets(undefined);
     setSourceId(n.sourceId);
@@ -800,7 +681,7 @@ export default function Workbench() {
           >
             <FlaskConical />
             <span>Function library</span>
-            <span className="count-badge">10</span>
+            <span className="count-badge">{FUNCTIONS.length}</span>
           </button>
         </div>
         <div className="ribbon-end">
@@ -843,6 +724,7 @@ export default function Workbench() {
                 const next = project.sources.find((item) => item.id === id);
                 if (!next) return;
                 setSourceId(id);
+                setSegmentDraft(undefined);
                 setSelectedOperationId(undefined);
                 setSelectedId(next.channels[0]);
                 setOperationTargets(undefined);
@@ -852,6 +734,93 @@ export default function Workbench() {
               }}
             />
           </div>
+          <fieldset className="explorer-examples" disabled={busy}>
+            <span className="field-label">
+              <FlaskConical size={12} /> Worked examples
+            </span>
+            <Picker
+              label="Worked examples"
+              value={exampleRun ? exampleKey : ''}
+              items={[
+                { value: '', label: 'Choose an example…' },
+                ...EXAMPLES.map((item) => ({
+                  value: item.key,
+                  label: item.name,
+                })),
+              ]}
+              onChange={(key) => {
+                if (key)
+                  void mutate({ type: 'example', key }, 'Preparing example…');
+              }}
+            />
+            {exampleRun && exampleSpec && (
+              <>
+                <p>{exampleSpec.description}</p>
+                <div className="explorer-feedback-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOperation('segment');
+                      showSegmentation(exampleRun.segmentationId);
+                      setSegmentDraft(
+                        segmentationOperation(
+                          project,
+                          exampleRun.segmentationId,
+                        ),
+                      );
+                    }}
+                  >
+                    Show Segment
+                  </button>
+                  {exampleSpec.chain && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const node = project.nodes.find(
+                          (item) => item.id === exampleRun.outputIds[0],
+                        );
+                        if (node) {
+                          selectNode(node);
+                          revealOperation(node.id);
+                        }
+                      }}
+                    >
+                      Show Min / Max
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </fieldset>
+          {createdSegment && (
+            <output className="explorer-feedback">
+              <strong>
+                <Check size={13} /> Created {createdSegment.segmentIds.length}{' '}
+                {createdSegment.scope === 'file' ? 'file' : 'signal'} segments
+              </strong>
+              <div className="explorer-feedback-actions">
+                <button onClick={() => showSegmentation(createdSegment.id)}>
+                  Show in tree
+                </button>
+                <button
+                  onClick={() => {
+                    setSettingsError('');
+                    setSegmentSettings(
+                      segmentationOperation(project, createdSegment.id),
+                    );
+                  }}
+                >
+                  Settings
+                </button>
+                <button
+                  aria-label="Dismiss creation notice"
+                  onClick={() => setCreatedSegmentId(undefined)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </output>
+          )}
           {source && (
             <SignalExplorer
               key={source.id}
@@ -859,6 +828,7 @@ export default function Workbench() {
               sourceId={source.id}
               selectedId={selected?.id || ''}
               collectionId={selectedOperationId ?? operationTargets?.id}
+              revealRequest={revealRequest}
               onSelectOperation={setSelectedOperationId}
               onOpenOperation={openSegmentSettings}
               onSelect={selectNode}
@@ -1323,51 +1293,45 @@ export default function Workbench() {
             {operation === 'segment' ? (
               source && (
                 <SegmentationEditor
-                  key={`${source.id}:${operationTargets?.id ?? selected?.id}`}
+                  key={`${source.id}:${segmentDraft?.id ?? 'new'}`}
                   source={source}
                   nodes={project.nodes}
                   segments={sourceSegments}
                   busy={busy}
-                  selectionKind={operationTargets?.kind}
+                  savedOperation={segmentDraft}
+                  selectionKind={
+                    segmentDraft
+                      ? segmentDraft.independently
+                        ? 'collection'
+                        : undefined
+                      : operationTargets?.kind
+                  }
                   selectedIds={
+                    segmentDraft?.targetIds ??
                     operationTargets?.ids ??
                     (selected ? [selected.id] : source.channels)
                   }
-                  onPreview={async (
+                  onPreview={(
+                    definition,
+                    targetIds,
+                    independently,
+                    targetScope,
+                  ) =>
+                    previewSegmentation(
+                      source.id,
+                      definition,
+                      targetIds,
+                      independently,
+                      targetScope,
+                    )
+                  }
+                  onCreate={async (
                     definition,
                     targetIds,
                     independently,
                     targetScope,
                   ) => {
-                    setBusy(true);
-                    setStatus('Previewing segment intervals…');
-                    setProgress(0);
-                    try {
-                      const response = await request({
-                        type: 'segment-preview',
-                        sourceId: source.id,
-                        definition,
-                        targetIds,
-                        independently,
-                        scope: targetScope,
-                      });
-                      if (response.type !== 'segment-plan')
-                        throw new Error('Unexpected preview response.');
-                      setStatus(
-                        `${response.plan.ranges.length} intervals previewed · no signals created`,
-                      );
-                      return response.plan;
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                  onCreate={(
-                    definition,
-                    targetIds,
-                    independently,
-                    targetScope,
-                  ) => {
-                    void mutate(
+                    await mutate(
                       {
                         type: 'segment',
                         sourceId: source.id,
@@ -1638,9 +1602,14 @@ export default function Workbench() {
                       scope,
                     )
                   }
-                  onCreate={(definition, targetIds, independently, scope) => {
+                  onCreate={async (
+                    definition,
+                    targetIds,
+                    independently,
+                    scope,
+                  ) => {
                     setSettingsError('');
-                    void mutate(
+                    await mutate(
                       {
                         type: 'segment',
                         sourceId: settingsSource.id,

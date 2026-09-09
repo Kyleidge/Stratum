@@ -46,7 +46,7 @@ type Props = {
     targets: string[],
     independently: boolean,
     scope: SegmentationScope,
-  ) => void;
+  ) => Promise<void>;
 };
 
 function Choice({
@@ -216,6 +216,8 @@ export default function SegmentationEditor({
     partial,
     boundary,
     target,
+    selectedIds,
+    selectionKind,
   ]);
   const plan = preview?.key === key ? preview.plan : undefined;
   const signals = nodes
@@ -287,7 +289,7 @@ export default function SegmentationEditor({
           key,
           plan: await onPreview(config, targets, independently, scope),
         });
-      else onCreate(config, targets, independently, scope);
+      else await onCreate(config, targets, independently, scope);
     } catch (error) {
       setError(
         error instanceof Error
@@ -484,6 +486,13 @@ export default function SegmentationEditor({
             <small>
               {plan.skipped} excluded · {plan.incomplete} unpaired starts
             </small>
+            {!plan.ranges.length && (
+              <p className="input-hint">
+                {method === 'triggers'
+                  ? 'No complete crossing pairs. Check that the start signal crosses the threshold, then the end signal crosses later. Starting above a threshold is not a rising crossing. Try a manual range to verify the target.'
+                  : 'No intervals contain data. Check the recording times, window duration, and boundary policy.'}
+              </p>
+            )}
             <ol>
               {plan.ranges.map((range, index) => (
                 <li

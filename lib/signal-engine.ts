@@ -1,6 +1,8 @@
 import { CsvParser, Envelope, power } from './signal-math';
 import { SignalGraph } from './signal-graph';
 import { executeSignal } from './signal-executor';
+import { FUNCTIONS } from './signal-functions';
+import { EXAMPLES, exampleDefinition } from './signal-examples';
 import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
@@ -370,6 +372,46 @@ export class SignalEngine {
     this.find(id);
     return this.graph().ranges.get(id)!;
   }
+  async example(key: string) {
+    const spec = EXAMPLES.find((item) => item.key === key);
+    if (!spec) throw new Error('Choose an available example.');
+    const existing = this.project.examples?.find((item) => item.key === key);
+    if (existing) return existing;
+    // All examples share the small immutable demo recording. Only recipes are
+    // added; reopening an example never duplicates its data or operation tree.
+    const source = await this.demo();
+    const input = spec.chain
+      ? (await this.derive(source.channels[0], 'median', 5)).id
+      : source.channels[0];
+    const segments = await this.segment(
+      source.id,
+      exampleDefinition(key, input),
+      spec.chain ? [input] : source.channels,
+      false,
+      spec.chain ? 'signals' : 'file',
+    );
+    let outputIds = segments.map((segment) => segment.nodes[0]);
+    if (spec.chain) {
+      const averages = await this.deriveMany(outputIds, 'smooth', 25);
+      const extrema = await this.deriveMany(
+        averages.map((node) => node.id),
+        'min-max',
+        0,
+      );
+      outputIds = extrema.map((node) => node.id);
+    }
+    const run = {
+      key,
+      sourceId: source.id,
+      segmentationId: segments[0].batchId!,
+      outputIds,
+    };
+    await this.save({
+      ...this.project,
+      examples: [...(this.project.examples ?? []), run],
+    });
+    return run;
+  }
   private async *raw(
     id: string,
     sourceRange?: [number, number],
@@ -410,6 +452,14 @@ export class SignalEngine {
     return (await this.deriveMany([parentId], operation, value))[0];
   }
   async deriveMany(parentIds: string[], operation: Operation, value: number) {
+    if (
+      !FUNCTIONS.some(
+        (spec) => spec.operation !== 'segment' && spec.operation === operation,
+      )
+    )
+      throw new Error(
+        'Choose an implemented single-input function. Segmentation and metrics use their own input settings.',
+      );
     if (!parentIds.length || new Set(parentIds).size !== parentIds.length)
       throw new Error('Choose unique inputs for this operation.');
     const nodes: SignalNode[] = [];

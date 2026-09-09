@@ -2125,3 +2125,45 @@ h1 > span {
   display: flex;
   gap: 8px;
 }
+
+.explorer-examples {
+  margin: 0;
+  padding: 8px 12px;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid #2b3b32;
+}
+.explorer-examples .field-label,
+.explorer-feedback strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.explorer-examples p {
+  margin: 6px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #a1b5a9;
+}
+.explorer-feedback {
+  padding: 8px 12px;
+  border-bottom: 1px solid #375749;
+  background: #20372d;
+  color: #a7e5c9;
+  font-size: 11px;
+}
+.explorer-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+.explorer-feedback-actions button {
+  color: #91dab9;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.explorer-feedback-actions button:hover {
+  color: #d8f5e7;
+}

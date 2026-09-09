@@ -40,6 +40,8 @@ void app
     const results = await window.webContents.executeJavaScript(`
     (async () => {
       const { createSignalWorker } = await import('/lib/create-signal-worker.ts');
+      const { EXAMPLES } = await import('/lib/signal-examples.ts');
+      const { buildExplorer, explorerRows, revealExplorer } = await import('/lib/signal-explorer.ts');
       const worker = createSignalWorker();
       let requestId = 0;
       const send = request => new Promise((resolve, reject) => {
@@ -80,6 +82,20 @@ void app
         if (extremaPlots.length !== 3 || extremaPlots.some(plot => plot.summary.count !== 2 || !Number.isFinite(plot.summary.max))) throw new Error('Per-segment extrema failed');
         const single = await send({ type: 'segment', sourceId: source.id, definition, targetIds: [source.channels[0]], scope: 'signals' });
         if (single.project.segments.slice(-3).some(segment => segment.scope !== 'signals' || segment.nodes.length !== 1)) throw new Error('Signal-only segmentation changed scope');
+        for (const example of EXAMPLES) {
+          const opened = await send({ type: 'example', key: example.key });
+          const run = opened.project.examples.find(item => item.key === example.key);
+          const model = buildExplorer(opened.project, run.sourceId);
+          const operations = [...model.entries.values()].filter(entry => entry.segmentationId === run.segmentationId);
+          if (operations.length !== 1 || operations[0].members.length !== 3) throw new Error('Example must expose one Segment with three outputs');
+          const visible = revealExplorer(model, operations[0].id, { query: 'stale search', closed: new Set(model.entries.keys()), expanded: new Set() });
+          const rows = explorerRows(model, new Set([...visible.expanded].filter(id => !visible.closed.has(id))), visible.query);
+          if (!operations[0].members.every(id => rows.some(row => row.entry.id === id))) throw new Error('Created outputs remain hidden');
+          const again = await send({ type: 'example', key: example.key });
+          if (again.project.nodes.length !== opened.project.nodes.length) throw new Error('Selecting an example duplicated recipes');
+          const evaluated = await send({ type: 'view', ids: run.outputIds });
+          if (evaluated.plots.some(plot => !Number.isFinite(plot.summary.min) || (example.chain && plot.summary.count !== 2))) throw new Error('Example output did not evaluate');
+        }
         return { summaries: plots.map(plot => plot.summary), segments: plan.ranges.length, clipped: plan.ranges.filter(range => range.clipped).length };
       } finally { worker.terminate(); }
     })()
@@ -95,7 +111,7 @@ void app
     assert.ok(requests.length > 0, 'Expected an HTTP worker script request');
     assert.ok(requests.every((url) => new URL(url).origin === origin));
     process.stdout.write(
-      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches passed.\n`,
+      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches, and all four selectable examples passed.\n`,
     );
     clearTimeout(timeout);
     window.destroy();

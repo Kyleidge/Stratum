@@ -26,7 +26,12 @@ native bundle. Packages are unsigned development builds.
 
 ## Explore
 
-1. Open **Full recording** to view the three synchronized channels and ramps.
+1. Open **Full recording** to view the synchronized channels and three ramps.
+   Use **Worked examples** in the explorer to select RPM triggers with a −20 s
+   offset, explicit ranges, 60-second windows, or a complete median filter →
+   Segment → moving average → Min / Max chain. Each runs real calculations on
+   the shared demo recording; selecting it again reopens its existing results
+   and loads its actual Segment settings in the function editor.
 2. Expand the file in **Signal Explorer**. Each **Segment** operation owns file
    segments, each containing its synchronized channels. **Original signals** owns
    the raw channels and their individual operation chains. Signals appear once.
@@ -46,7 +51,11 @@ native bundle. Packages are unsigned development builds.
    average → Min / Max. Select a collection row to apply the next operation
    independently to every member. Expand it to inspect members or select just
    one to create its own branch. Shared steps stay visible once; segments are
-   never concatenated. Creating segments selects their **Segment** operation.
+   never concatenated. Creating segments clears stale search/collapse overrides,
+   selects and expands their **Segment** operation, and scrolls it into view.
+   A creation notice provides **Show in tree** and **Settings** shortcuts.
+   Each function invocation appears once, including batches spanning multiple
+   input branches; output signals are marked with an arrow instead of a step.
    Repeating a function from an earlier step creates a separate branch.
 5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
    and **Operation history** for the selected signal's complete history and
@@ -86,6 +95,11 @@ The test suite exercises numerical results and storage behavior; the native smok
 check runs the worker and IndexedDB inside a hidden Electron window. The original
 starter has 19 lint issues in its unused UI primitives and mobile hook. New
 application code is checked separately as well.
+`signal-functions.test.ts` checks independently calculated values and defaults
+for every single-input library function, plus all four persistent examples.
+Explorer regressions cover revealing results after search/collapse and keeping
+one function item for partial or mixed input batches. The preview integration
+also runs every selectable example through the actual HTTP worker module.
 
 See [architecture and limitations](docs/architecture.md) for the processing model,
 units, algorithm details, and path toward multi-gigabyte workloads. This is an
