@@ -63,6 +63,7 @@ import SegmentationEditor, {
 } from '@/components/segmentation-editor';
 import { createSignalWorker } from '@/lib/create-signal-worker';
 import { segmentTraces } from '@/lib/segment-traces';
+import { segmentationOperation } from '@/lib/segmentation-operation';
 import SignalExplorer, { OperationHistory } from '@/components/signal-explorer';
 import {
   buildExplorer,
@@ -72,6 +73,9 @@ import {
 import type {
   EngineRequest,
   EngineResponse,
+  SegmentationOperation,
+  SegmentationDefinition,
+  SegmentationScope,
   Operation,
   Plot,
   Point,
@@ -314,6 +318,10 @@ export default function Workbench() {
     kind?: ExplorerEntry['kind'];
     memberUnit?: 'signals' | 'segments';
   }>();
+  const [selectedOperationId, setSelectedOperationId] = useState<string>();
+  const [segmentSettings, setSegmentSettings] =
+    useState<SegmentationOperation>();
+  const [settingsError, setSettingsError] = useState('');
   const [scope, setScope] = useState('');
   const [tab, setTab] = useState('analysis');
   const [compare, setCompare] = useState(false);
@@ -338,6 +346,9 @@ export default function Workbench() {
   const fileInput = useRef<HTMLInputElement>(null);
   const source =
     project.sources.find((s) => s.id === sourceId) ?? project.sources[0];
+  const settingsSource = project.sources.find(
+    (item) => item.id === segmentSettings?.sourceId,
+  );
   const selected =
     project.nodes.find((n) => n.id === selectedId) ??
     project.nodes.find((n) => n.id === source?.channels[0]);
@@ -493,7 +504,11 @@ export default function Workbench() {
     };
   }, [tab, selected?.id, page, request]);
 
-  async function mutate(r: EngineRequest, message: string) {
+  async function mutate(
+    r: EngineRequest,
+    message: string,
+    onFailure?: (message: string) => void,
+  ) {
     setBusy(true);
     setError('');
     setStatus(message);
@@ -503,6 +518,7 @@ export default function Workbench() {
       if (result.type === 'project') {
         setProject(result.project);
         if (r.type === 'import') {
+          setSelectedOperationId(undefined);
           setOperationTargets(undefined);
           const s = result.project.sources.at(-1)!;
           setSourceId(s.id);
@@ -544,6 +560,9 @@ export default function Workbench() {
               kind: group.kind,
               memberUnit: group.memberUnit,
             });
+            setSelectedOperationId(
+              group.segmentationId ? group.id : group.parent,
+            );
           }
         }
         setStatus(
@@ -555,21 +574,26 @@ export default function Workbench() {
                 ? 'Derived signal created · lineage saved'
                 : 'Recording imported · raw signals locked',
         );
+        return result.project;
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Operation failed.');
+      const message = e instanceof Error ? e.message : 'Operation failed.';
+      setError(message);
+      onFailure?.(message);
       setStatus('Ready');
     } finally {
       setBusy(false);
     }
   }
   function chooseOperation(next: Operation | 'segment') {
+    setSelectedOperationId(undefined);
     const fn = FUNCTIONS.find((f) => f.operation === next)!;
     setOperation(next);
     setParameter(String(fn.defaultValue));
     setDialog(null);
   }
   function selectNode(n: SignalNode, nextProject = project) {
+    setSelectedOperationId(undefined);
     setOperationTargets(undefined);
     setSourceId(n.sourceId);
     let ancestor: SignalNode | undefined = n;
@@ -598,6 +622,7 @@ export default function Workbench() {
     setZoom(undefined);
   }
   function selectSegment(id: string) {
+    setSelectedOperationId(undefined);
     setOperationTargets(undefined);
     const s = sourceSegments.find((item) => item.id === id);
     setScope(id);
@@ -606,6 +631,41 @@ export default function Workbench() {
     if (s) {
       setSelectedId(s.nodes[0]);
       setPage(0);
+    }
+  }
+  function openSegmentSettings(entry: ExplorerEntry) {
+    if (!entry.segmentationId) return;
+    setSelectedOperationId(entry.id);
+    setSettingsError('');
+    setSegmentSettings(segmentationOperation(project, entry.segmentationId));
+  }
+  async function previewSegmentation(
+    sourceId: string,
+    definition: SegmentationDefinition,
+    targetIds: string[],
+    independently: boolean,
+    scope: SegmentationScope,
+  ) {
+    setBusy(true);
+    setStatus('Previewing segment intervals…');
+    setProgress(0);
+    try {
+      const response = await request({
+        type: 'segment-preview',
+        sourceId,
+        definition,
+        targetIds,
+        independently,
+        scope,
+      });
+      if (response.type !== 'segment-plan')
+        throw new Error('Unexpected preview response.');
+      setStatus(
+        `${response.plan.ranges.length} intervals previewed · no signals created`,
+      );
+      return response.plan;
+    } finally {
+      setBusy(false);
     }
   }
   async function exportResults() {
@@ -783,6 +843,7 @@ export default function Workbench() {
                 const next = project.sources.find((item) => item.id === id);
                 if (!next) return;
                 setSourceId(id);
+                setSelectedOperationId(undefined);
                 setSelectedId(next.channels[0]);
                 setOperationTargets(undefined);
                 setScope('');
@@ -797,7 +858,9 @@ export default function Workbench() {
               project={project}
               sourceId={source.id}
               selectedId={selected?.id || ''}
-              collectionId={operationTargets?.id}
+              collectionId={selectedOperationId ?? operationTargets?.id}
+              onSelectOperation={setSelectedOperationId}
+              onOpenOperation={openSegmentSettings}
               onSelect={selectNode}
               onCollection={({ ids, label, id, kind, memberUnit }) => {
                 const node = project.nodes.find((item) => item.id === ids[0]);
@@ -870,6 +933,7 @@ export default function Workbench() {
                     className={!scope && !compare ? 'active' : ''}
                     onClick={() => {
                       setScope('');
+                      setSelectedOperationId(undefined);
                       setOperationTargets(undefined);
                       setCompare(false);
                       setZoom(undefined);
@@ -883,6 +947,7 @@ export default function Workbench() {
                     disabled={!sourceSegments.length}
                     onClick={() => {
                       setCompare(true);
+                      setSelectedOperationId(undefined);
                       setOperationTargets(undefined);
                       setScope('');
                       setZoom(undefined);
@@ -898,6 +963,7 @@ export default function Workbench() {
                         aria-label="Return to full recording"
                         onClick={() => {
                           setScope('');
+                          setSelectedOperationId(undefined);
                           setOperationTargets(undefined);
                           if (raw[0]) setSelectedId(raw[0].id);
                         }}
@@ -1532,6 +1598,79 @@ export default function Workbench() {
           Local processing<span className="separator">|</span>Stratus 0.1
         </span>
       </footer>
+      <Dialog
+        open={!!segmentSettings}
+        onOpenChange={(open) => {
+          if (!open) setSegmentSettings(undefined);
+        }}
+      >
+        <DialogContent className="workbench-dialog segmentation-settings-dialog">
+          <DialogTitle>Segment settings</DialogTitle>
+          <DialogDescription>
+            {segmentSettings?.segmentIds.length}{' '}
+            {segmentSettings?.scope === 'file'
+              ? 'file segments'
+              : 'signal segments'}{' '}
+            · {settingsSource?.name}
+          </DialogDescription>
+          {segmentSettings && settingsSource && (
+            <div className="segmentation-settings-body">
+              {segmentSettings.definition ? (
+                <SegmentationEditor
+                  key={segmentSettings.id}
+                  source={settingsSource}
+                  nodes={project.nodes}
+                  segments={project.segments.filter(
+                    (item) => item.sourceId === settingsSource.id,
+                  )}
+                  busy={busy}
+                  selectedIds={segmentSettings.targetIds}
+                  selectionKind={
+                    segmentSettings.independently ? 'collection' : undefined
+                  }
+                  savedOperation={segmentSettings}
+                  onPreview={(definition, ids, independently, scope) =>
+                    previewSegmentation(
+                      settingsSource.id,
+                      definition,
+                      ids,
+                      independently,
+                      scope,
+                    )
+                  }
+                  onCreate={(definition, targetIds, independently, scope) => {
+                    setSettingsError('');
+                    void mutate(
+                      {
+                        type: 'segment',
+                        sourceId: settingsSource.id,
+                        definition,
+                        targetIds,
+                        independently,
+                        scope,
+                      },
+                      'Creating revised segments…',
+                      setSettingsError,
+                    ).then((updated) => {
+                      if (updated) setSegmentSettings(undefined);
+                    });
+                  }}
+                />
+              ) : (
+                <p className="input-hint">
+                  This early operation has no complete saved settings. Its
+                  existing output segments are retained.
+                </p>
+              )}
+              {settingsError && (
+                <p className="segment-error" role="alert">
+                  {settingsError}
+                </p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={dialog !== null}
         onOpenChange={(open) => {

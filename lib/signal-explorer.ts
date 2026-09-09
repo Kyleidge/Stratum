@@ -55,6 +55,7 @@ export type ExplorerEntry = {
   next: string[];
   sequence: number;
   memberUnit?: 'signals' | 'segments';
+  segmentationId?: string;
 };
 export type ExplorerModel = {
   entries: Map<string, ExplorerEntry>;
@@ -176,6 +177,7 @@ export function buildExplorer(
     parent: string,
     label: string,
     detail: string,
+    segmentationId?: string,
   ) {
     const memberUnit = entries.get(parent)?.memberUnit ?? 'segments';
     entries.set(id, {
@@ -189,6 +191,7 @@ export function buildExplorer(
       next: [],
       sequence: entries.get(members[0].id)!.sequence,
       memberUnit,
+      segmentationId,
     });
     for (const node of members) {
       const entry = entries.get(node.id)!;
@@ -236,13 +239,14 @@ export function buildExplorer(
       entries.set(actionId, {
         id: actionId,
         kind: 'file-operation',
-        label: 'Segment file',
+        label: 'Segment',
         detail: `${grouped.size} file segments · all ${source.channels.length} signals`,
         ids: [],
         parent: fileId,
         members: [...grouped.keys()].map((id) => `file-segment:${id}`),
         next: [],
         sequence: entries.get(members[0].id)!.sequence,
+        segmentationId: batchId,
       });
       for (const [id, channels] of grouped) {
         const saved = segmentByNode.get(channels[0].id)!;
@@ -289,6 +293,7 @@ export function buildExplorer(
         segment
           ? `${members.length} intervals from ${collection.ids.length} members`
           : `${operationDetail(members[0])} · ${members.length} results`,
+        segment ? batchId : undefined,
       );
     } else if (segment) {
       const inputs = new Map<string, SignalNode[]>();
@@ -302,8 +307,9 @@ export function buildExplorer(
           `segments:${input}:${batchId}`,
           outputs,
           input,
-          'Segment signal',
+          'Segment',
           `${outputs.length} interval${outputs.length === 1 ? '' : 's'}`,
+          batchId,
         );
     }
   }
@@ -383,7 +389,10 @@ export function revealEntry(model: ExplorerModel, id: string): Set<string> {
   while (entry) {
     // Shared successors are visible without opening the members of a collection.
     // Only expand a collection when the selected path enters one of its members.
-    if (entry.kind !== 'collection' || (child && entry.members.includes(child)))
+    if (
+      (entry.kind !== 'collection' && entry.kind !== 'file-operation') ||
+      (child && entry.members.includes(child))
+    )
       open.add(entry.id);
     child = entry.id;
     entry = entry.parent ? model.entries.get(entry.parent) : undefined;

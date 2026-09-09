@@ -21,6 +21,10 @@ signal uploads.
   Files own file-segmentation operations and file segments with synchronized
   channels. Original signals own signal-only segmentation. Persist explicit
   segment scope; legacy file scope is inferred only from complete raw coverage.
+  A Segment operation is one row above its outputs. Double-click or Enter/F2
+  opens saved settings; disclosure arrows expand outputs. `segmentation-operation.ts`
+  reads isolated settings snapshots, with a legacy fallback. New operations store
+  complete input IDs/definitions atomically with outputs; revisions append history.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
 - `components/segmentation-editor.tsx`: trigger/range/window editor, read-only

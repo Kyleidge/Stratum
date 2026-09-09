@@ -67,6 +67,8 @@ void app
         const created = await send({ type: 'segment', sourceId: source.id, definition, targetIds: source.channels, scope: 'file' });
         if (created.project.segments.length !== 6 || created.project.nodes.length !== project.nodes.length + 12) throw new Error('Generic segmentation must create crops only');
         if (created.project.segments.slice(-3).some(segment => segment.scope !== 'file' || segment.nodes.length !== source.channels.length)) throw new Error('File segments must retain all original channels');
+        const savedOperation = created.project.segmentationOperations.find(operation => operation.id === created.project.segments.at(-1).batchId);
+        if (!savedOperation || savedOperation.segmentIds.length !== 3 || JSON.stringify(savedOperation.definition) !== JSON.stringify(definition) || JSON.stringify(savedOperation.targetIds) !== JSON.stringify(source.channels)) throw new Error('Saved Segment operation settings did not survive the worker response');
         const { plan: windows } = await send({ type: 'segment-preview', sourceId: source.id, definition: { method: 'windows', boundary: 'clip', start: 0, end: 180, duration: 60, step: 60, includePartial: false }, targetIds: source.channels });
         if (windows.ranges.length !== 3) throw new Error('Window preview failed');
         const crops = created.project.segments.slice(-3).map(segment => segment.nodes[0]);

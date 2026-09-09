@@ -60,6 +60,15 @@ export type Segment = {
   minimumDuration?: number;
 };
 export type SegmentationScope = 'file' | 'signals';
+export type SegmentationOperation = {
+  id: string;
+  sourceId: string;
+  definition?: SegmentationDefinition; // Missing only for early legacy records.
+  targetIds: string[];
+  independently: boolean;
+  scope: SegmentationScope;
+  segmentIds: string[];
+};
 export type EdgeTrigger = {
   signalId: string;
   edge: 'rising' | 'falling';
@@ -102,6 +111,7 @@ export type Project = {
   sources: Source[];
   nodes: SignalNode[];
   segments: Segment[];
+  segmentationOperations?: SegmentationOperation[];
 };
 export type Chunk = { time: Float64Array; values: Float64Array[] };
 export type SeriesChunk = { time: Float64Array; values: Float64Array };

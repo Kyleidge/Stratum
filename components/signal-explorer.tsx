@@ -14,6 +14,7 @@ import {
   Search,
   Scissors,
   Sigma,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   buildExplorer,
@@ -33,6 +34,8 @@ export default function SignalExplorer({
   collectionId,
   onSelect,
   onCollection,
+  onSelectOperation,
+  onOpenOperation,
 }: {
   project: Project;
   sourceId: string;
@@ -40,6 +43,8 @@ export default function SignalExplorer({
   collectionId?: string;
   onSelect: (node: SignalNode) => void;
   onCollection: (entry: ExplorerEntry) => void;
+  onSelectOperation: (entryId: string) => void;
+  onOpenOperation: (entry: ExplorerEntry) => void;
 }) {
   const model = useMemo(
     () => buildExplorer(project, sourceId),
@@ -123,7 +128,8 @@ export default function SignalExplorer({
     setNavigation({ selection: activeId, id: entry.id });
     if (entry.node) onSelect(entry.node);
     else if (entry.ids.length) onCollection(entry);
-    else toggle(entry.id);
+    if (entry.segmentationId) onSelectOperation(entry.id);
+    else if (!entry.node && !entry.ids.length) toggle(entry.id);
   }
   return (
     <>
@@ -184,6 +190,7 @@ export default function SignalExplorer({
               'Home',
               'End',
               'Enter',
+              'F2',
               ' ',
             ].includes(event.key) ||
             !rows.length
@@ -202,7 +209,13 @@ export default function SignalExplorer({
             if (!open && (entry.members.length || entry.next.length))
               toggle(entry.id);
             else if (rows[index + 1]) select(rows[index + 1].entry);
-          } else if (event.key === 'Enter' || event.key === ' ') select(entry);
+          } else if (
+            (event.key === 'Enter' || event.key === 'F2') &&
+            entry.segmentationId
+          )
+            onOpenOperation(entry);
+          else if (event.key === 'Enter' || event.key === ' ') select(entry);
+          else if (event.key === 'F2') return;
           else {
             const next =
               event.key === 'Home'
@@ -272,8 +285,11 @@ export default function SignalExplorer({
                 <button
                   className="step-main"
                   tabIndex={-1}
-                  title={`${step === 0 ? 'Source' : `Step ${step}`} · ${entry.label} · ${entry.detail}${entry.node?.parents.length && entry.node.parents.length > 1 ? ` · ${entry.node.parents.length - 1} linked inputs` : ''}`}
+                  title={`${step === 0 ? 'Source' : `Step ${step}`} · ${entry.label} · ${entry.detail}${entry.segmentationId ? ' · Double-click to open settings' : ''}${entry.node?.parents.length && entry.node.parents.length > 1 ? ` · ${entry.node.parents.length - 1} linked inputs` : ''}`}
                   onClick={() => select(entry)}
+                  onDoubleClick={() => {
+                    if (entry.segmentationId) onOpenOperation(entry);
+                  }}
                 >
                   <span className="step-number">
                     {entry.kind === 'file' || entry.kind === 'file-segment' ? (
@@ -302,6 +318,17 @@ export default function SignalExplorer({
                     </span>
                   ) : null}
                 </button>
+                {entry.segmentationId && (
+                  <button
+                    className="step-settings icon-button"
+                    tabIndex={-1}
+                    title="Open Segment settings"
+                    aria-label="Open Segment settings"
+                    onClick={() => onOpenOperation(entry)}
+                  >
+                    <SlidersHorizontal size={13} />
+                  </button>
+                )}
               </div>
             );
           })}
@@ -312,8 +339,8 @@ export default function SignalExplorer({
       </div>
       <div className="explorer-legend">
         <GitBranch size={12} />
-        File segments keep channels together. Expand Original signals for
-        signal-specific operations.
+        Expand Segment to see its outputs. Double-click Segment to open its
+        settings.
       </div>
     </>
   );

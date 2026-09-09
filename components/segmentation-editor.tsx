@@ -15,6 +15,7 @@ import type {
   SegmentationDefinition,
   SegmentationPlan,
   SegmentationScope,
+  SegmentationOperation,
   SignalNode,
   Source,
 } from '@/lib/signal-types';
@@ -33,6 +34,7 @@ type Props = {
   busy: boolean;
   selectedIds: string[];
   selectionKind?: ExplorerEntry['kind'];
+  savedOperation?: SegmentationOperation;
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -121,37 +123,80 @@ export default function SegmentationEditor({
   busy,
   selectedIds,
   selectionKind,
+  savedOperation,
   onPreview,
   onCreate,
 }: Props) {
-  const [method, setMethod] =
-    useState<SegmentationDefinition['method']>('triggers');
-  const [start, setStart] = useState<TriggerForm>({
-    signalId:
-      selectionKind === 'collection' ? selectedIds[0] : source.channels[0],
-    edge: 'rising',
-    threshold: '900',
-    offset: '-20',
+  const saved = savedOperation?.definition;
+  const savedTriggers = saved?.method === 'triggers' ? saved : undefined;
+  const savedWindows = saved?.method === 'windows' ? saved : undefined;
+  const formTrigger = (
+    trigger: NonNullable<typeof savedTriggers>['start'],
+  ): TriggerForm => ({
+    signalId: trigger.signalId,
+    edge: trigger.edge,
+    threshold: String(trigger.threshold),
+    offset: String(trigger.offset),
   });
-  const [end, setEnd] = useState<TriggerForm>({
-    signalId:
-      selectionKind === 'collection' ? selectedIds[0] : source.channels[0],
-    edge: 'falling',
-    threshold: '900',
-    offset: '0',
-  });
-  const [minimum, setMinimum] = useState('0');
-  const [ranges, setRanges] = useState(
-    `${source.start}, ${Math.min(source.end, source.start + 30)}`,
+  const [method, setMethod] = useState<SegmentationDefinition['method']>(
+    saved?.method ?? 'triggers',
   );
-  const [windowStart, setWindowStart] = useState(String(source.start));
-  const [windowEnd, setWindowEnd] = useState(String(source.end));
-  const [duration, setDuration] = useState('30');
-  const [step, setStep] = useState('30');
-  const [partial, setPartial] = useState(false);
-  const [boundary, setBoundary] = useState<'clip' | 'discard'>('clip');
+  const [start, setStart] = useState<TriggerForm>(
+    savedTriggers
+      ? formTrigger(savedTriggers.start)
+      : {
+          signalId:
+            selectionKind === 'collection'
+              ? selectedIds[0]
+              : source.channels[0],
+          edge: 'rising',
+          threshold: '900',
+          offset: '-20',
+        },
+  );
+  const [end, setEnd] = useState<TriggerForm>(
+    savedTriggers
+      ? formTrigger(savedTriggers.end)
+      : {
+          signalId:
+            selectionKind === 'collection'
+              ? selectedIds[0]
+              : source.channels[0],
+          edge: 'falling',
+          threshold: '900',
+          offset: '0',
+        },
+  );
+  const [minimum, setMinimum] = useState(
+    String(savedTriggers?.minimumDuration ?? 0),
+  );
+  const [ranges, setRanges] = useState(
+    saved?.method === 'ranges'
+      ? saved.ranges.map((range) => range.join(', ')).join('\n')
+      : `${source.start}, ${Math.min(source.end, source.start + 30)}`,
+  );
+  const [windowStart, setWindowStart] = useState(
+    String(savedWindows?.start ?? source.start),
+  );
+  const [windowEnd, setWindowEnd] = useState(
+    String(savedWindows?.end ?? source.end),
+  );
+  const [duration, setDuration] = useState(
+    String(savedWindows?.duration ?? 30),
+  );
+  const [step, setStep] = useState(String(savedWindows?.step ?? 30));
+  const [partial, setPartial] = useState(savedWindows?.includePartial ?? false);
+  const [boundary, setBoundary] = useState<'clip' | 'discard'>(
+    saved?.boundary ?? 'clip',
+  );
   const [target, setTarget] = useState(
-    selectionKind === 'collection' ? 'selection' : 'file',
+    savedOperation
+      ? savedOperation.scope === 'file'
+        ? 'file'
+        : 'selection'
+      : selectionKind === 'collection'
+        ? 'selection'
+        : 'file',
   );
   const [preview, setPreview] = useState<{
     key: string;
@@ -235,7 +280,7 @@ export default function SegmentationEditor({
       const independently =
         target === 'selection' &&
         targets.length > 1 &&
-        selectionKind === 'collection';
+        (savedOperation?.independently ?? selectionKind === 'collection');
       const scope: SegmentationScope = target === 'file' ? 'file' : 'signals';
       if (previewOnly)
         setPreview({
@@ -483,14 +528,18 @@ export default function SegmentationEditor({
           onClick={() => void run(false)}
         >
           <Scissors size={14} />
-          {target === 'file'
-            ? 'Create file segments'
-            : 'Create signal segments'}
+          {savedOperation
+            ? 'Create revised segments'
+            : target === 'file'
+              ? 'Create file segments'
+              : 'Create signal segments'}
         </button>
       </div>
       <p className="input-hint">
-        <GitBranch size={12} /> Creates immutable crop recipes. Calculations
-        remain separate steps.
+        <GitBranch size={12} />{' '}
+        {savedOperation
+          ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
+          : 'Creates immutable crop recipes. Calculations remain separate steps.'}
       </p>
     </fieldset>
   );

@@ -924,6 +924,18 @@ export class SignalEngine {
       ...this.project,
       nodes: [...this.project.nodes, ...nodes],
       segments: [...this.project.segments, ...segments],
+      segmentationOperations: [
+        ...(this.project.segmentationOperations ?? []),
+        {
+          id: batchId,
+          sourceId,
+          definition: savedDefinition,
+          targetIds: [...targetIds],
+          independently,
+          scope: savedScope,
+          segmentIds: segments.map((segment) => segment.id),
+        },
+      ],
     });
     return segments;
   }

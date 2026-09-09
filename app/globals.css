@@ -1924,6 +1924,25 @@ h1 > span {
   border-left: 2px solid #688e75;
   padding-left: 8px;
 }
+.step-settings {
+  flex-shrink: 0;
+  color: #90a98f;
+}
+.segmentation-settings-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: min(880px, 90vh);
+  overflow: hidden;
+}
+.segmentation-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+.segmentation-settings-body .segmentation-editor {
+  margin: 0;
+}
 .step-toggle {
   width: 17px;
   height: 32px;

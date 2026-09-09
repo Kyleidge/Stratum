@@ -140,6 +140,16 @@ distinguish file scope from signal scope. Legacy records without this marker
 display as file segments when their crop data parents cover every original
 channel, preserving stored recipes and IDs without a data migration.
 
+Each successful segmentation request also saves one operation record, keyed by its
+batch ID, containing the original definition, complete input IDs, scope, independent
+processing mode, and output segment IDs. This retains inputs even if they produce
+no intervals. The tree displays one Segment operation above its file segments.
+Double-click, Enter/F2, or the settings button opens an isolated settings snapshot.
+Expansion uses the separate disclosure arrow. Revised settings append a new
+operation and outputs, preserving earlier results and dependencies. Older batches
+without operation metadata recover their available settings from saved segments;
+very early records with no complete recipe are identified as such.
+
 Segmenting a selected collection evaluates each member separately. When a start
 or end trigger selects the first member, that trigger follows the corresponding
 member in each branch; an explicitly selected external trigger stays shared.

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { SignalGraph } from '../lib/signal-graph';
+import { segmentationOperation } from '../lib/segmentation-operation';
 import {
   buildExplorer,
   explorerRows,
@@ -60,7 +61,7 @@ void test('collections show filter -> segmentation -> moving average -> min/max 
   );
   assert.deepEqual(
     summary.map((row) => row.entry.label),
-    ['a', 'Median filter', 'Segment signal', 'Moving average', 'Min / Max'],
+    ['a', 'Median filter', 'Segment', 'Moving average', 'Min / Max'],
   );
   assert.deepEqual(
     summary.map((row) => row.step),
@@ -82,7 +83,7 @@ void test('collections show filter -> segmentation -> moving average -> min/max 
         (row) => row.entry.kind === 'signal' || row.entry.kind === 'collection',
       )
       .map((row) => row.entry.label),
-    ['a', 'Median filter', 'Segment signal', 'Moving average', 'Min / Max'],
+    ['a', 'Median filter', 'Segment', 'Moving average', 'Min / Max'],
     'Selecting a shared stage must not expand every historical segment member',
   );
   e.close();
@@ -439,5 +440,126 @@ void test('one-channel recordings retain explicit file versus signal scope and l
     legacy.segments.slice(0, 3).every((segment) => !segment.scope),
     'Explorer must not rewrite saved recipes',
   );
+  e.close();
+});
+
+void test('one Segment operation owns all generated file segments and reopens its exact settings', async () => {
+  const { engine: e, source: s, name } = await fixture();
+  const definition: SegmentationDefinition = {
+    method: 'triggers',
+    boundary: 'clip',
+    minimumDuration: 0.25,
+    start: {
+      signalId: s.channels[0],
+      edge: 'rising',
+      threshold: 5,
+      offset: -0.4,
+    },
+    end: {
+      signalId: s.channels[0],
+      edge: 'falling',
+      threshold: 3,
+      offset: 0.75,
+    },
+  };
+  const segments = await e.segment(s.id, definition, s.channels, false, 'file');
+  assert.equal(segments.length, 3);
+  const model = buildExplorer(e.project, s.id);
+  const operationRows = [...model.entries.values()].filter(
+    (entry) => entry.segmentationId,
+  );
+  assert.equal(operationRows.length, 1);
+  const entry = operationRows[0];
+  assert.equal(entry.label, 'Segment');
+  assert.equal(entry.members.length, 3);
+  assert.ok(
+    entry.members.every((id) => model.entries.get(id)!.kind === 'file-segment'),
+  );
+  assert.ok(
+    !explorerRows(model, revealEntry(model, entry.id)).some(
+      (row) => row.entry.kind === 'file-segment',
+    ),
+    'Selecting the operation does not toggle its outputs',
+  );
+  const expanded = revealEntry(model, entry.id).add(entry.id);
+  assert.equal(
+    explorerRows(model, expanded).filter(
+      (row) => row.entry.kind === 'file-segment',
+    ).length,
+    3,
+  );
+  const saved = segmentationOperation(e.project, entry.segmentationId!);
+  assert.deepEqual(saved.definition, definition);
+  assert.deepEqual(saved.targetIds, s.channels);
+  assert.deepEqual(
+    saved.segmentIds,
+    segments.map((segment) => segment.id),
+  );
+  const original = structuredClone(e.project);
+  saved.definition!.boundary = 'discard';
+  assert.deepEqual(
+    e.project,
+    original,
+    'Opening and editing a settings snapshot must not mutate its operation',
+  );
+  await e.segment(
+    s.id,
+    saved.definition!,
+    saved.targetIds,
+    saved.independently,
+    saved.scope,
+  );
+  assert.equal(e.project.segmentationOperations!.length, 2);
+  assert.deepEqual(
+    segmentationOperation(e.project, entry.segmentationId!).definition,
+    definition,
+  );
+  e.close();
+  const reopened = new SignalEngine(undefined, name);
+  await reopened.open();
+  assert.deepEqual(
+    segmentationOperation(reopened.project, entry.segmentationId!).definition,
+    definition,
+  );
+  reopened.close();
+});
+
+void test('saved operation settings retain manual ranges, windows and inputs that generated no outputs', async () => {
+  const { engine: e, source: s } = await fixture();
+  const segments = await e.segment(s.id, ranges, s.channels, false, 'signals');
+  const targetIds = segments.map((segment) => segment.nodes[0]);
+  const definition: SegmentationDefinition = {
+    method: 'windows',
+    boundary: 'clip',
+    start: 4,
+    end: 11,
+    duration: 2,
+    step: 1.5,
+    includePartial: true,
+  };
+  const outputs = await e.segment(s.id, definition, targetIds, true, 'signals');
+  const saved = segmentationOperation(e.project, outputs[0].batchId!);
+  assert.deepEqual(saved.definition, definition);
+  assert.deepEqual(
+    saved.targetIds,
+    targetIds,
+    'Retain the original input set even when its first member yields no intervals',
+  );
+  assert.equal(saved.independently, true);
+  assert.deepEqual(
+    segmentationOperation(e.project, segments[0].batchId!).definition,
+    ranges,
+  );
+  const legacy = structuredClone(e.project);
+  delete legacy.segmentationOperations;
+  assert.deepEqual(
+    segmentationOperation(legacy, segments[0].batchId!).definition,
+    ranges,
+  );
+  assert.deepEqual(
+    segmentationOperation(legacy, segments[0].batchId!).targetIds,
+    s.channels,
+  );
+  assert.equal(legacy.segmentationOperations, undefined);
   e.close();
 });

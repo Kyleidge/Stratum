@@ -27,9 +27,12 @@ native bundle. Packages are unsigned development builds.
 ## Explore
 
 1. Open **Full recording** to view the three synchronized channels and ramps.
-2. Expand the file in **Signal Explorer**. **Segment file** operations own file
+2. Expand the file in **Signal Explorer**. Each **Segment** operation owns file
    segments, each containing its synchronized channels. **Original signals** owns
    the raw channels and their individual operation chains. Signals appear once.
+   Use the arrow to expand outputs. Double-click **Segment** (or press Enter/F2)
+   to open that operation's saved settings. Preview changes and choose **Create
+   revised segments** to preserve the original operation while creating a revision.
 3. Select **Segment**. **Entire file** is the default target; each interval keeps
    every original channel together. Choose **Single signal** or a specific signal
    for signal-only segmentation beneath that input. Choose **Signal edge triggers** and a start signal,
@@ -43,8 +46,7 @@ native bundle. Packages are unsigned development builds.
    average → Min / Max. Select a collection row to apply the next operation
    independently to every member. Expand it to inspect members or select just
    one to create its own branch. Shared steps stay visible once; segments are
-   never concatenated. Creating file segments selects the first file segment;
-   creating signal segments selects their collection.
+   never concatenated. Creating segments selects their **Segment** operation.
    Repeating a function from an earlier step creates a separate branch.
 5. Use **Compare segments** for a time-aligned overlay, **Data table** for samples,
    and **Operation history** for the selected signal's complete history and
