@@ -38,6 +38,9 @@ native bundle. Packages are unsigned development builds.
    Use the arrow to expand outputs. Double-click **Segment** (or press Enter/F2)
    to open that operation's saved settings. Preview changes and choose **Create
    revised segments** to preserve the original operation while creating a revision.
+   Older operations with missing settings are automatically replaced with
+   explicit time-range settings on opening the workspace. Their existing
+   boundaries, signal IDs, and downstream results are preserved.
 3. Select **Segment**. **Entire file** is the default target; each interval keeps
    every original channel together. Choose **Single signal** or a specific signal
    for signal-only segmentation beneath that input. Choose **Signal edge triggers** and a start signal,

@@ -25,6 +25,9 @@ signal uploads.
   opens saved settings; disclosure arrows expand outputs. `segmentation-operation.ts`
   reads isolated settings snapshots, with a legacy fallback. New operations store
   complete input IDs/definitions atomically with outputs; revisions append history.
+  On opening a workspace, missing legacy settings are restored and persisted as
+  explicit ranges from saved boundaries. Preserve node IDs and downstream data;
+  never invent old trigger settings or merge operations without batch provenance.
   Explicit creation/reveal commands clear stale search/collapse overrides and
   open the new operation's outputs. Each invocation stays one function item,
   including partial/mixed batches, anchored at its inputs' common ancestor.

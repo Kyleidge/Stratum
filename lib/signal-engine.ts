@@ -3,6 +3,7 @@ import { SignalGraph } from './signal-graph';
 import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
+import { restoreSegmentationOperations } from './segmentation-operation';
 import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
@@ -81,6 +82,8 @@ export class SignalEngine {
     this.project =
       ((await result(snapshot)) as Project | undefined) ?? emptyProject();
     this.revision = Number(await result(revision)) || 0;
+    const restored = restoreSegmentationOperations(this.project);
+    if (restored !== this.project) await this.save(restored);
     return this.project;
   }
   close() {

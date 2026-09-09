@@ -3,14 +3,21 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { SignalGraph } from '../lib/signal-graph';
-import { segmentationOperation } from '../lib/segmentation-operation';
+import {
+  restoreSegmentationOperations,
+  segmentationOperation,
+} from '../lib/segmentation-operation';
 import {
   buildExplorer,
   explorerRows,
   revealEntry,
   revealExplorer,
 } from '../lib/signal-explorer';
-import type { SegmentationDefinition, SignalNode } from '../lib/signal-types';
+import type {
+  Project,
+  SegmentationDefinition,
+  SignalNode,
+} from '../lib/signal-types';
 
 async function fixture(
   csv = 't,a [V]\n0,0\n1,10\n2,2\n3,4\n4,0\n5,10\n6,2\n7,4\n8,0\n9,10\n10,2\n11,4',
@@ -150,6 +157,180 @@ async function collect(engine: SignalEngine, id: string) {
       points.push([chunk.time[i], chunk.values[i]]);
   return points;
 }
+
+async function persistLegacyProject(database: string, project: Project) {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(database, 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('project', 'readwrite');
+      tx.objectStore('project').put(project, 'current');
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+void test('opening an early workspace replaces incomplete operations with persisted, editable ranges without changing results', async () => {
+  const { engine, source, name } = await fixture();
+  const segments = await engine.segment(
+    source.id,
+    ranges,
+    source.channels,
+    false,
+    'file',
+  );
+  const downstream = await engine.derive(segments[1].nodes[0], 'smooth', 2);
+  const before = await collect(engine, downstream.id);
+  const legacy = structuredClone(engine.project);
+  delete legacy.segmentationOperations;
+  for (const segment of legacy.segments) {
+    delete segment.batchId;
+    delete segment.scope;
+    delete segment.definition;
+    delete segment.boundary;
+    segment.triggerId = source.channels[0];
+    segment.threshold = 900; // Insufficient evidence for the old heuristic.
+  }
+  engine.close();
+  await persistLegacyProject(name, legacy);
+  const restored = new SignalEngine(undefined, name);
+  await restored.open();
+  try {
+    assert.deepEqual(
+      restored.project.nodes,
+      legacy.nodes,
+      'Keep every existing crop and derived dependency',
+    );
+    assert.deepEqual(restored.project.sources, legacy.sources);
+    assert.deepEqual(await collect(restored, downstream.id), before);
+    assert.equal(
+      restored.project.segmentationOperations!.length,
+      3,
+      'Do not guess batch grouping without provenance',
+    );
+    const model = buildExplorer(restored.project, source.id);
+    const entries = [...model.entries.values()].filter(
+      (entry) => entry.segmentationId,
+    );
+    assert.equal(entries.length, 3);
+    for (const [index, segment] of segments.entries()) {
+      const operation = segmentationOperation(restored.project, segment.id);
+      assert.deepEqual(operation.definition, {
+        method: 'ranges',
+        boundary: 'clip',
+        ranges: [[segment.start, segment.end]],
+      });
+      assert.equal(operation.scope, 'file');
+      const preview = await restored.previewSegments(
+        source.id,
+        operation.definition,
+        operation.targetIds,
+        operation.independently,
+        operation.scope,
+      );
+      assert.deepEqual(
+        preview.ranges.map((range) => [range.start, range.end]),
+        [ranges.method === 'ranges' && ranges.ranges[index]],
+      );
+    }
+    const snapshot = structuredClone(restored.project);
+    assert.equal(
+      restoreSegmentationOperations(restored.project),
+      restored.project,
+      'Migration is idempotent',
+    );
+    restored.close();
+    const reopened = new SignalEngine(undefined, name);
+    await reopened.open();
+    try {
+      assert.deepEqual(reopened.project, snapshot);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    restored.close();
+  }
+});
+
+void test('incomplete batched operations recover exact ranges; complete settings and example references are retained', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const first = await engine.segment(
+      source.id,
+      ranges,
+      source.channels,
+      false,
+      'file',
+    );
+    const second = await engine.segment(
+      source.id,
+      { ...ranges, boundary: 'discard' },
+      source.channels,
+      false,
+      'signals',
+    );
+    const legacy = structuredClone(engine.project);
+    delete legacy.segmentationOperations![0].definition;
+    for (const segment of legacy.segments.slice(0, 3))
+      delete segment.definition;
+    legacy.examples = [
+      {
+        key: 'retained',
+        sourceId: source.id,
+        segmentationId: first[0].batchId!,
+        outputIds: [first[0].nodes[0]],
+      },
+    ];
+    const snapshot = structuredClone(legacy);
+    const repaired = restoreSegmentationOperations(legacy);
+    assert.deepEqual(
+      legacy,
+      snapshot,
+      'Reading/restoring does not mutate the input snapshot',
+    );
+    assert.deepEqual(
+      segmentationOperation(repaired, first[0].batchId!).definition,
+      ranges,
+    );
+    assert.deepEqual(
+      segmentationOperation(repaired, second[0].batchId!),
+      segmentationOperation(legacy, second[0].batchId!),
+    );
+    assert.deepEqual(repaired.examples, legacy.examples);
+    const model = buildExplorer(repaired, source.id);
+    const items = [...model.entries.values()].filter(
+      (entry) => entry.segmentationId === first[0].batchId,
+    );
+    assert.equal(items.length, 1);
+    assert.equal(items[0].members.length, 3);
+    const operation = segmentationOperation(repaired, first[0].batchId!);
+    const revised = await engine.segment(
+      source.id,
+      operation.definition,
+      operation.targetIds,
+      operation.independently,
+      operation.scope,
+    );
+    assert.deepEqual(
+      revised.map((segment) => [segment.start, segment.end]),
+      first.map((segment) => [segment.start, segment.end]),
+    );
+    for (let i = 0; i < first.length; i++)
+      assert.deepEqual(
+        await collect(engine, revised[i].nodes[0]),
+        await collect(engine, first[i].nodes[0]),
+      );
+  } finally {
+    engine.close();
+  }
+});
 
 void test('collections show filter -> segmentation -> moving average -> min/max in order', async () => {
   const { engine: e, source: s } = await fixture();

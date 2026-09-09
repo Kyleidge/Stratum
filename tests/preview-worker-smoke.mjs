@@ -42,7 +42,7 @@ void app
       const { createSignalWorker } = await import('/lib/create-signal-worker.ts');
       const { EXAMPLES } = await import('/lib/signal-examples.ts');
       const { buildExplorer, explorerRows, revealExplorer } = await import('/lib/signal-explorer.ts');
-      const worker = createSignalWorker();
+      let worker = createSignalWorker();
       let requestId = 0;
       const send = request => new Promise((resolve, reject) => {
         worker.onerror = event => reject(new Error(event.message || 'Worker failed to load'));
@@ -96,6 +96,42 @@ void app
           const evaluated = await send({ type: 'view', ids: run.outputIds });
           if (evaluated.plots.some(plot => !Number.isFinite(plot.summary.min) || (example.chain && plot.summary.count !== 2))) throw new Error('Example output did not evaluate');
         }
+        // Reproduce an early workspace using this test's isolated database.
+        worker.terminate();
+        const legacy = structuredClone(project);
+        delete legacy.segmentationOperations;
+        for (const segment of legacy.segments) {
+          delete segment.batchId;
+          delete segment.definition;
+          delete segment.boundary;
+          delete segment.scope;
+        }
+        await new Promise((resolve, reject) => {
+          const opening = indexedDB.open('stratus-workbench-v1', 1);
+          opening.onerror = () => reject(opening.error);
+          opening.onsuccess = () => {
+            const db = opening.result;
+            const tx = db.transaction('project', 'readwrite');
+            const store = tx.objectStore('project');
+            const revision = store.get('revision');
+            revision.onsuccess = () => {
+              store.put(legacy, 'current');
+              store.put(Number(revision.result) + 1, 'revision');
+            };
+            tx.oncomplete = () => { db.close(); resolve(); };
+            tx.onabort = () => { db.close(); reject(tx.error); };
+          };
+        });
+        worker = createSignalWorker();
+        const restored = await send({ type: 'init' });
+        if (restored.project.segmentationOperations.length !== 3 || restored.project.segmentationOperations.some(operation => operation.definition.method !== 'ranges')) throw new Error('Legacy operations did not gain complete time-range settings');
+        if (JSON.stringify(restored.project.nodes) !== JSON.stringify(legacy.nodes)) throw new Error('Legacy replacement changed signal identities or dependencies');
+        const checked = await send({ type: 'view', ids: nodes.map(node => node.id) });
+        if (JSON.stringify(checked.plots.map(plot => plot.summary)) !== JSON.stringify(plots.map(plot => plot.summary))) throw new Error('Legacy replacement changed computed results');
+        worker.terminate();
+        worker = createSignalWorker();
+        const reopened = await send({ type: 'init' });
+        if (JSON.stringify(reopened.project) !== JSON.stringify(restored.project)) throw new Error('Legacy replacement did not persist or duplicated operations');
         return { summaries: plots.map(plot => plot.summary), segments: plan.ranges.length, clipped: plan.ranges.filter(range => range.clipped).length };
       } finally { worker.terminate(); }
     })()
@@ -111,7 +147,7 @@ void app
     assert.ok(requests.length > 0, 'Expected an HTTP worker script request');
     assert.ok(requests.every((url) => new URL(url).origin === origin));
     process.stdout.write(
-      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches, and all four selectable examples passed.\n`,
+      `Preview worker passed: ${requests[0]}\nThree segments computed: ${summaries.map((summary) => summary.weightedMean.toFixed(2)).join(', ')} g/kWh.\nFile and signal-only segmentation, moving-average and Min / Max batches, all four selectable examples, and persistent replacement of incomplete legacy operations passed.\n`,
     );
     clearTimeout(timeout);
     window.destroy();

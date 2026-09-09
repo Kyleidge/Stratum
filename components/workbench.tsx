@@ -155,8 +155,11 @@ export default function Workbench() {
   const [createdSegmentId, setCreatedSegmentId] = useState<string>();
   const [exampleKey, setExampleKey] = useState('');
   const [segmentDraft, setSegmentDraft] = useState<SegmentationOperation>();
-  const [segmentSettings, setSegmentSettings] =
+  const [settingsSelection, setSegmentSettings] =
     useState<SegmentationOperation>();
+  const segmentSettings = settingsSelection
+    ? segmentationOperation(project, settingsSelection.id)
+    : undefined;
   const [settingsError, setSettingsError] = useState('');
   const [scope, setScope] = useState('');
   const [tab, setTab] = useState('analysis');
@@ -1579,58 +1582,51 @@ export default function Workbench() {
           </DialogDescription>
           {segmentSettings && settingsSource && (
             <div className="segmentation-settings-body">
-              {segmentSettings.definition ? (
-                <SegmentationEditor
-                  key={segmentSettings.id}
-                  source={settingsSource}
-                  nodes={project.nodes}
-                  segments={project.segments.filter(
-                    (item) => item.sourceId === settingsSource.id,
-                  )}
-                  busy={busy}
-                  selectedIds={segmentSettings.targetIds}
-                  selectionKind={
-                    segmentSettings.independently ? 'collection' : undefined
-                  }
-                  savedOperation={segmentSettings}
-                  onPreview={(definition, ids, independently, scope) =>
-                    previewSegmentation(
-                      settingsSource.id,
-                      definition,
-                      ids,
-                      independently,
-                      scope,
-                    )
-                  }
-                  onCreate={async (
+              <SegmentationEditor
+                key={segmentSettings.id}
+                source={settingsSource}
+                nodes={project.nodes}
+                segments={project.segments.filter(
+                  (item) => item.sourceId === settingsSource.id,
+                )}
+                busy={busy}
+                selectedIds={segmentSettings.targetIds}
+                selectionKind={
+                  segmentSettings.independently ? 'collection' : undefined
+                }
+                savedOperation={segmentSettings}
+                onPreview={(definition, ids, independently, scope) =>
+                  previewSegmentation(
+                    settingsSource.id,
                     definition,
-                    targetIds,
+                    ids,
                     independently,
                     scope,
-                  ) => {
-                    setSettingsError('');
-                    await mutate(
-                      {
-                        type: 'segment',
-                        sourceId: settingsSource.id,
-                        definition,
-                        targetIds,
-                        independently,
-                        scope,
-                      },
-                      'Creating revised segments…',
-                      setSettingsError,
-                    ).then((updated) => {
-                      if (updated) setSegmentSettings(undefined);
-                    });
-                  }}
-                />
-              ) : (
-                <p className="input-hint">
-                  This early operation has no complete saved settings. Its
-                  existing output segments are retained.
-                </p>
-              )}
+                  )
+                }
+                onCreate={async (
+                  definition,
+                  targetIds,
+                  independently,
+                  scope,
+                ) => {
+                  setSettingsError('');
+                  await mutate(
+                    {
+                      type: 'segment',
+                      sourceId: settingsSource.id,
+                      definition,
+                      targetIds,
+                      independently,
+                      scope,
+                    },
+                    'Creating revised segments…',
+                    setSettingsError,
+                  ).then((updated) => {
+                    if (updated) setSegmentSettings(undefined);
+                  });
+                }}
+              />
               {settingsError && (
                 <p className="segment-error" role="alert">
                   {settingsError}
