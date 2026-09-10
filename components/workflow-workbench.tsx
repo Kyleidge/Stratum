@@ -41,6 +41,7 @@ import { SignalGraph } from '@/lib/signal-graph';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { FUNCTIONS } from '@/lib/signal-functions';
 import { operationLabels } from '@/lib/signal-explorer';
+import ValueOperationPalette from './value-operation-palette';
 import {
   isArithmetic,
   isBinaryOperation,
@@ -2011,10 +2012,6 @@ function FunctionEditor({
     FUNCTIONS.find((spec) => spec.operation === operation);
   const binary = isBinaryOperation(operation);
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
-  const choices = VALUE_FUNCTIONS.map((spec) => ({
-    value: spec.operation,
-    label: spec.name,
-  }));
   const secondInputs = project.nodes.filter(
     (node) =>
       node.sourceId === sourceId &&
@@ -2056,10 +2053,8 @@ function FunctionEditor({
   return (
     <fieldset className="workflow-function-editor" disabled={busy}>
       {editor.kind === 'value' ? (
-        <RegionSelect
-          label="Value calculation"
+        <ValueOperationPalette
           value={operation}
-          items={choices}
           disabled={busy}
           onChange={changeOperation}
         />
@@ -2071,7 +2066,7 @@ function FunctionEditor({
         />
       )}
       <div className="signal-operation-settings">
-        {editor.kind === 'derive' && (
+        {editor.kind === 'derive' ? (
           <div className="signal-settings-heading">
             <strong>
               {spec?.name ?? operationLabels[operation as Operation]}
@@ -2079,6 +2074,13 @@ function FunctionEditor({
             {OPERATION_FORMULAS[operation] && (
               <code>{OPERATION_FORMULAS[operation]}</code>
             )}
+          </div>
+        ) : (
+          <div className="signal-settings-heading">
+            <strong>{valueSpec?.name}</strong>
+            <span className="value-output-count">
+              {editor.ids.length} {editor.ids.length === 1 ? 'value' : 'values'}
+            </span>
           </div>
         )}
         <p>
@@ -2090,6 +2092,12 @@ function FunctionEditor({
                 : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
               : spec?.description}
         </p>
+        {editor.kind === 'value' && (
+          <p className="value-output-hint">
+            One result per input, in its original unit. Missing samples are
+            excluded.
+          </p>
+        )}
         {binary && (
           <div className="signal-first-input">
             <span>Input A</span>

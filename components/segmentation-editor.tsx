@@ -1,7 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { Eye, GitBranch, Scissors } from 'lucide-react';
+import { useId, useState } from 'react';
+import {
+  Activity,
+  Eye,
+  GitBranch,
+  Scissors,
+  Timer,
+  BetweenHorizontalStart,
+} from 'lucide-react';
+import OperationCards from './operation-cards';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -101,6 +110,7 @@ function Numeric({
       <span className="field-label">{label}</span>
       <div className="number-field">
         <input
+          aria-label={label}
           type="number"
           step="any"
           value={value}
@@ -118,6 +128,26 @@ function number(value: string): number {
   return Number(value);
 }
 const time = (value: number) => `${Number(value.toFixed(3))} s`;
+const methods = [
+  {
+    value: 'ranges',
+    label: 'Time ranges',
+    visual: <BetweenHorizontalStart size={21} />,
+    hint: 'Choose start and end times',
+  },
+  {
+    value: 'windows',
+    label: 'Windows',
+    visual: <Timer size={21} />,
+    hint: 'Split at regular intervals',
+  },
+  {
+    value: 'triggers',
+    label: 'Triggers',
+    visual: <Activity size={21} />,
+    hint: 'Follow signal crossings',
+  },
+];
 
 export default function SegmentationEditor({
   source,
@@ -133,6 +163,7 @@ export default function SegmentationEditor({
   onPreview,
   onCreate,
 }: Props) {
+  const partialId = useId();
   const saved = savedOperation?.definition;
   const savedTriggers = saved?.method === 'triggers' ? saved : undefined;
   const savedWindows = saved?.method === 'windows' ? saved : undefined;
@@ -312,7 +343,10 @@ export default function SegmentationEditor({
     const unit = nodes.find((node) => node.id === trigger.signalId)?.unit ?? '';
     return (
       <fieldset className="trigger-card">
-        <legend>{label} BOUNDARY</legend>
+        <legend>
+          {workflowMode ? `${label} boundary` : `${label} BOUNDARY`}
+        </legend>
+        {workflowMode && <div className="field-label">Signal</div>}
         <Choice
           label={`${label} trigger signal`}
           value={trigger.signalId}
@@ -348,141 +382,227 @@ export default function SegmentationEditor({
       </fieldset>
     );
   }
+  function targetEditor() {
+    return (
+      <div className="segment-target-setting">
+        <div className="field-label">Segment target</div>
+        <Choice
+          label="Segment target"
+          value={target}
+          items={[
+            {
+              value: 'file',
+              label: `Entire file · ${source.channels.length} original signals`,
+            },
+            {
+              value: 'selection',
+              label:
+                selectedIds.length > 1
+                  ? `Selected ${selectedIds.length} signals`
+                  : 'Single signal · selected output',
+            },
+            ...signals,
+          ]}
+          onChange={setTarget}
+        />
+      </div>
+    );
+  }
+  const scopeHint = (
+    <p className="input-hint segmentation-scope-hint">
+      {target === 'file'
+        ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
+        : workflowMode
+          ? target === 'selection' && selectedIds.length > 1
+            ? 'Each selected signal is segmented independently.'
+            : 'Each interval creates a new signal from this input.'
+          : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
+    </p>
+  );
   return (
-    <fieldset className="segmentation-editor" disabled={busy}>
-      <div className="field-label">Segment target</div>
-      <Choice
-        label="Segment target"
-        value={target}
-        items={[
-          {
-            value: 'file',
-            label: `Entire file · ${source.channels.length} original signals`,
-          },
-          {
-            value: 'selection',
-            label:
-              selectedIds.length > 1
-                ? `Selected ${selectedIds.length} signals`
-                : 'Single signal · selected output',
-          },
-          ...signals,
-        ]}
-        onChange={setTarget}
-      />
-      <p className="input-hint segmentation-scope-hint">
-        {target === 'file'
-          ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
-          : workflowMode
-            ? 'Each chunk becomes a derived signal. It can be processed, segmented again, or reduced to a value.'
-            : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
-      </p>
-      <div className="field-label">Method</div>
-      <Choice
-        label="Segmentation method"
-        value={method}
-        items={[
-          { value: 'triggers', label: 'Signal edge triggers' },
-          { value: 'ranges', label: 'Manual time ranges' },
-          { value: 'windows', label: 'Fixed-duration windows' },
-        ]}
-        onChange={(value) => {
-          if (value === 'triggers' || value === 'ranges' || value === 'windows')
-            setMethod(value);
-        }}
-      />
-      {method === 'triggers' && (
+    <fieldset
+      className={`segmentation-editor${workflowMode ? ' workflow-segmentation-editor' : ''}`}
+      disabled={busy}
+    >
+      {!workflowMode && (
         <>
-          {triggerEditor('Start', start, setStart)}
-          {triggerEditor('End', end, setEnd)}
-          <Numeric
-            label="Minimum output duration"
-            value={minimum}
-            onChange={setMinimum}
+          {targetEditor()}
+          {scopeHint}
+        </>
+      )}
+      {workflowMode ? (
+        <OperationCards
+          label="Segmentation method"
+          category="Segments"
+          value={method}
+          items={methods}
+          disabled={busy}
+          onChange={(value) => {
+            if (
+              value === 'ranges' ||
+              value === 'windows' ||
+              value === 'triggers'
+            )
+              setMethod(value);
+            setError('');
+          }}
+        />
+      ) : (
+        <>
+          <div className="field-label">Method</div>
+          <Choice
+            label="Segmentation method"
+            value={method}
+            items={[
+              { value: 'triggers', label: 'Signal edge triggers' },
+              { value: 'ranges', label: 'Manual time ranges' },
+              { value: 'windows', label: 'Fixed-duration windows' },
+            ]}
+            onChange={(value) => {
+              if (
+                value === 'triggers' ||
+                value === 'ranges' ||
+                value === 'windows'
+              )
+                setMethod(value);
+            }}
           />
-          <p className="input-hint">
-            The first start pairs with the next later end. Offsets apply after
-            pairing; negative values include earlier data. Missing trigger
-            samples break a pair. Filter a signal explicitly if needed.
-          </p>
         </>
       )}
-      {method === 'ranges' && (
-        <>
-          <label className="field-label" htmlFor="segment-ranges">
-            Start, end — seconds, one range per line
-          </label>
-          <Textarea
-            id="segment-ranges"
-            className="segment-ranges"
-            rows={4}
-            value={ranges}
-            onChange={(event) => setRanges(event.target.value)}
-          />
-          <p className="input-hint">
-            Use recording time. Overlapping intervals are allowed.
-          </p>
-        </>
-      )}
-      {method === 'windows' && (
-        <>
-          <div className="segment-field-pair">
-            <Numeric
-              label="Range start"
-              value={windowStart}
-              onChange={setWindowStart}
-            />
-            <Numeric
-              label="Range end"
-              value={windowEnd}
-              onChange={setWindowEnd}
-            />
+      <div
+        className={
+          workflowMode
+            ? 'signal-operation-settings segment-method-settings'
+            : undefined
+        }
+      >
+        {workflowMode && (
+          <div className="signal-settings-heading">
+            <strong>
+              {methods.find((item) => item.value === method)!.label}
+            </strong>
+            <span className="segment-time-reference">
+              Recording time · seconds
+            </span>
           </div>
-          <div className="segment-field-pair">
-            <Numeric
-              label="Window duration"
-              value={duration}
-              onChange={setDuration}
-            />
-            <Numeric
-              label="Step between starts"
-              value={step}
-              onChange={setStep}
-            />
-          </div>
-          <label className="segment-checkbox">
-            <input
-              type="checkbox"
-              checked={partial}
-              onChange={(event) => setPartial(event.target.checked)}
-            />
-            Include a shorter final window
-          </label>
-          <p className="input-hint">
-            A step shorter than the duration creates overlapping windows.
-          </p>
-        </>
-      )}
-      {target === 'selection' &&
-        selectedIds.length > 1 &&
-        selectionKind === 'collection' && (
-          <p className="input-hint">
-            Each member is segmented separately. A trigger using the first
-            member follows the corresponding member in each branch.
-          </p>
         )}
-      <div className="field-label">Outside available data</div>
-      <Choice
-        label="Recording boundary policy"
-        value={boundary}
-        items={[
-          { value: 'clip', label: 'Clip to available interval' },
-          { value: 'discard', label: 'Discard incomplete interval' },
-        ]}
-        onChange={(value) => {
-          if (value === 'clip' || value === 'discard') setBoundary(value);
-        }}
-      />
+        {method === 'triggers' && (
+          <>
+            <div className={workflowMode ? 'segment-trigger-grid' : undefined}>
+              {triggerEditor('Start', start, setStart)}
+              {triggerEditor('End', end, setEnd)}
+            </div>
+            <Numeric
+              label="Minimum output duration"
+              value={minimum}
+              onChange={setMinimum}
+            />
+            <p className="input-hint">
+              The first start pairs with the next later end. Offsets apply after
+              pairing; negative values include earlier data. Missing trigger
+              samples break a pair. Filter a signal explicitly if needed.
+            </p>
+          </>
+        )}
+        {method === 'ranges' && (
+          <>
+            <label className="field-label" htmlFor="segment-ranges">
+              {workflowMode
+                ? 'Start, end · one range per line'
+                : 'Start, end — seconds, one range per line'}
+            </label>
+            <Textarea
+              id="segment-ranges"
+              className="segment-ranges"
+              rows={4}
+              value={ranges}
+              onChange={(event) => setRanges(event.target.value)}
+            />
+            <p className="input-hint">
+              Use recording time. Overlapping intervals are allowed.
+            </p>
+          </>
+        )}
+        {method === 'windows' && (
+          <>
+            <div className="segment-field-pair">
+              <Numeric
+                label="Range start"
+                value={windowStart}
+                onChange={setWindowStart}
+              />
+              <Numeric
+                label="Range end"
+                value={windowEnd}
+                onChange={setWindowEnd}
+              />
+            </div>
+            <div className="segment-field-pair">
+              <Numeric
+                label="Window duration"
+                value={duration}
+                onChange={setDuration}
+              />
+              <Numeric
+                label="Step between starts"
+                value={step}
+                onChange={setStep}
+              />
+            </div>
+            <label className="segment-checkbox" htmlFor={partialId}>
+              <Checkbox
+                id={partialId}
+                checked={partial}
+                disabled={busy}
+                onCheckedChange={setPartial}
+              />
+              Include a shorter final window
+            </label>
+            <p className="input-hint">
+              A step shorter than the duration creates overlapping windows.
+            </p>
+          </>
+        )}
+      </div>
+      <div
+        className={
+          workflowMode
+            ? 'signal-operation-settings segment-scope-settings'
+            : undefined
+        }
+      >
+        {workflowMode && (
+          <div className="signal-settings-heading">
+            <strong>Scope & boundaries</strong>
+          </div>
+        )}
+        <div className={workflowMode ? 'segment-scope-grid' : undefined}>
+          {workflowMode && targetEditor()}
+          <div>
+            <div className="field-label">Outside available data</div>
+            <Choice
+              label="Recording boundary policy"
+              value={boundary}
+              items={[
+                { value: 'clip', label: 'Clip to available interval' },
+                { value: 'discard', label: 'Discard incomplete interval' },
+              ]}
+              onChange={(value) => {
+                if (value === 'clip' || value === 'discard') setBoundary(value);
+              }}
+            />
+          </div>
+        </div>
+        {workflowMode && scopeHint}
+        {target === 'selection' &&
+          selectedIds.length > 1 &&
+          selectionKind === 'collection' && (
+            <p className="input-hint">
+              Each member is segmented separately. A trigger using the first
+              member follows the corresponding member in each branch.
+            </p>
+          )}
+      </div>
       <div className="segment-preview" aria-live="polite">
         {plan ? (
           <>
@@ -522,7 +642,9 @@ export default function SegmentationEditor({
             </ol>
           </>
         ) : (
-          <small>Preview intervals before creating new branches.</small>
+          <small>
+            <Eye size={16} /> Preview to check the segment count and boundaries.
+          </small>
         )}
       </div>
       {error && (
@@ -553,14 +675,16 @@ export default function SegmentationEditor({
                 : 'Create signal segments')}
         </button>
       </div>
-      <p className="input-hint">
-        <GitBranch size={12} />{' '}
-        {applyLabel
-          ? 'Saving updates this operation and recalculates its dependent results. Undo restores the previous version.'
-          : savedOperation
-            ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
-            : 'Creates immutable crop recipes. Calculations remain separate steps.'}
-      </p>
+      {!workflowMode && (
+        <p className="input-hint">
+          <GitBranch size={12} />{' '}
+          {applyLabel
+            ? 'Saving updates this operation and recalculates its dependent results. Undo restores the previous version.'
+            : savedOperation
+              ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
+              : 'Creates immutable crop recipes. Calculations remain separate steps.'}
+        </p>
+      )}
     </fieldset>
   );
 }

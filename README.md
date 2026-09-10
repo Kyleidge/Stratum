@@ -61,6 +61,12 @@ inputs, division by zero and non-finite results stay missing. Saved brake-power
 and fuel-consumption recipes remain readable and editable for compatibility;
 they are no longer offered for new operations.
 
+**Segment** uses method cards for time ranges, regular windows and signal
+triggers, with separate settings and scope panels. Switching methods retains
+the entered settings and clears any outdated interval preview. **Calculate
+value** offers four cards for time average, sample average, minimum and maximum,
+with a short explanation of how each result is calculated.
+
 ### Included motor-test workflow
 
 Choose **Open example workflow** from the empty workspace or **Workspace**.

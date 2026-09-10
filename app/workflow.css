@@ -1011,6 +1011,135 @@
   gap: 8px;
   padding-top: 6px;
 }
+.signal-palette-grid[data-category='Values'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.operation-card-hint {
+  color: var(--muted-foreground);
+  font: 12px/1.45 var(--font-sans);
+}
+.value-output-count {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  color: var(--primary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.workflow-function-editor .value-output-hint {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.workflow-segmentation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.workflow-segmentation-editor .field-label {
+  display: block;
+  margin: 0 0 7px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.workflow-segmentation-editor .input-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.segment-time-reference {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: right;
+}
+.segment-trigger-grid,
+.segment-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.segment-scope-grid > div {
+  min-width: 0;
+}
+.workflow-segmentation-editor .trigger-card {
+  margin: 0;
+  border-color: var(--border);
+  border-left-color: var(--primary);
+  padding: 10px 12px 12px;
+  border-radius: 6px;
+}
+.workflow-segmentation-editor .trigger-card legend {
+  color: var(--primary);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.workflow-segmentation-editor .trigger-card .field-label {
+  margin-top: 10px;
+}
+.workflow-segmentation-editor .segment-numeric input {
+  font-size: 14px;
+  padding: 8px;
+}
+.workflow-segmentation-editor .segment-ranges {
+  background: var(--background);
+  border-color: var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.6;
+  border-radius: 6px;
+}
+.workflow-segmentation-editor .segment-checkbox {
+  margin: 0;
+  font-size: 13px;
+  color: var(--foreground);
+  gap: 9px;
+}
+.workflow-segmentation-editor .segment-preview {
+  margin: 0;
+  border-radius: 9px;
+  padding: 13px 16px;
+  border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+}
+.workflow-segmentation-editor .segment-preview strong {
+  font-size: 14px;
+  color: var(--primary);
+}
+.workflow-segmentation-editor .segment-preview small,
+.workflow-segmentation-editor .segment-preview li {
+  font-size: 12px;
+}
+.workflow-segmentation-editor .segment-preview small svg {
+  display: inline;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.workflow-segmentation-editor .segment-actions {
+  justify-content: flex-end;
+  gap: 10px;
+}
+.workflow-segmentation-editor .segment-actions button {
+  flex: initial;
+}
+@media (max-width: 600px) {
+  .segment-trigger-grid,
+  .segment-scope-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .signal-palette-grid[data-category='Segments'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .signal-palette-grid[data-category='Segments'] .signal-operation-card {
+    display: grid;
+    grid-template-columns: 25px 1fr;
+    gap: 4px 10px;
+    min-height: 65px;
+  }
+  .signal-palette-grid[data-category='Segments'] .signal-operation-formula {
+    grid-row: span 2;
+    align-self: center;
+  }
+}
 .signal-palette-grid[data-category='Math'] {
   grid-template-columns: repeat(12, minmax(0, 1fr));
 }

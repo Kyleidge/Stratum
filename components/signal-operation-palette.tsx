@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Calculator, Clock3, SlidersHorizontal, Sigma } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import OperationCards from './operation-cards';
 import { FUNCTIONS } from '@/lib/signal-functions';
 
 export const SIGNAL_FUNCTIONS = FUNCTIONS.filter(
@@ -88,33 +88,23 @@ export function SignalOperationPalette({
       </TabsList>
       {groups.map(({ name, operations }) => (
         <TabsContent key={name} value={name}>
-          <RadioGroup
+          <OperationCards
             value={value}
-            onValueChange={(next) => onChange(String(next))}
+            onChange={onChange}
             disabled={disabled}
-            aria-label={`${name} operations`}
-            className="signal-palette-grid"
-            data-category={name}
-          >
-            {operations.map((operation) => {
+            label={`${name} operations`}
+            category={name}
+            items={operations.map((operation) => {
               const spec = SIGNAL_FUNCTIONS.find(
                 (item) => item.operation === operation,
               )!;
-              return (
-                <label
-                  key={operation}
-                  className="signal-operation-card"
-                  data-selected={value === operation || undefined}
-                >
-                  <span className="signal-operation-formula" aria-hidden="true">
-                    {OPERATION_FORMULAS[operation]}
-                  </span>
-                  <span>{spec.name}</span>
-                  <RadioGroupItem value={operation} aria-label={spec.name} />
-                </label>
-              );
+              return {
+                value: operation,
+                label: spec.name,
+                visual: OPERATION_FORMULAS[operation],
+              };
             })}
-          </RadioGroup>
+          />
         </TabsContent>
       ))}
     </Tabs>

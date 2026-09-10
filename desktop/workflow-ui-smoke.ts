@@ -58,9 +58,94 @@ export async function workflowUiSmoke() {
     );
     element.dispatchEvent(new Event('input', { bubbles: true }));
   }
+  let checkedSegmentMethods = false;
   async function segment(ranges: string) {
     await click('Segment');
     const modal = await dialog();
+    if (!checkedSegmentMethods) {
+      assert(
+        modal.querySelectorAll('[role="radio"]').length === 3,
+        'Segment methods should be directly selectable cards.',
+      );
+      const initialRanges =
+        modal.querySelector<HTMLTextAreaElement>('textarea')!.value;
+      modal
+        .querySelector<HTMLElement>('[role="radio"][aria-label="Windows"]')!
+        .click();
+      await delay();
+      for (const [label, value] of [
+        ['Range start', '12'],
+        ['Range end', '22'],
+        ['Window duration', '5'],
+        ['Step between starts', '5'],
+      ]) {
+        setValue(
+          modal.querySelector<HTMLInputElement>(
+            `input[aria-label="${label}"]`,
+          )!,
+          value,
+        );
+        await delay();
+      }
+      await click('Preview', modal);
+      await until(
+        () =>
+          modal
+            .querySelector('.segment-preview strong')
+            ?.textContent?.startsWith('2 signal segments'),
+        'window card preview',
+      );
+      modal
+        .querySelector<HTMLElement>('[role="radio"][aria-label="Triggers"]')!
+        .click();
+      await delay();
+      assert(
+        !modal.querySelector('.segment-preview strong'),
+        'Switching methods kept a stale preview.',
+      );
+      for (const [label, value] of [
+        ['Start threshold', '1000'],
+        ['End threshold', '1000'],
+        ['Start offset', '0'],
+        ['End offset', '0'],
+      ]) {
+        setValue(
+          modal.querySelector<HTMLInputElement>(
+            `input[aria-label="${label}"]`,
+          )!,
+          value,
+        );
+        await delay();
+      }
+      await click('Preview', modal);
+      await until(
+        () =>
+          modal
+            .querySelector('.segment-preview strong')
+            ?.textContent?.startsWith('3 signal segments'),
+        'trigger card preview',
+      );
+      modal
+        .querySelector<HTMLElement>('[role="radio"][aria-label="Windows"]')!
+        .click();
+      await delay();
+      assert(
+        modal.querySelector<HTMLInputElement>(
+          'input[aria-label="Window duration"]',
+        )?.value === '5',
+        'Switching methods lost window settings.',
+      );
+      modal
+        .querySelector<HTMLElement>('[role="radio"][aria-label="Time ranges"]')!
+        .click();
+      await delay();
+      assert(
+        modal.querySelector<HTMLTextAreaElement>('textarea')?.value ===
+          initialRanges,
+        'Switching methods lost manual ranges.',
+      );
+      checkedSegmentMethods = true;
+    }
     const textarea = modal.querySelector<HTMLTextAreaElement>('textarea');
     if (!textarea) throw new Error('Manual ranges were not the default.');
     setValue(textarea, ranges);
@@ -401,21 +486,26 @@ export async function workflowUiSmoke() {
     );
     await click('Calculate value');
     const valueModal = await dialog();
-    const chooser = valueModal.querySelector<HTMLButtonElement>(
-      'button[aria-label="Value calculation"]',
+    assert(
+      valueModal.querySelectorAll('[role="radio"]').length === 4,
+      'Value calculations should be directly selectable cards.',
     );
-    assert(chooser, 'Value chooser missing.');
-    chooser.click();
+    valueModal
+      .querySelector<HTMLElement>(
+        '[role="radio"][aria-label="Sample average"]',
+      )!
+      .click();
     await delay();
-    (
-      await until(
-        () =>
-          [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-            (option) => option.textContent?.trim() === 'Maximum',
-          ),
-        'maximum choice',
-      )
-    ).click();
+    assert(
+      valueModal
+        .querySelector('.signal-operation-settings')
+        ?.textContent?.includes('Each sample has equal weight'),
+      'Sample-average card did not update the explanation.',
+    );
+    valueModal
+      .querySelector<HTMLElement>('[role="radio"][aria-label="Maximum"]')!
+      .click();
+    await delay();
     await click('Create 40 values', valueModal);
     await settled();
     assert(
