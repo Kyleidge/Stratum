@@ -14,6 +14,46 @@ export type FunctionSpec = {
 };
 export const FUNCTIONS: FunctionSpec[] = [
   {
+    operation: 'add',
+    name: 'Add signals',
+    category: 'Math',
+    description:
+      'Add matching samples: A + B. Both inputs must have the same unit label.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
+    operation: 'subtract',
+    name: 'Subtract signals',
+    category: 'Math',
+    description:
+      'Subtract B from each selected input A. Both inputs must have the same unit label.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
+    operation: 'multiply',
+    name: 'Multiply signals',
+    category: 'Math',
+    description:
+      'Multiply matching samples: A × B. Output units combine the two input units.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
+    operation: 'divide',
+    name: 'Divide signals',
+    category: 'Math',
+    description:
+      'Divide each selected input A by B. Division by zero and missing samples produce missing values.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
     operation: 'min-max',
     name: 'Min / Max',
     category: 'Calculation',

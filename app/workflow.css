@@ -986,6 +986,8 @@
 }
 .workflow-function-editor {
   border: 0;
+  padding: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -997,6 +999,127 @@
 }
 .workflow-function-editor .region-field {
   margin: 0;
+}
+.signal-palette .signal-palette-tabs {
+  width: 100%;
+  height: 40px;
+  gap: 4px;
+  padding: 4px;
+}
+.signal-palette-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 6px;
+}
+.signal-palette-grid[data-category='Math'] {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+.signal-palette-grid[data-category='Math'] .signal-operation-card {
+  grid-column: span 3;
+}
+.signal-palette-grid[data-category='Math']
+  .signal-operation-card:nth-child(n + 5) {
+  grid-column: span 4;
+}
+.signal-operation-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 12px 30px 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 140ms,
+    border-color 140ms;
+}
+.signal-operation-card:hover,
+.signal-operation-card[data-selected] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.signal-operation-card:has(:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.signal-operation-card [data-slot='radio-group-item'] {
+  position: absolute;
+  right: 10px;
+  top: 13px;
+}
+.signal-operation-formula {
+  color: var(--primary);
+  font: 18px var(--font-mono);
+}
+.signal-operation-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  padding: 16px;
+}
+.signal-settings-heading,
+.signal-first-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.signal-settings-heading code {
+  color: var(--primary);
+  font-size: 17px;
+}
+.signal-first-input {
+  align-items: baseline;
+  font-size: 13px;
+}
+.signal-first-input > span {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.signal-first-input strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-weight: 500;
+}
+.workflow-function-editor .signal-math-hint {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.workflow-function-editor .segment-error {
+  color: var(--destructive, #f48d8d);
+}
+@media (max-width: 520px) {
+  .signal-palette-grid,
+  .signal-palette-grid[data-category='Math'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .signal-palette-grid[data-category='Math']
+    .signal-operation-card:nth-child(n) {
+    grid-column: auto;
+  }
+  .signal-palette-tabs [data-slot='tabs-trigger'] {
+    font-size: 12px;
+  }
+  .signal-palette-tabs svg {
+    display: none;
+  }
+  .signal-first-input {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .signal-first-input strong {
+    text-align: left;
+  }
 }
 .workflow-dialog .region-field > span,
 .workflow-dialog .field-label,

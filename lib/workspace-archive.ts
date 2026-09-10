@@ -1,5 +1,10 @@
 import { SignalGraph } from './signal-graph';
 import { FUNCTIONS } from './signal-functions';
+import {
+  arithmeticUnit,
+  isArithmetic,
+  isBinaryOperation,
+} from './signal-arithmetic';
 import type { Project, SegmentationDefinition } from './signal-types';
 
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
@@ -63,10 +68,10 @@ export function validateWorkspace(value: unknown): Project {
   const regionSets = new Map(
     (project.regionSets ?? []).map((item) => [item.id, item]),
   );
-  const stringList = (items: unknown): items is string[] =>
+  const stringList = (items: unknown, unique = true): items is string[] =>
     Array.isArray(items) &&
     items.every((id) => typeof id === 'string') &&
-    new Set(items).size === items.length;
+    (!unique || new Set(items).size === items.length);
   const optionalText = (item: unknown) =>
     item === undefined || typeof item === 'string';
   const nonnegative = (item: number) => Number.isFinite(item) && item >= 0;
@@ -148,7 +153,7 @@ export function validateWorkspace(value: unknown): Project {
       typeof node.createdAt !== 'string' ||
       node.version !== 1 ||
       !optionalText(node.batchId) ||
-      !stringList(node.parents) ||
+      !stringList(node.parents, !isArithmetic(node.operation)) ||
       !node.parameters ||
       !Object.values(node.parameters).every(Number.isFinite)
     )
@@ -169,11 +174,13 @@ export function validateWorkspace(value: unknown): Project {
         node.parameters.start > node.parameters.end
       )
         throw new Error('Invalid segment recipe.');
-    } else if (node.operation === 'power' || node.operation === 'bsfc') {
+    } else if (isBinaryOperation(node.operation)) {
       if (node.parents.length !== 2)
         throw new Error('Binary recipes require two inputs.');
       const units = node.parents.map((id) => nodes.get(id)!.unit);
-      if (
+      if (isArithmetic(node.operation)) {
+        arithmeticUnit(node.operation, units[0], units[1]);
+      } else if (
         node.operation === 'power'
           ? !/^n[· ]?m$/i.test(units[0]) || units[1].toLowerCase() !== 'rpm'
           : !/^kg\/h$/i.test(units[0]) || units[1].toLowerCase() !== 'kw'

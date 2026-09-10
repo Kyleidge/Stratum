@@ -1,4 +1,9 @@
 import { RollingMean, bsfc, power } from './signal-math';
+import {
+  arithmeticValue,
+  isArithmetic,
+  isBinaryOperation,
+} from './signal-arithmetic';
 import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
 import type { SignalGraph } from './signal-graph';
 import type { Point, SeriesChunk, SignalNode } from './signal-types';
@@ -30,7 +35,7 @@ export async function* executeSignal(
         yield { kind: 'output', chunk };
       return;
     }
-    if (node.operation === 'power' || node.operation === 'bsfc') {
+    if (isBinaryOperation(node.operation)) {
       let a = yield { kind: 'input', index: 0 };
       let b = yield { kind: 'input', index: 1 };
       let ai = 0;
@@ -42,9 +47,11 @@ export async function* executeSignal(
           throw new Error('Inputs must share timestamps.');
         output.push([
           a.time[ai],
-          node.operation === 'power'
-            ? power(a.values[ai], b.values[bi])
-            : bsfc(a.values[ai], b.values[bi]),
+          isArithmetic(node.operation)
+            ? arithmeticValue(node.operation, a.values[ai], b.values[bi])
+            : node.operation === 'power'
+              ? power(a.values[ai], b.values[bi])
+              : bsfc(a.values[ai], b.values[bi]),
         ]);
         if (++ai === a.time.length) {
           a = yield { kind: 'input', index: 0 };

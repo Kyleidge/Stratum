@@ -36,16 +36,16 @@ export async function buildExampleWorkflow(
   const smooth = await engine.derive(source.channels[1], 'smooth', 5);
   await engine.rename(smooth.id, 'Smoothed torque');
   await nameStep('Smooth measured torque');
-  const power = await engine.applyRegionFunction({
+  const product = await engine.applyRegionFunction({
     sourceId: source.id,
-    operation: 'power',
+    operation: 'multiply',
     parameter: 0,
     inputIds: [smooth.id],
     secondaryIds: [source.channels[0]],
   });
-  const powerId = power.outputs[0].signalId;
-  await engine.rename(powerId, 'Brake power');
-  await nameStep('Calculate power from torque and speed');
+  const productId = product.outputs[0].signalId;
+  await engine.rename(productId, 'Torque × speed');
+  await nameStep('Multiply torque and speed');
   const runs = await engine.segment(
     source.id,
     {
@@ -57,18 +57,18 @@ export async function buildExampleWorkflow(
         [120, 160],
       ],
     },
-    [powerId],
+    [productId],
     false,
     'signals',
   );
   const runIds = runs.map((run) => run.nodes[0]);
   for (const [i, id] of runIds.entries())
-    await engine.rename(id, `Run ${i + 1} · Power`);
-  await nameStep('Split power into three runs');
+    await engine.rename(id, `Run ${i + 1} · Torque × speed`);
+  await nameStep('Split the product into three runs');
   await engine.calculateValues(runIds, 'time-average');
   for (const [i, value] of engine.project.values!.slice(-3).entries())
-    await engine.rename(value.id, `Run ${i + 1} · Average power`);
-  await nameStep('Compare average power by run');
+    await engine.rename(value.id, `Run ${i + 1} · Average product`);
+  await nameStep('Compare average product by run');
   const windows = await engine.segment(
     source.id,
     {
@@ -87,10 +87,10 @@ export async function buildExampleWorkflow(
   const windowIds = windows.map((window) => window.nodes[0]);
   const labels = ['First half', 'Second half'];
   for (const [i, id] of windowIds.entries())
-    await engine.rename(id, `Run 2 · ${labels[i]} · Power`);
+    await engine.rename(id, `Run 2 · ${labels[i]} · Torque × speed`);
   await nameStep('Split Run 2 into two windows');
   await engine.calculateValues(windowIds, 'maximum');
   for (const [i, value] of engine.project.values!.slice(-2).entries())
-    await engine.rename(value.id, `Run 2 · ${labels[i]} · Peak power`);
-  await nameStep('Compare peak power within Run 2');
+    await engine.rename(value.id, `Run 2 · ${labels[i]} · Peak product`);
+  await nameStep('Compare peak product within Run 2');
 }

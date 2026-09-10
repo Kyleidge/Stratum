@@ -156,10 +156,10 @@ export async function workflowUiSmoke() {
       document.querySelectorAll('.workflow-output-name').length === 2,
       'Nested segmentation should expose two signals.',
     );
-    await click('Plot power');
+    await click('Plot derived signal');
     await until(
-      () => document.querySelector('h1')?.textContent === 'Brake power',
-      'example power',
+      () => document.querySelector('h1')?.textContent === 'Torque × speed',
+      'example product',
     );
     exampleGuide.querySelector('summary')!.click();
     await delay();
@@ -190,6 +190,57 @@ export async function workflowUiSmoke() {
     await delay();
     await click('History tree');
     await click('Derive signal');
+    const mathModal = await dialog();
+    assert(
+      mathModal.querySelectorAll('[role="radio"]').length === 7,
+      'Math should show seven compact operation cards.',
+    );
+    assert(
+      !mathModal.textContent?.includes('Brake power') &&
+        !mathModal.textContent?.includes('Specific fuel consumption'),
+      'New operations still offer domain-specific calculations.',
+    );
+    assert(
+      !button('Create 1 derived signal', mathModal),
+      'Binary math must require Input B.',
+    );
+    await choose('Input B', '#001 Motor speed [rpm]');
+    await click('Create 1 derived signal', mathModal);
+    await settled();
+    assert(
+      document.querySelector('h1')?.textContent === 'Motor speed × Motor speed',
+      'The palette did not create the selected two-input operation.',
+    );
+    await click('Edit settings');
+    const mathEdit = await dialog();
+    assert(
+      mathEdit
+        .querySelector('[aria-label="Input B"]')
+        ?.textContent?.includes('Motor speed'),
+      'Editing lost the second operand.',
+    );
+    mathEdit
+      .querySelector<HTMLElement>(
+        '[role="radio"][aria-label="Subtract signals"]',
+      )!
+      .click();
+    await delay();
+    await click('Save changes and recalculate', mathEdit);
+    await settled();
+    assert(
+      document.querySelector('h1')?.textContent === 'Motor speed − Motor speed',
+      'Changing the math operation did not update its output.',
+    );
+    await historyAction('Undo');
+    await historyAction('Undo');
+    await click('Derive signal');
+    await click('Filters', await dialog());
+    (await dialog())
+      .querySelector<HTMLElement>(
+        '[role="radio"][aria-label="Moving average"]',
+      )!
+      .click();
+    await delay();
     await click('Create 1 derived signal', await dialog());
     await settled();
     assert(
@@ -379,7 +430,10 @@ export async function workflowUiSmoke() {
     await click('History tree');
     // Everyday management must work through the actual dialogs and worker.
     await click('Derive signal');
-    await choose('Signal operation', 'Scale signal');
+    (await dialog())
+      .querySelector<HTMLElement>('[role="radio"][aria-label="Scale signal"]')!
+      .click();
+    await delay();
     let managementModal = await dialog();
     setValue(
       managementModal.querySelector<HTMLInputElement>(

@@ -2,6 +2,12 @@ import { CsvParser, Envelope, power } from './signal-math';
 import { SignalGraph } from './signal-graph';
 import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
+import {
+  ARITHMETIC_SYMBOLS,
+  arithmeticUnit,
+  isArithmetic,
+  isBinaryOperation,
+} from './signal-arithmetic';
 import { withWorkflowHistory } from './workflow-history';
 import {
   affectedOperations,
@@ -1123,8 +1129,7 @@ export class SignalEngine {
   async applyRegionFunction(settings: FunctionSettings): Promise<FunctionRun> {
     this.check();
     const before = this.project;
-    const binary =
-      settings.operation === 'power' || settings.operation === 'bsfc';
+    const binary = isBinaryOperation(settings.operation);
     const inputs = settings.inputIds;
     const secondary = settings.secondaryIds ?? [];
     if (!inputs.length || new Set(inputs).size !== inputs.length)
@@ -1284,10 +1289,16 @@ export class SignalEngine {
             );
           result = this.node(
             settings.sourceId,
-            settings.operation === 'power'
-              ? 'Brake power'
-              : 'Specific fuel consumption',
-            settings.operation === 'power' ? 'kW' : 'g/kWh',
+            isArithmetic(settings.operation)
+              ? `${(before.labels?.[a.id] ?? a.name).slice(0, 64)} ${ARITHMETIC_SYMBOLS[settings.operation]} ${(before.labels?.[b.id] ?? b.name).slice(0, 64)}`
+              : settings.operation === 'power'
+                ? 'Brake power'
+                : 'Specific fuel consumption',
+            isArithmetic(settings.operation)
+              ? arithmeticUnit(settings.operation, a.unit, b.unit)
+              : settings.operation === 'power'
+                ? 'kW'
+                : 'g/kWh',
             settings.operation,
             scoped,
           );
@@ -1487,11 +1498,14 @@ export class SignalEngine {
   ) {
     if (
       !FUNCTIONS.some(
-        (spec) => spec.operation !== 'segment' && spec.operation === operation,
+        (spec) =>
+          spec.operation !== 'segment' &&
+          !isBinaryOperation(spec.operation) &&
+          spec.operation === operation,
       )
     )
       throw new Error(
-        'Choose an implemented single-input function. Segmentation and metrics use their own input settings.',
+        'Choose an implemented single-input function. Segmentation and two-input calculations use their own input settings.',
       );
     if (!parentIds.length || new Set(parentIds).size !== parentIds.length)
       throw new Error('Choose unique inputs for this operation.');

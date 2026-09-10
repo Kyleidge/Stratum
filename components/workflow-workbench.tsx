@@ -40,6 +40,17 @@ import { useSignalEngine } from '@/hooks/use-signal-engine';
 import { SignalGraph } from '@/lib/signal-graph';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { FUNCTIONS } from '@/lib/signal-functions';
+import { operationLabels } from '@/lib/signal-explorer';
+import {
+  isArithmetic,
+  isBinaryOperation,
+  arithmeticUnit,
+} from '@/lib/signal-arithmetic';
+import {
+  SignalOperationPalette,
+  SIGNAL_FUNCTIONS,
+  OPERATION_FORMULAS,
+} from './signal-operation-palette';
 import { VALUE_FUNCTIONS } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
@@ -67,9 +78,6 @@ const PAGE_SIZE = 30;
 const number = (value: number) => formatValue(value, 3);
 const reference = (step?: WorkflowStep) =>
   step ? `#${String(step.sequence + 1).padStart(3, '0')}` : '';
-const SIGNAL_FUNCTIONS = FUNCTIONS.filter(
-  (spec) => spec.operation !== 'segment' && spec.operation !== 'min-max',
-);
 type Editor = {
   editingStepId?: string;
   kind: 'derive' | 'segment' | 'value';
@@ -471,7 +479,7 @@ export default function WorkflowWorkbench() {
         },
       });
     } else if (step.kind === 'derive' || step.kind === 'value') {
-      const binary = step.operation === 'power' || step.operation === 'bsfc';
+      const binary = isBinaryOperation(step.operation);
       const parents = step.outputIds.flatMap(
         (id) => index.nodes.get(id)?.parents.slice(0, 1) ?? [],
       );
@@ -805,8 +813,8 @@ export default function WorkflowWorkbench() {
                 Open example workflow
               </button>
               <p>
-                Explore a motor test: smooth signals, calculate power, segment
-                runs and compare values.
+                Explore a motor test: smooth and multiply signals, segment runs
+                and compare values.
               </p>
               {engine.error && <p role="alert">{engine.error}</p>}
             </section>
@@ -821,15 +829,19 @@ export default function WorkflowWorkbench() {
                   <div>
                     <strong>Example · Three motor test runs</strong>
                     <p>
-                      Follow the history from original measurements to power,
-                      run segments and calculated values.
+                      Follow the history from original measurements to math, run
+                      segments and calculated values.
                     </p>
                   </div>
                   <div className="workflow-example-links">
                     {[
                       {
-                        name: 'Plot power',
-                        step: steps.find((item) => item.operation === 'power'),
+                        name: 'Plot derived signal',
+                        step: steps.find(
+                          (item) =>
+                            item.operation === 'multiply' ||
+                            item.operation === 'power',
+                        ),
                         output: true,
                       },
                       {
@@ -1688,7 +1700,7 @@ export default function WorkflowWorkbench() {
             {editor?.editingStepId
               ? 'Edit operation settings'
               : editor?.kind === 'derive'
-                ? 'Derive signals'
+                ? 'New derived signal'
                 : editor?.kind === 'segment'
                   ? 'Segment signals'
                   : 'Calculate values'}
@@ -1802,7 +1814,7 @@ export default function WorkflowWorkbench() {
                         },
                         'Calculating values…',
                       );
-                    if (operation === 'power' || operation === 'bsfc')
+                    if (isBinaryOperation(operation))
                       return perform(
                         {
                           type: 'region-function',
@@ -1941,7 +1953,7 @@ function FunctionEditor({
   ) => Promise<void>;
 }) {
   const [operation, setOperation] = useState<string>(
-    editor.operation ?? (editor.kind === 'value' ? 'time-average' : 'smooth'),
+    editor.operation ?? (editor.kind === 'value' ? 'time-average' : 'multiply'),
   );
   const [parameter, setParameter] = useState(
     String(
@@ -1959,85 +1971,139 @@ function FunctionEditor({
   const spec =
     SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
     FUNCTIONS.find((spec) => spec.operation === operation);
-  const binary = operation === 'power' || operation === 'bsfc';
+  const binary = isBinaryOperation(operation);
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
-  const choices =
-    editor.kind === 'value'
-      ? VALUE_FUNCTIONS.map((spec) => ({
-          value: spec.operation,
-          label: spec.name,
-        }))
-      : [
-          ...SIGNAL_FUNCTIONS.map((spec) => ({
-            value: spec.operation,
-            label: spec.name,
-          })),
-          ...(editor.operation === 'min-max'
-            ? [{ value: 'min-max', label: 'Extrema samples (legacy)' }]
-            : []),
-          { value: 'power', label: 'Brake power · torque × speed' },
-          { value: 'bsfc', label: 'Specific fuel consumption · fuel / power' },
-        ];
+  const choices = VALUE_FUNCTIONS.map((spec) => ({
+    value: spec.operation,
+    label: spec.name,
+  }));
   const secondInputs = project.nodes.filter(
     (node) =>
       node.sourceId === sourceId &&
-      (operation === 'power'
-        ? node.unit.toLowerCase() === 'rpm'
-        : node.unit.toLowerCase() === 'kw'),
+      (!node.internal || node.id === editor.secondaryId) &&
+      (isArithmetic(operation) ||
+        (operation === 'power'
+          ? node.unit.toLowerCase() === 'rpm'
+          : node.unit.toLowerCase() === 'kw')),
   );
+  let unit = '';
+  let unitError = '';
+  if (isArithmetic(operation) && secondaryId) {
+    try {
+      const secondUnit = index.nodes.get(secondaryId)?.unit ?? '';
+      for (const id of editor.ids) {
+        unit = arithmeticUnit(
+          operation,
+          index.nodes.get(id)?.unit ?? '',
+          secondUnit,
+        );
+      }
+      if (new Set(editor.ids.map((id) => index.nodes.get(id)?.unit)).size > 1)
+        unit = 'varies by input';
+    } catch (caught) {
+      unitError =
+        caught instanceof Error ? caught.message : 'Incompatible units.';
+    }
+  }
+  const changeOperation = (next: string) => {
+    setOperation(next);
+    setParameter(
+      String(
+        SIGNAL_FUNCTIONS.find((item) => item.operation === next)
+          ?.defaultValue ?? 0,
+      ),
+    );
+    setError('');
+  };
   return (
     <fieldset className="workflow-function-editor" disabled={busy}>
-      <RegionSelect
-        label={
-          editor.kind === 'value' ? 'Value calculation' : 'Signal operation'
-        }
-        value={operation}
-        items={choices}
-        disabled={busy}
-        onChange={(next) => {
-          setOperation(next);
-          setParameter(
-            String(
-              SIGNAL_FUNCTIONS.find((spec) => spec.operation === next)
-                ?.defaultValue ?? 0,
-            ),
-          );
-          setSecondaryId('');
-          setError('');
-        }}
-      />
-      <p>
-        {editor.kind === 'value'
-          ? valueSpec?.description
-          : binary
-            ? operation === 'power'
-              ? 'Selected inputs must be torque [Nm]. Choose one speed [rpm] signal on the same sample grid.'
-              : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
-            : spec?.description}
-      </p>
-      {spec?.parameter && (
-        <RegionNumber
-          label={spec.parameter}
-          value={parameter}
-          unit={spec.unit}
-          onChange={setParameter}
-        />
-      )}
-      {binary && (
+      {editor.kind === 'value' ? (
         <RegionSelect
-          label={operation === 'power' ? 'Speed input' : 'Power input'}
-          value={secondaryId}
-          items={[
-            { value: '', label: 'Choose the second input…' },
-            ...secondInputs.map((node) => ({
-              value: node.id,
-              label: `${reference(index.owner.get(node.id))} ${index.label(node.id)}`,
-            })),
-          ]}
+          label="Value calculation"
+          value={operation}
+          items={choices}
           disabled={busy}
-          onChange={setSecondaryId}
+          onChange={changeOperation}
+        />
+      ) : (
+        <SignalOperationPalette
+          value={operation}
+          disabled={busy}
+          onChange={changeOperation}
         />
       )}
+      <div className="signal-operation-settings">
+        {editor.kind === 'derive' && (
+          <div className="signal-settings-heading">
+            <strong>
+              {spec?.name ?? operationLabels[operation as Operation]}
+            </strong>
+            {OPERATION_FORMULAS[operation] && (
+              <code>{OPERATION_FORMULAS[operation]}</code>
+            )}
+          </div>
+        )}
+        <p>
+          {editor.kind === 'value'
+            ? valueSpec?.description
+            : binary && !isArithmetic(operation)
+              ? operation === 'power'
+                ? 'Selected inputs must be torque [Nm]. Choose one speed [rpm] signal on the same sample grid.'
+                : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
+              : spec?.description}
+        </p>
+        {binary && (
+          <div className="signal-first-input">
+            <span>Input A</span>
+            <strong>
+              {editor.ids.length === 1
+                ? index.label(editor.ids[0])
+                : `Each of ${editor.ids.length} selected signals`}
+            </strong>
+          </div>
+        )}
+        {spec?.parameter && (
+          <RegionNumber
+            label={spec.parameter}
+            value={parameter}
+            unit={spec.unit}
+            onChange={setParameter}
+          />
+        )}
+        {binary && (
+          <RegionSelect
+            label={
+              isArithmetic(operation)
+                ? 'Input B'
+                : operation === 'power'
+                  ? 'Speed input'
+                  : 'Power input'
+            }
+            value={secondaryId}
+            items={[
+              { value: '', label: 'Choose the second input…' },
+              ...secondInputs.map((node) => ({
+                value: node.id,
+                label: `${reference(index.owner.get(node.id))} ${index.label(node.id)}${node.unit ? ` [${node.unit}]` : ''}`,
+              })),
+            ]}
+            disabled={busy}
+            onChange={setSecondaryId}
+          />
+        )}
+        {isArithmetic(operation) && (
+          <p className="signal-math-hint">
+            B is combined with each A. Inputs must share a recording, sample
+            grid and time transformations. Missing samples stay missing.
+            {unit && !unitError ? ` Output unit: ${unit}.` : ''}
+          </p>
+        )}
+        {unitError && (
+          <p className="segment-error" role="alert">
+            {unitError}
+          </p>
+        )}
+      </div>
       {error && (
         <p className="segment-error" role="alert">
           {error}
@@ -2045,7 +2111,7 @@ function FunctionEditor({
       )}
       <button
         className="primary-button"
-        disabled={busy || (binary && !secondaryId)}
+        disabled={busy || (binary && !secondaryId) || !!unitError}
         onClick={() => {
           setError('');
           void (async () => {

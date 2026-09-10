@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { FUNCTIONS } from '../lib/signal-functions';
+import { isBinaryOperation } from '../lib/signal-arithmetic';
+import { WorkflowIndex } from '../lib/workflow-history';
+import { validateWorkspace } from '../lib/workspace-archive';
 import { EXAMPLES, exampleDefinition } from '../lib/signal-examples';
 import {
   buildExplorer,
@@ -62,6 +65,215 @@ const expected: Partial<
   },
 };
 
+void test('every arithmetic operation evaluates samples, units and missing values and survives backup restore', async () => {
+  const engine = new SignalEngine(undefined, crypto.randomUUID());
+  const restored = new SignalEngine(undefined, crypto.randomUUID());
+  await engine.open();
+  await engine.initializeWorkflow();
+  await restored.open();
+  try {
+    const source = await engine.importCsv(
+      new File(
+        [
+          't,A [V],B [V]\n0,-2,2\n1,4,0\n2,10,-5\n3,-6,-3\n4,,2\n5,3,\n6,1e308,1e308',
+        ],
+        'math.csv',
+      ),
+    );
+    const cases = [
+      { operation: 'add', unit: 'V', values: [0, 4, 5, -9, NaN, NaN, NaN] },
+      {
+        operation: 'subtract',
+        unit: 'V',
+        values: [-4, 4, 15, -3, NaN, NaN, 0],
+      },
+      {
+        operation: 'multiply',
+        unit: 'V·V',
+        values: [-4, 0, -50, 18, NaN, NaN, NaN],
+      },
+      { operation: 'divide', unit: '1', values: [-1, NaN, -2, 2, NaN, NaN, 1] },
+    ] as const;
+    assert.deepEqual(
+      FUNCTIONS.filter((spec) => isBinaryOperation(spec.operation)).map(
+        (spec) => spec.operation,
+      ),
+      cases.map((item) => item.operation),
+    );
+    const ids: string[] = [];
+    for (const item of cases) {
+      const run = await engine.applyRegionFunction({
+        sourceId: source.id,
+        operation: item.operation,
+        parameter: 0,
+        inputIds: [source.channels[0]],
+        secondaryIds: [source.channels[1]],
+      });
+      const id = run.outputs[0].signalId;
+      ids.push(id);
+      assert.equal(engine.find(id).unit, item.unit);
+      assert.deepEqual(engine.find(id).parents, source.channels);
+      assert.deepEqual(
+        await collect(engine, id),
+        item.values.map((value, time) => [time, value]),
+      );
+      assert.deepEqual(
+        new WorkflowIndex(engine.project).owner.get(id)!.inputIds,
+        source.channels,
+      );
+    }
+    // A is also a valid B: squaring a signal must round-trip two ordered operands.
+    const square = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'multiply',
+      parameter: 0,
+      inputIds: [source.channels[0]],
+      secondaryIds: [source.channels[0]],
+    });
+    ids.push(square.outputs[0].signalId);
+    assert.deepEqual(
+      (await collect(engine, ids.at(-1)!)).map((point) => point[1]),
+      [4, 16, 100, 36, NaN, 9, NaN],
+    );
+    const backup = await engine.backupWorkspace();
+    await restored.restoreWorkspace(new File([backup], 'math.stratus'));
+    for (const id of ids)
+      assert.deepEqual(await collect(restored, id), await collect(engine, id));
+    const invalid = structuredClone(engine.project);
+    invalid.nodes.find((node) => node.id === ids[0])!.parents.pop();
+    assert.throws(() => validateWorkspace(invalid), /two inputs/);
+  } finally {
+    engine.close();
+    restored.close();
+  }
+});
+
+void test('arithmetic validates entire batches and rejects unmatched recordings, units and sample grids atomically', async () => {
+  const engine = new SignalEngine(undefined, crypto.randomUUID());
+  await engine.open();
+  try {
+    const source = await engine.importCsv(
+      new File(['t,A [V],B [V],Current [A]\n0,1,2,3\n1,4,5,6'], 'inputs.csv'),
+    );
+    const other = await engine.importCsv(
+      new File(['t,B [V]\n0,1\n1,2'], 'other.csv'),
+    );
+    const shifted = await engine.derive(source.channels[1], 'time-shift', 1);
+    const before = structuredClone(engine.project);
+    const settings = {
+      sourceId: source.id,
+      operation: 'subtract' as const,
+      parameter: 0,
+      inputIds: [source.channels[0]],
+      secondaryIds: [source.channels[1]],
+    };
+    await assert.rejects(
+      engine.applyRegionFunction({
+        ...settings,
+        inputIds: [source.channels[0], source.channels[2]],
+      }),
+      /matching unit labels/,
+    );
+    await assert.rejects(
+      engine.applyRegionFunction({ ...settings, secondaryIds: [shifted.id] }),
+      /matching sample grids/,
+    );
+    await assert.rejects(
+      engine.applyRegionFunction({ ...settings, secondaryIds: other.channels }),
+      /same recording/,
+    );
+    await assert.rejects(
+      engine.applyRegionFunction({ ...settings, secondaryIds: [] }),
+      /second input/,
+    );
+    assert.deepEqual(engine.project, before);
+    const run = await engine.applyRegionFunction({
+      ...settings,
+      operation: 'multiply',
+      inputIds: [source.channels[0], source.channels[2]],
+    });
+    assert.equal(run.outputs.length, 2);
+    assert.deepEqual(
+      run.outputs.map((output) => engine.find(output.signalId).unit),
+      ['V·V', 'A·V'],
+    );
+    assert.deepEqual(await collect(engine, run.outputs[1].signalId), [
+      [0, 6],
+      [1, 30],
+    ]);
+  } finally {
+    engine.close();
+  }
+});
+
+void test('arithmetic edits rebuild dependent signals and values with persistent Undo and secondary-input lineage', async () => {
+  const database = crypto.randomUUID();
+  const engine = new SignalEngine(undefined, database);
+  await engine.open();
+  await engine.initializeWorkflow();
+  try {
+    const source = await engine.importCsv(
+      new File(['t,A [V],B [V]\n0,2,1\n1,4,3\n2,6,2'], 'edit.csv'),
+    );
+    const second = await engine.derive(source.channels[1], 'scale', 2);
+    const settings = {
+      sourceId: source.id,
+      operation: 'add' as const,
+      parameter: 0,
+      inputIds: [source.channels[0]],
+      secondaryIds: [second.id],
+    };
+    const run = await engine.applyRegionFunction(settings);
+    const id = run.outputs[0].signalId;
+    const child = await engine.derive(id, 'scale', 3);
+    const [value] = await engine.calculateValues([child.id], 'maximum');
+    const index = new WorkflowIndex(engine.project);
+    const step = index.owner.get(id)!;
+    assert.ok(
+      index
+        .lineage([child.id])
+        .steps.some((item) => item.id === index.owner.get(second.id)!.id),
+    );
+    await engine.editOperation(step.id, {
+      type: 'region-function',
+      settings: { ...settings, operation: 'subtract' },
+    });
+    assert.deepEqual(await collect(engine, child.id), [
+      [0, 0],
+      [1, -6],
+      [2, 6],
+    ]);
+    assert.equal(
+      engine.project.values!.find((item) => item.id === value.id)!.value,
+      6,
+    );
+    assert.equal(new WorkflowIndex(engine.project).owner.get(id)!.revision, 2);
+    engine.close();
+    await engine.open();
+    await engine.travel('undo');
+    assert.equal(
+      engine.project.values!.find((item) => item.id === value.id)!.value,
+      30,
+    );
+    await engine.travel('redo');
+    assert.equal(
+      engine.project.values!.find((item) => item.id === value.id)!.value,
+      6,
+    );
+    await engine.deleteOperation(
+      new WorkflowIndex(engine.project).owner.get(second.id)!.id,
+    );
+    assert.ok(
+      !engine.project.nodes.some(
+        (node) => node.id === id || node.id === child.id,
+      ),
+    );
+    assert.equal(engine.project.values!.length, 0);
+  } finally {
+    engine.close();
+  }
+});
+
 void test('every exposed single-input function produces independently calculated values, units and one function row', async () => {
   const engine = new SignalEngine(undefined, crypto.randomUUID());
   await engine.open();
@@ -69,7 +281,10 @@ void test('every exposed single-input function produces independently calculated
     const source = await engine.importCsv(
       new File(['t,a [V]\n10,-2\n11,4\n12,10\n13,-6'], 'functions.csv'),
     );
-    const specs = FUNCTIONS.filter((spec) => spec.operation !== 'segment');
+    const specs = FUNCTIONS.filter(
+      (spec) =>
+        spec.operation !== 'segment' && !isBinaryOperation(spec.operation),
+    );
     assert.equal(
       new Set(specs.map((spec) => spec.operation)).size,
       specs.length,
@@ -140,6 +355,10 @@ void test('every exposed single-input function produces independently calculated
       'crop',
       'power',
       'bsfc',
+      'add',
+      'subtract',
+      'multiply',
+      'divide',
     ])
       await assert.rejects(
         engine.derive(source.channels[0], operation as Operation, 1),

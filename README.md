@@ -51,6 +51,16 @@ Original samples are never edited.
 Minimum, maximum, time average, and sample average create stored scalar values.
 Time average weights by valid elapsed time and excludes missing intervals.
 
+**Derive signal** opens a compact palette grouped into Math, Filters, Time and
+Calculus. Math includes add, subtract, multiply and divide between signals, plus
+constant scaling, offsets and absolute value. Each checked input is A; choose
+one B to use across the batch. Both inputs must have matching sample grids and
+time transformations in the same recording. Add/subtract require identical unit
+labels; multiply/divide compose labels without automatic conversion. Missing
+inputs, division by zero and non-finite results stay missing. Saved brake-power
+and fuel-consumption recipes remain readable and editable for compatibility;
+they are no longer offered for new operations.
+
 ### Included motor-test workflow
 
 Choose **Open example workflow** from the empty workspace or **Workspace**.
@@ -59,14 +69,14 @@ at 10 Hz. Its seven chronological steps use the same operations as your own data
 
 1. Original motor speed and torque, kept immutable.
 2. Smooth torque with a five-sample moving average.
-3. Calculate brake power from smoothed torque and original speed.
-4. Split power into three individual run signals: 10–50, 65–105 and 120–160 s.
-5. Calculate one time-average power value per run.
+3. Multiply smoothed torque by original speed with the math palette (Nm·rpm).
+4. Split the product into three run signals: 10–50, 65–105 and 120–160 s.
+5. Calculate one time-average value per run.
 6. Segment Run 2 again into two 20-second signals.
-7. Calculate peak power in each of those two signals.
+7. Calculate the maximum value in each of those two signals.
 
 The example has two original signals, seven derived signals and five values.
-Its shortcuts open the power plot, run-average table and nested segment outputs.
+Its shortcuts open the derived plot, run-average table and nested segment outputs.
 Use **Export / report** on any of these results for CSV data or a printable report.
 Every result keeps direct links to its inputs. Edit, rename, delete and Undo work
 on the example just as they do on imported recordings.

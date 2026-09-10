@@ -62,7 +62,8 @@ import SegmentationEditor, {
   SegmentProvenance,
 } from '@/components/segmentation-editor';
 import { createSignalWorker } from '@/lib/create-signal-worker';
-import { FUNCTIONS } from '@/lib/signal-functions';
+import { FUNCTIONS as ALL_FUNCTIONS } from '@/lib/signal-functions';
+import { isBinaryOperation } from '@/lib/signal-arithmetic';
 import { EXAMPLES } from '@/lib/signal-examples';
 import { segmentTraces } from '@/lib/segment-traces';
 import { segmentationOperation } from '@/lib/segmentation-operation';
@@ -85,6 +86,9 @@ import type {
   SignalNode,
 } from '@/lib/signal-types';
 
+const FUNCTIONS = ALL_FUNCTIONS.filter(
+  (spec) => !isBinaryOperation(spec.operation),
+);
 const empty: Project = { sources: [], nodes: [], segments: [] };
 const segmentColors = ['#61d9b0', '#ac9cfa', '#edb477'];
 function bytes(value: number) {

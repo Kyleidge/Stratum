@@ -2,14 +2,17 @@
 import { useState } from 'react';
 import { Play, Sigma } from 'lucide-react';
 import { FUNCTIONS, type FunctionSpec } from '@/lib/signal-functions';
+import { isBinaryOperation } from '@/lib/signal-arithmetic';
 import { operationLabels } from '@/lib/signal-explorer';
 import { regionHistory } from '@/lib/region-model';
 import type { Project, Operation, Source } from '@/lib/signal-types';
 import type { FunctionRun, FunctionSettings } from '@/lib/region-types';
 import { finite, RegionNumber, RegionSelect } from './region-controls';
 
-export const REGION_FUNCTIONS: FunctionSpec[] = [
-  ...FUNCTIONS.filter((spec) => spec.operation !== 'segment'),
+export const REGION_FUNCTIONS = FUNCTIONS.filter(
+  (spec) => spec.operation !== 'segment',
+);
+const LEGACY_FUNCTIONS: FunctionSpec[] = [
   {
     operation: 'power',
     name: 'Brake power',
@@ -101,7 +104,11 @@ export default function RegionFunctionEditor({
     ),
   );
   const [error, setError] = useState('');
-  const spec = REGION_FUNCTIONS.find((item) => item.operation === operation)!;
+  const functions = [
+    ...REGION_FUNCTIONS,
+    ...LEGACY_FUNCTIONS.filter((item) => item.operation === saved?.operation),
+  ];
+  const spec = functions.find((item) => item.operation === operation)!;
   const set = project.regionSets?.find((item) => item.id === within);
   const inputs =
     inputKey === 'saved'
@@ -126,7 +133,7 @@ export default function RegionFunctionEditor({
         value: `signal:${id}`,
         label: project.nodes.find((node) => node.id === id)?.name ?? id,
       });
-  const binary = operation === 'power' || operation === 'bsfc';
+  const binary = isBinaryOperation(operation);
   async function apply() {
     setError('');
     try {
@@ -158,14 +165,12 @@ export default function RegionFunctionEditor({
       <RegionSelect
         label="Function"
         value={operation}
-        items={REGION_FUNCTIONS.map((item) => ({
+        items={functions.map((item) => ({
           value: item.operation,
           label: `${item.category} · ${item.name}`,
         }))}
         onChange={(value) => {
-          const next = REGION_FUNCTIONS.find(
-            (item) => item.operation === value,
-          );
+          const next = functions.find((item) => item.operation === value);
           if (next && next.operation !== 'segment') {
             setOperation(next.operation);
             setParameter(String(next.defaultValue));
@@ -187,7 +192,13 @@ export default function RegionFunctionEditor({
       />
       {binary && (
         <RegionSelect
-          label={operation === 'power' ? 'Speed input' : 'Power input'}
+          label={
+            operation === 'power'
+              ? 'Speed input'
+              : operation === 'bsfc'
+                ? 'Power input'
+                : 'Input B'
+          }
           value={second}
           items={choices}
           onChange={setSecond}

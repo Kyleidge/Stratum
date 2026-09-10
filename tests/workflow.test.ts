@@ -33,20 +33,18 @@ void test('motor example creates chronological, executable signal lineage and fi
     const find = (name: string) =>
       project.nodes.find((node) => index.label(node.id) === name)!;
     const smooth = find('Smoothed torque');
-    const power = find('Brake power');
+    const power = find('Torque × speed');
+    assert.equal(power.operation, 'multiply');
+    assert.equal(power.unit, 'Nm·rpm');
     assert.deepEqual(power.parents, [smooth.id, source.channels[0]]);
     const original = await samples(engine, source.channels[1]);
     const torque = await samples(engine, smooth.id);
     const speed = await samples(engine, source.channels[0]);
     const powerSamples = await samples(engine, power.id);
     for (const [i, point] of powerSamples.entries())
-      assert.ok(
-        Math.abs(
-          point[1] - (torque[i][1] * speed[i][1] * 2 * Math.PI) / 60000,
-        ) < 1e-9,
-      );
-    const run2 = find('Run 2 · Power');
-    const first = find('Run 2 · First half · Power');
+      assert.ok(Math.abs(point[1] - torque[i][1] * speed[i][1]) < 1e-9);
+    const run2 = find('Run 2 · Torque × speed');
+    const first = find('Run 2 · First half · Torque × speed');
     assert.deepEqual(first.parents, [run2.id]);
     assert.deepEqual(engine.bounds(first.id), [65, 85]);
     for (const value of project.values!) {

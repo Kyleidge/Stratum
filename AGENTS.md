@@ -43,7 +43,7 @@ There are no server API routes or cloud signal uploads.
   Undo/Redo retains 20 project snapshots across restarts. Housekeeping migrations
   must preserve the journal; do not journal them as user actions.
 - `lib/workflow-example.ts`: deterministic motor-test data and a seven-step
-  original → smoothing → power → run segments → values → nested segments → values
+  original → smoothing → multiplication → run segments → values → nested segments → values
   example built with normal engine commands. `workflowExample` publishes it as
   one undoable action. Refresh only replaces the selected synthetic source, keeps
   imported recordings, and retains old source columns for Undo. Staged imports
