@@ -125,6 +125,51 @@ export async function workflowUiSmoke() {
   function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error(message);
   }
+  function selectedHistoryRow() {
+    const row = document.querySelector<HTMLElement>(
+      '.workflow-tree-row[aria-selected="true"]',
+    );
+    assert(row, 'Selected history item is missing.');
+    return row;
+  }
+  async function contextAction(
+    row: HTMLElement,
+    label: string,
+    keyboard = false,
+  ) {
+    row.focus();
+    if (keyboard) {
+      row.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'F10',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    } else {
+      const bounds = row.getBoundingClientRect();
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: bounds.left + 24,
+          clientY: bounds.top + bounds.height / 2,
+        }),
+      );
+    }
+    const menu = await until(
+      () => document.querySelector<HTMLElement>('[role="menu"]') ?? undefined,
+      'history context menu',
+    );
+    const item = [
+      ...menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent?.trim().startsWith(label));
+    assert(item, `Missing history action: ${label}`);
+    item.click();
+    await delay();
+  }
   try {
     await until(
       () => button('Open example workflow') || button('Derive signal'),
@@ -211,7 +256,37 @@ export async function workflowUiSmoke() {
       document.querySelector('h1')?.textContent === 'Motor speed × Motor speed',
       'The palette did not create the selected two-input operation.',
     );
-    await click('Edit settings');
+    const mathOutput = selectedHistoryRow();
+    mathOutput.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const doubleClickEdit = await dialog();
+    assert(
+      doubleClickEdit
+        .querySelector('[aria-label="Input B"]')
+        ?.textContent?.includes('Motor speed'),
+      'Double-clicking an output did not open its saved operation.',
+    );
+    await click('Close', doubleClickEdit);
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close double-click editor',
+    );
+    const mathStep = [
+      ...document.querySelectorAll<HTMLElement>(
+        '.workflow-tree-row[data-kind="step"]',
+      ),
+    ].at(-1)!;
+    assert(
+      mathStep.getAttribute('aria-selected') === 'false',
+      'Expected an unselected operation for context targeting.',
+    );
+    const disclosure = mathStep.querySelector('button')!;
+    disclosure.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await delay();
+    assert(
+      !document.querySelector('[role="dialog"]'),
+      'Double-clicking disclosure opened an editor.',
+    );
+    await contextAction(mathStep, 'Edit settings');
     const mathEdit = await dialog();
     assert(
       mathEdit
@@ -444,7 +519,7 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Create 1 derived signal', managementModal);
     await settled();
-    await click('Rename output');
+    await contextAction(selectedHistoryRow(), 'Rename output', true);
     managementModal = await dialog();
     setValue(
       managementModal.querySelector<HTMLInputElement>(
@@ -471,7 +546,9 @@ export async function workflowUiSmoke() {
       .querySelector<HTMLButtonElement>('.workflow-input-link button')!
       .click();
     await delay();
-    await click('Edit settings');
+    selectedHistoryRow().dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true }),
+    );
     managementModal = await dialog();
     assert(
       managementModal.textContent?.includes('1 dependent operation'),
@@ -490,7 +567,7 @@ export async function workflowUiSmoke() {
       document.querySelector('h1')?.textContent === 'Reviewed speed',
       'Editing lost the output alias.',
     );
-    await click('Delete operation');
+    await contextAction(selectedHistoryRow(), 'Delete operation');
     let impact = await until(
       () =>
         document.querySelector<HTMLElement>('[role="alertdialog"]') ??

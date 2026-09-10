@@ -68,7 +68,11 @@ import SignalChart, { formatValue } from './signal-chart';
 import SegmentationEditor from './segmentation-editor';
 import { RegionSelect, RegionNumber, finite } from './region-controls';
 import WorkflowExport from './workflow-export';
-import WorkflowManagement from './workflow-management';
+import WorkflowManagement, {
+  WorkflowManagementDialogs,
+  type WorkflowManagementAction,
+  type WorkflowManagementRequest,
+} from './workflow-management';
 import WorkflowStorage from './workflow-storage';
 import WorkflowList from './workflow-list';
 import { affectedOperations } from '@/lib/workflow-lifecycle';
@@ -147,6 +151,8 @@ export default function WorkflowWorkbench() {
       ? index.label(lineageRoot[0])
       : `${lineageRoot?.length ?? 0} outputs`;
   const [editor, setEditorState] = useState<Editor>();
+  const [managementRequest, setManagementRequest] =
+    useState<WorkflowManagementRequest>();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
   function setEditor(next: Editor | undefined) {
@@ -411,7 +417,31 @@ export default function WorkflowWorkbench() {
     setChosen(null);
     setView('result');
   }
-  function repeat(editing = false) {
+  function manageSelection(
+    next: WorkflowSelection,
+    action: WorkflowManagementAction,
+  ) {
+    if (engine.busy) return;
+    const target =
+      next.kind === 'step'
+        ? index.steps.get(next.id)
+        : index.owner.get(next.id);
+    if (!target) return;
+    select(next);
+    if (action === 'edit' && !['import', 'regions'].includes(target.kind)) {
+      repeat(true, target);
+    } else if (action === 'duplicate') {
+      if (target.kind !== 'import') repeat(false, target);
+    } else {
+      setManagementRequest({
+        action: action === 'edit' ? 'rename' : action,
+        step: target,
+        outputId: next.kind === 'output' ? next.id : undefined,
+      });
+    }
+  }
+  function repeat(editing = false, stepToOpen = step) {
+    const step = stepToOpen;
     if (!step || !source) return;
     const open = (next: Editor) =>
       setEditor({ ...next, editingStepId: editing ? step.id : undefined });
@@ -685,6 +715,8 @@ export default function WorkflowWorkbench() {
               index={index}
               query={query}
               selection={selection}
+              busy={engine.busy}
+              onAction={manageSelection}
               contributingOutputs={lineageRoot ? lineage.outputIds : undefined}
               onSelect={(next) => {
                 select(next);
@@ -946,23 +978,12 @@ export default function WorkflowWorkbench() {
                 {step && (
                   <WorkflowManagement
                     key={`${step.id}:${selection.id}`}
-                    project={project}
                     step={step}
                     outputId={
                       selection.kind === 'output' ? selection.id : undefined
                     }
                     busy={engine.busy}
-                    onEdit={() => repeat(true)}
-                    onDuplicate={() => repeat()}
-                    onDelete={() =>
-                      manage(
-                        { type: 'delete-operation', stepId: step.id },
-                        'Operation removed. Undo is available.',
-                      )
-                    }
-                    onRename={(id, name) =>
-                      manage({ type: 'rename', id, name }, 'Name saved.')
-                    }
+                    onAction={(action) => manageSelection(selection, action)}
                   />
                 )}
               </div>
@@ -1674,6 +1695,23 @@ export default function WorkflowWorkbench() {
           </span>
         )}
       </footer>
+      {managementRequest && (
+        <WorkflowManagementDialogs
+          project={project}
+          request={managementRequest}
+          busy={engine.busy}
+          onClose={() => setManagementRequest(undefined)}
+          onDelete={(stepId) =>
+            manage(
+              { type: 'delete-operation', stepId },
+              'Operation removed. Undo is available.',
+            )
+          }
+          onRename={(id, name) =>
+            manage({ type: 'rename', id, name }, 'Name saved.')
+          }
+        />
+      )}
       <WorkflowExport
         open={exportOpen}
         onOpenChange={setExportOpen}

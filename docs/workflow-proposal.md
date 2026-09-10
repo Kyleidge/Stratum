@@ -70,6 +70,12 @@ Selecting an output shows:
 
 Arrow Up/Down moves focus in the tree. Arrow Right/Left expands or collapses an
 operation; Home/End jumps to the first/last visible row; Enter or Space selects.
+Right-click an operation or output (or press Shift+F10) for its edit, duplicate,
+rename and deletion actions. Actions target that item, including when another
+item is selected. Double-click opens the producing operation's saved settings;
+originals and saved region scopes open Rename instead. F2 also opens Rename.
+Disclosure arrows only expand or collapse outputs. Deletion keeps the existing
+dependent-operation confirmation, and checked processing inputs stay separate.
 The Back button returns to the previous selection without changing the workflow.
 
 ## Creating the next step

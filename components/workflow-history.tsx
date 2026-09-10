@@ -4,14 +4,26 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  Copy,
   Hash,
   LockKeyhole,
+  Pencil,
   Scissors,
+  Trash2,
   Waves,
 } from 'lucide-react';
 import { workflowRows } from '@/lib/workflow-tree';
 import type { WorkflowIndex } from '@/lib/workflow-history';
 import type { WorkflowStep } from '@/lib/workflow-types';
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+} from '@/components/ui/context-menu';
+import type { WorkflowManagementAction } from './workflow-management';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
 const ROW_HEIGHT = 48;
@@ -22,6 +34,8 @@ export default function WorkflowHistory({
   query,
   selection,
   onSelect,
+  busy,
+  onAction,
   contributingOutputs,
 }: {
   steps: WorkflowStep[];
@@ -29,6 +43,11 @@ export default function WorkflowHistory({
   query: string;
   selection: WorkflowSelection;
   onSelect: (selection: WorkflowSelection) => void;
+  busy: boolean;
+  onAction: (
+    selection: WorkflowSelection,
+    action: WorkflowManagementAction,
+  ) => void;
   contributingOutputs?: ReadonlySet<string>;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -201,13 +220,14 @@ export default function WorkflowHistory({
                     : step.kind === 'import'
                       ? LockKeyhole
                       : Waves;
-            const select = () =>
-              onSelect(
-                row.kind === 'output'
-                  ? { kind: 'output', id: row.outputId! }
-                  : { kind: 'step', id: step.id },
-              );
-            return (
+            const target: WorkflowSelection =
+              row.kind === 'output'
+                ? { kind: 'output', id: row.outputId! }
+                : { kind: 'step', id: step.id };
+            const select = () => onSelect(target);
+            const action = (action: WorkflowManagementAction) =>
+              onAction(target, action);
+            const item = (
               <div
                 key={row.key}
                 role="treeitem"
@@ -233,8 +253,38 @@ export default function WorkflowHistory({
                 }}
                 onFocus={() => setFocused(row.key)}
                 onClick={select}
+                onDoubleClick={(event) => {
+                  if (
+                    row.kind === 'more' ||
+                    (event.target as HTMLElement).closest('button')
+                  )
+                    return;
+                  action('edit');
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  if (
+                    row.kind !== 'more' &&
+                    (event.key === 'ContextMenu' ||
+                      (event.shiftKey && event.key === 'F10'))
+                  ) {
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    event.currentTarget.dispatchEvent(
+                      new MouseEvent('contextmenu', {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: bounds.left + 24,
+                        clientY: bounds.top + bounds.height / 2,
+                        button: 2,
+                      }),
+                    );
+                  } else if (row.kind !== 'more' && event.key === 'F2') {
+                    event.preventDefault();
+                    action('rename');
+                  } else if (
+                    event.key === 'ArrowDown' ||
+                    event.key === 'ArrowUp'
+                  ) {
                     event.preventDefault();
                     focusRow(position + (event.key === 'ArrowDown' ? 1 : -1));
                   } else if (event.key === 'Home' || event.key === 'End') {
@@ -268,6 +318,7 @@ export default function WorkflowHistory({
                       event.stopPropagation();
                       setExpanded(step.id, !expanded);
                     }}
+                    onDoubleClick={(event) => event.stopPropagation()}
                   >
                     {expanded ? (
                       <ChevronDown size={14} />
@@ -304,6 +355,56 @@ export default function WorkflowHistory({
                   </>
                 )}
               </div>
+            );
+            if (row.kind === 'more') return item;
+            return (
+              <ContextMenu key={row.key}>
+                <ContextMenuTrigger render={item} />
+                <ContextMenuContent aria-label={`Actions for ${row.label}`}>
+                  {!['import', 'regions'].includes(step.kind) && (
+                    <ContextMenuItem
+                      disabled={busy}
+                      onClick={() => action('edit')}
+                    >
+                      <Pencil /> Edit settings
+                    </ContextMenuItem>
+                  )}
+                  {step.kind !== 'import' && (
+                    <ContextMenuItem
+                      disabled={busy}
+                      onClick={() => action('duplicate')}
+                    >
+                      <Copy /> Duplicate operation
+                    </ContextMenuItem>
+                  )}
+                  <ContextMenuItem
+                    disabled={busy}
+                    onClick={() => action('rename')}
+                  >
+                    Rename {row.kind === 'output' ? 'output' : 'operation'}
+                    <ContextMenuShortcut>F2</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  {step.kind === 'import' && (
+                    <ContextMenuItem
+                      disabled={busy}
+                      onClick={() => action('rename-recording')}
+                    >
+                      Rename recording
+                    </ContextMenuItem>
+                  )}
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
+                    disabled={busy}
+                    onClick={() => action('delete')}
+                  >
+                    <Trash2 />{' '}
+                    {step.kind === 'import'
+                      ? 'Remove recording'
+                      : 'Delete operation'}
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
         </div>

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   AlertDialog,
@@ -21,46 +21,48 @@ import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import type { Project } from '@/lib/signal-types';
 import type { WorkflowStep } from '@/lib/workflow-types';
 
+export type WorkflowManagementAction =
+  | 'edit'
+  | 'duplicate'
+  | 'rename'
+  | 'rename-recording'
+  | 'delete';
+
+export type WorkflowManagementRequest = {
+  action: 'rename' | 'rename-recording' | 'delete';
+  step: WorkflowStep;
+  outputId?: string;
+};
+
 export default function WorkflowManagement({
-  project,
   step,
   outputId,
   busy,
-  onEdit,
-  onDuplicate,
-  onDelete,
-  onRename,
+  onAction,
 }: {
-  project: Project;
   step: WorkflowStep;
   outputId?: string;
   busy: boolean;
-  onEdit: () => void;
-  onDuplicate: () => void;
-  onDelete: () => Promise<void>;
-  onRename: (id: string, name: string) => Promise<void>;
+  onAction: (action: WorkflowManagementAction) => void;
 }) {
-  const [deleting, setDeleting] = useState(false),
-    [renaming, setRenaming] = useState<string>();
-  const [name, setName] = useState(''),
-    [error, setError] = useState('');
-  const affected = deleting ? affectedOperations(project, step.id) : [];
-  const index = useMemo(() => new WorkflowIndex(project), [project]);
-  function rename(id: string, label: string) {
-    setName(label);
-    setRenaming(id);
-    setError('');
-  }
   return (
     <div className="workflow-management">
       {!['import', 'regions'].includes(step.kind) && (
-        <button className="workflow-link" disabled={busy} onClick={onEdit}>
+        <button
+          className="workflow-link"
+          disabled={busy}
+          onClick={() => onAction('edit')}
+        >
           <Pencil size={14} />
           Edit settings
         </button>
       )}
       {step.kind !== 'import' && (
-        <button className="workflow-link" disabled={busy} onClick={onDuplicate}>
+        <button
+          className="workflow-link"
+          disabled={busy}
+          onClick={() => onAction('duplicate')}
+        >
           <Copy size={14} />
           Duplicate operation
         </button>
@@ -68,12 +70,7 @@ export default function WorkflowManagement({
       <button
         className="workflow-link"
         disabled={busy}
-        onClick={() =>
-          rename(
-            outputId ?? step.id,
-            outputId ? index.label(outputId) : stepName(step),
-          )
-        }
+        onClick={() => onAction('rename')}
       >
         Rename {outputId ? 'output' : 'operation'}
       </button>
@@ -81,13 +78,7 @@ export default function WorkflowManagement({
         <button
           className="workflow-link"
           disabled={busy}
-          onClick={() =>
-            rename(
-              step.sourceId,
-              project.sources.find((source) => source.id === step.sourceId)!
-                .name,
-            )
-          }
+          onClick={() => onAction('rename-recording')}
         >
           Rename recording
         </button>
@@ -95,18 +86,50 @@ export default function WorkflowManagement({
       <button
         className="workflow-link workflow-delete"
         disabled={busy}
-        onClick={() => {
-          setDeleting(true);
-          setError('');
-        }}
+        onClick={() => onAction('delete')}
       >
         <Trash2 size={14} />
         {step.kind === 'import' ? 'Remove recording' : 'Delete operation'}
       </button>
+    </div>
+  );
+}
+
+export function WorkflowManagementDialogs({
+  project,
+  request,
+  busy,
+  onClose,
+  onDelete,
+  onRename,
+}: {
+  project: Project;
+  request: WorkflowManagementRequest;
+  busy: boolean;
+  onClose: () => void;
+  onDelete: (stepId: string) => Promise<void>;
+  onRename: (id: string, name: string) => Promise<void>;
+}) {
+  const { step, outputId, action } = request;
+  const deleting = action === 'delete';
+  const renaming =
+    action === 'rename-recording' ? step.sourceId : (outputId ?? step.id);
+  const [name, setName] = useState(() =>
+    action === 'rename-recording'
+      ? (project.sources.find((source) => source.id === step.sourceId)?.name ??
+        '')
+      : outputId
+        ? new WorkflowIndex(project).label(outputId)
+        : stepName(step),
+  );
+  const [error, setError] = useState('');
+  const affected = deleting ? affectedOperations(project, step.id) : [];
+  return (
+    <>
       <AlertDialog
         open={deleting}
         onOpenChange={(open) => {
-          if (!busy) setDeleting(open);
+          if (!busy && !open) onClose();
         }}
       >
         <AlertDialogContent className="workflow-dialog">
@@ -144,8 +167,8 @@ export default function WorkflowManagement({
               disabled={busy}
               variant="destructive"
               onClick={() =>
-                void onDelete()
-                  .then(() => setDeleting(false))
+                void onDelete(step.id)
+                  .then(onClose)
                   .catch((caught: Error) => setError(caught.message))
               }
             >
@@ -155,9 +178,9 @@ export default function WorkflowManagement({
         </AlertDialogContent>
       </AlertDialog>
       <Dialog
-        open={!!renaming}
+        open={!deleting}
         onOpenChange={(open) => {
-          if (!busy && !open) setRenaming(undefined);
+          if (!busy && !open) onClose();
         }}
       >
         <DialogContent className="workflow-dialog">
@@ -171,7 +194,7 @@ export default function WorkflowManagement({
               event.preventDefault();
               if (renaming)
                 void onRename(renaming, name)
-                  .then(() => setRenaming(undefined))
+                  .then(onClose)
                   .catch((caught: Error) => setError(caught.message));
             }}
           >
@@ -196,6 +219,6 @@ export default function WorkflowManagement({
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
