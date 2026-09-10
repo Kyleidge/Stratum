@@ -19,6 +19,17 @@ There are no server API routes or cloud signal uploads.
   `components/workflow-history.tsx` is a virtualized two-level chronological tree;
   `lib/workflow-tree.ts` bounds output previews and reveals selected members.
   Do not encode dependency depth as recursive indentation or regroup by names.
+  Inspection and checked processing inputs are independent. Explicit parent
+  navigation clears search; opening a search result preserves matching context.
+  Lineage-filtered trees show only contributing outputs, not batch siblings.
+- `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
+  viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
+  summary CSV, and standalone printable HTML reports with escaped labels.
+  Reports are immutable snapshots, not an editable report-builder workspace.
+  Sample exports preserve each signal's evaluated axis and blank missing values.
+  Never substitute decimated plot points for sample data. CSV text cells must
+  remain text in spreadsheets. Cancellation must prevent the download even
+  when a worker request was queued behind another read.
 - `lib/workflow-history.ts`: append-only invocation history, legacy adaptation,
   output ownership, and iterative lineage including binary and trigger inputs.
   `lib/workflow-types.ts`: immutable scalar records and explicit operation records.
@@ -65,7 +76,7 @@ There are no server API routes or cloud signal uploads.
   interval preview, and saved segmentation provenance. Start and end triggers
   independently select raw/derived signals, edges, thresholds, and signed offsets.
 - `lib/signal-engine.ts`: append-only IndexedDB columns, CSV import, lazy derived
-  evaluation, segmentation, and summary exports. `signal-math.ts` holds numerical
+  evaluation, segmentation, and samples/summary exports. `signal-math.ts` holds numerical
   helpers; `signal-types.ts` defines the domain and worker protocol.
 - `lib/segmentation.ts`: stateful generic threshold crossings. No hidden smoothing
   or engine-ramp heuristics. Pair crossings before applying offsets; retain

@@ -5,6 +5,7 @@ import { SignalEngine } from '../lib/signal-engine';
 import { withWorkflowHistory, WorkflowIndex } from '../lib/workflow-history';
 import { workflowRows } from '../lib/workflow-tree';
 import type { Project, SignalNode } from '../lib/signal-types';
+import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 
 void test('trigger segments retain trigger provenance and mixed-input batches never absorb siblings', async () => {
   const { engine, source } = await fixture(
@@ -62,6 +63,22 @@ void test('trigger segments retain trigger provenance and mixed-input batches ne
   }
 });
 
+void test('CSV exports keep formula-like raw names as text and unavailable summaries blank', async () => {
+  const { engine, source } = await fixture(
+    't,=1+1 [Nm],Missing [V]\n0,1,\n1,2,',
+  );
+  try {
+    const raw = await (await engine.exportSamples([source.channels[0]])).text();
+    assert.ok(raw.includes('"\'=1+1"'));
+    const summary = await (await engine.exportSummary(source.channels)).text();
+    assert.ok(summary.includes('"\'=1+1"'));
+    assert.ok(!summary.includes('NaN'));
+    assert.ok(!summary.includes('Infinity'));
+  } finally {
+    engine.close();
+  }
+});
+
 async function fixture(
   csv = 't,Torque [Nm],Speed [rpm]\n0,0,1000\n1,10,2000\n4,10,3000\n5,,4000\n7,30,5000\n8,30,6000',
 ) {
@@ -79,6 +96,124 @@ async function samples(engine: SignalEngine, id: string) {
       values.push([chunk.time[i], chunk.values[i]]);
   return values;
 }
+
+void test('sample exports contain evaluated nested and shifted samples, including missing values', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const [part] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[1, 8]] },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const [nested] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[4, 7]] },
+      [part.nodes[0]],
+      false,
+      'signals',
+    );
+    const shifted = await engine.derive(nested.nodes[0], 'time-shift', 10);
+    const expected = await samples(engine, shifted.id);
+    const blob = await engine.exportSamples([shifted.id]);
+    const lines = (await blob.text()).trim().split('\r\n');
+    assert.equal(lines[0], 'Signal,Signal ID,Recording,Unit,Time (s),Value');
+    assert.equal(lines.length, expected.length + 1);
+    assert.deepEqual(
+      lines.slice(1).map((line) => line.split(',').slice(-2)),
+      expected.map(([time, value]) => [
+        String(time),
+        Number.isFinite(value) ? String(value) : '',
+      ]),
+    );
+    assert.ok(
+      lines.some((line) => line.endsWith(',')),
+      'missing sample remains blank',
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('delivery respects exact value scope, escapes labels and excludes sibling outputs from lineage', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const parts = await engine.segment(
+      source.id,
+      {
+        method: 'ranges',
+        boundary: 'clip',
+        ranges: [
+          [0, 4],
+          [7, 8],
+        ],
+      },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const values = await engine.calculateValues(
+      parts.map((part) => part.nodes[0]),
+      'maximum',
+    );
+    const before = structuredClone(engine.project);
+    const one = valuesCsv(engine.project, [values[0].id]);
+    assert.equal(one.split('\r\n').length, 2);
+    assert.equal(
+      valuesCsv(
+        engine.project,
+        values.map((value) => value.id),
+      ).split('\r\n').length,
+      3,
+    );
+    const index = new WorkflowIndex(engine.project);
+    const lineage = index.lineage([values[0].id]);
+    const rows = workflowRows(
+      lineage.steps,
+      index,
+      new Set(),
+      '',
+      values[0].id,
+      lineage.outputIds,
+    );
+    assert.ok(rows.some((row) => row.outputId === parts[0].nodes[0]));
+    assert.ok(!rows.some((row) => row.outputId === parts[1].nodes[0]));
+    const report = reportHtml(
+      engine.project,
+      [values[0].id],
+      [],
+      new Date('2026-09-10T12:00:00Z'),
+    );
+    assert.ok(report.includes('Contributing operation history'));
+    assert.ok(!report.includes(index.label(parts[1].nodes[0])));
+    assert.deepEqual(
+      engine.project,
+      before,
+      'delivery must never mutate history',
+    );
+    engine.project.sources[0].name = '<script>alert(1)</script>';
+    engine.project.nodes.find((node) => node.id === parts[0].nodes[0])!.name =
+      '=SUM(1)<img src=x>';
+    const unsafe = reportHtml(engine.project, [values[0].id], []);
+    assert.ok(!unsafe.includes('<script>'));
+    assert.ok(unsafe.includes('&lt;script&gt;'));
+    const signalCsv = await (
+      await engine.exportSamples([parts[0].nodes[0]])
+    ).text();
+    assert.ok(!signalCsv.includes('\n"=SUM'));
+    const plot = await engine.plot(parts[0].nodes[0]);
+    const signalReport = reportHtml(
+      engine.project,
+      [parts[0].nodes[0]],
+      [plot],
+    );
+    assert.ok(signalReport.includes('<svg'));
+    assert.ok(signalReport.includes('min/max envelope'));
+  } finally {
+    engine.close();
+  }
+});
 
 void test('time averages weight valid elapsed time; extrema and sample averages are separate scalar records', async () => {
   const { engine, source, database } = await fixture();

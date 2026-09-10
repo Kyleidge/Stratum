@@ -185,6 +185,7 @@ export type EngineRequest =
   | { type: 'view'; ids: string[]; range?: [number, number] }
   | { type: 'rows'; id: string; offset: number }
   | { type: 'export'; ids: string[] }
+  | { type: 'export-samples'; ids: string[] }
   | { type: 'cancel' };
 export type EngineResponse = { requestId: number } & (
   | { type: 'region-plan'; plan: RegionPlan }

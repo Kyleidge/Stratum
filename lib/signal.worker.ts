@@ -114,6 +114,13 @@ globalThis.onmessage = (
             blob: await engine.exportSummary(r.ids),
           });
           return;
+        case 'export-samples':
+          send({
+            type: 'export',
+            requestId,
+            blob: await engine.exportSamples(r.ids),
+          });
+          return;
       }
       send({ type: 'project', requestId, project: engine.project });
     } catch (error) {

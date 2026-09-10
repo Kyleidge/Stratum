@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
 
 export function formatValue(value: number, digits = 1): string {
@@ -25,14 +25,32 @@ export default function SignalChart({
   range,
   onSegment,
   compact = false,
+  fluid = false,
 }: {
   traces: Trace[];
   segments: Segment[];
   range: [number, number];
   onSegment: (id: string) => void;
   compact?: boolean;
+  fluid?: boolean;
 }) {
   const [cursor, setCursor] = useState<number | null>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const [width, setWidth] = useState(900);
+  useEffect(() => {
+    if (!fluid || !svg.current) return;
+    const element = svg.current;
+    const observer = new ResizeObserver(() =>
+      setWidth(Math.max(200, element.clientWidth)),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fluid]);
+  const chartWidth = fluid ? width : 900;
+  const left = fluid ? 70 : 58;
+  const right = chartWidth - 28;
+  const span = right - left;
+  const ticks = fluid ? Math.max(3, Math.min(10, Math.floor(span / 85))) : 10;
   const primary = traces[0];
   const finite = traces
     .flatMap((t) => [t.plot.summary.min, t.plot.summary.max])
@@ -40,7 +58,7 @@ export default function SignalChart({
   const min = finite.length ? Math.min(0, ...finite) : 0;
   const max = finite.length ? Math.max(...finite) * 1.08 || 1 : 1;
   const x = (t: number) =>
-    58 + ((t - range[0]) / (range[1] - range[0] || 1)) * 814;
+    left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
   const y = (v: number) => 120 - ((v - min) / (max - min || 1)) * 105;
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
@@ -63,7 +81,7 @@ export default function SignalChart({
             className="signal-dot"
             style={{ background: primary?.node.color }}
           />
-          {primary?.node.name || 'Loading signal'}{' '}
+          {primary?.label || primary?.node.name || 'Loading signal'}{' '}
           <small>{primary?.node.unit}</small>
         </span>
         <div>
@@ -87,9 +105,10 @@ export default function SignalChart({
         </div>
       </div>
       <svg
-        viewBox="0 0 900 151"
-        preserveAspectRatio="none"
-        aria-label={`${primary?.node.name || 'Signal'} over time`}
+        ref={svg}
+        viewBox={`0 0 ${chartWidth} 151`}
+        preserveAspectRatio={fluid ? 'xMidYMid meet' : 'none'}
+        aria-label={`${primary?.label || primary?.node.name || 'Signal'} over time`}
         onPointerMove={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
           setCursor(
@@ -97,7 +116,9 @@ export default function SignalChart({
               0,
               Math.min(
                 1,
-                (((event.clientX - rect.left) / rect.width) * 900 - 58) / 814,
+                (((event.clientX - rect.left) / rect.width) * chartWidth -
+                  left) /
+                  span,
               ),
             ),
           );
@@ -106,35 +127,39 @@ export default function SignalChart({
       >
         <defs>
           <clipPath id={`clip-${primary?.node.id}`}>
-            <rect x="58" y="8" width="814" height="115" />
+            <rect x={left} y="8" width={span} height="115" />
           </clipPath>
         </defs>
         {[0, 1, 2, 3].map((i) => (
           <g key={i}>
             <line
-              x1="58"
-              x2="872"
+              x1={left}
+              x2={right}
               y1={15 + i * 35}
               y2={15 + i * 35}
               className="chart-grid"
             />
-            <text x="46" y={19 + i * 35} textAnchor="end">
+            <text x={left - 12} y={19 + i * 35} textAnchor="end">
               {formatValue(max - (i / 3) * (max - min), max > 100 ? 0 : 1)}
             </text>
           </g>
         ))}
-        {Array.from({ length: 10 }, (_, i) => (
+        {Array.from({ length: ticks }, (_, i) => (
           <g key={i}>
             <line
-              x1={58 + (i * 814) / 9}
-              x2={58 + (i * 814) / 9}
+              x1={left + (i * span) / (ticks - 1)}
+              x2={left + (i * span) / (ticks - 1)}
               y1="9"
               y2="123"
               className="chart-grid vertical"
             />
-            <text x={58 + (i * 814) / 9} y="142" textAnchor="middle">
+            <text
+              x={left + (i * span) / (ticks - 1)}
+              y="142"
+              textAnchor="middle"
+            >
               {formatValue(
-                range[0] + (i / 9) * (range[1] - range[0]),
+                range[0] + (i / (ticks - 1)) * (range[1] - range[0]),
                 range[1] - range[0] > 100 ? 0 : 1,
               )}
             </text>
@@ -222,7 +247,7 @@ export default function SignalChart({
               strokeDasharray="3 3"
             />
             <rect
-              x={Math.min(740, Math.max(60, x(currentTime) + 8))}
+              x={Math.min(right - 132, Math.max(left, x(currentTime) + 8))}
               y="10"
               width="128"
               height="24"
@@ -230,7 +255,7 @@ export default function SignalChart({
               fill="#2b343b"
             />
             <text
-              x={Math.min(748, Math.max(68, x(currentTime) + 16))}
+              x={Math.min(right - 124, Math.max(left + 8, x(currentTime) + 16))}
               y="26"
               className="cursor-value"
             >
@@ -238,7 +263,7 @@ export default function SignalChart({
             </text>
           </g>
         )}
-        <text x="895" y="142" textAnchor="end">
+        <text x={chartWidth - 5} y="142" textAnchor="end">
           s
         </text>
       </svg>

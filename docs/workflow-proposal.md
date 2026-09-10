@@ -75,9 +75,12 @@ The Back button returns to the previous selection without changing the workflow.
 ## Creating the next step
 
 Select a signal to use it as the next input, or use checkboxes in an output table
-to choose an exact batch. The action bar always states the input count. Viewing
-an operation does not silently select all its outputs. **Select all signals** is
-explicit, and honors the output search. New batch outputs are selected together
+to choose an exact batch. Once inputs are explicitly checked, inspecting another
+signal, value, operation or parent does not replace them. The action bar states
+whether inputs follow the signal in view or are an explicit checked collection.
+**Use only this signal** returns to the single viewed signal. Viewing an operation
+does not silently select all its outputs. **Select all signals** is explicit,
+and honors the output search. New batch outputs are selected together
 so the next operation can continue across that batch.
 
 The three actions are **Derive signal**, **Segment**, and **Calculate value**.
@@ -127,10 +130,42 @@ desktop workspace is uploaded or replaced by validation.
 
 ## Verification and limits
 
+### Inspection and delivery
+
+Individual outputs open **Plot & samples** or **Value & input**. Operation rows
+and **View all outputs** open **Step outputs** directly. The compact action bar
+keeps checked input scope visible; long input lists and full lineage expand only
+when needed. Narrow layouts keep history behind a labeled toggle. Native charts
+adapt tick density to their width without distorting axis text. A named lineage
+filter shows only contributing outputs, excluding unrelated siblings.
+
+**Export / report** is available alongside the inspection tabs. Its dialog names
+the exact scope, output count, format and filename before downloading. Viewing
+one result defaults to exporting that result; whole-step export is explicit.
+Table filters never silently change export scope.
+
+- Samples CSV contains actual evaluated times and values, including nested
+  segments and shifted clocks. Missing values are blank. Multiple signals use
+  separate rows to preserve their individual sampling grids.
+- Signal summary CSV contains one row per signal, not individual samples.
+- Values CSV contains the exact selected scalar results and input references.
+- Printable HTML reports are self-contained snapshots with results, bounded
+  signal plots and chronological contributing history. They can be opened
+  without the app and printed or saved as PDF using a browser. Imported labels
+  are escaped; formula-like CSV text remains text in spreadsheet software.
+
+Reports do not yet provide an editable layout, saved report templates or combined
+multi-axis plot design. Large sample files are assembled in memory as a Blob and
+remain subject to device memory limits. Export cancellation suppresses download
+even when the worker request had been queued.
+
 `pnpm test` includes numerical, storage, migration, chronological ordering, batch
 membership, and 5,000-level history checks. `pnpm desktop:ui-smoke` tests the real
 native renderer with isolated temporary storage: derivation, nested segmentation,
 values, a 40-output batch, pagination, input recovery, and keyboard navigation.
+It verifies actual native downloads for one-value and whole-batch scopes,
+evaluated nested samples and standalone reports. Unit tests check missing data,
+shifted sample axes, export escaping and contributing-only history.
 It writes an ignored native screenshot to `outputs/workflow-desktop.png`.
 
 The history is virtualized and output tables are paged. Existing data-engine

@@ -1812,11 +1812,39 @@ export class SignalEngine {
       }
     return { rows, hasMore: false };
   }
+  async exportSamples(ids: string[]) {
+    const { csvText } = await import('./workflow-delivery');
+    const { WorkflowIndex } = await import('./workflow-history');
+    const index = new WorkflowIndex(this.project);
+    const parts: BlobPart[] = [
+      'Signal,Signal ID,Recording,Unit,Time (s),Value\r\n',
+    ];
+    for (const id of new Set(ids)) {
+      const node = this.find(id);
+      const source = this.project.sources.find(
+        (item) => item.id === node.sourceId,
+      );
+      const prefix = [index.label(id), id, source?.name ?? '', node.unit]
+        .map(csvText)
+        .join(',');
+      for await (const chunk of this.evaluate(id)) {
+        const lines: string[] = [];
+        for (let i = 0; i < chunk.time.length; i++)
+          lines.push(
+            `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}\r\n`,
+          );
+        parts.push(lines.join(''));
+      }
+    }
+    return new Blob(parts, { type: 'text/csv;charset=utf-8' });
+  }
   async exportSummary(ids: string[]) {
+    const { csvText: quote } = await import('./workflow-delivery');
+    const finite = (value: number | undefined) =>
+      value !== undefined && Number.isFinite(value) ? value : '';
     const lines = [
       'Signal,Operation,Unit,Valid samples,Minimum,Maximum,Mean,Time integral,Parents,Function ID,Region set,Region version,Region,Start (s),End (s),End inclusive,Energy-weighted mean',
     ];
-    const quote = (v: string) => `"${v.replace(/"/g, '""')}"`;
     for (const id of ids) {
       const n = this.find(id);
       const run = this.project.functionRuns?.find((item) =>
@@ -1834,10 +1862,10 @@ export class SignalEngine {
           quote(n.operation),
           quote(n.unit),
           s.count,
-          s.min,
-          s.max,
-          s.mean,
-          s.integral,
+          finite(s.min),
+          finite(s.max),
+          finite(s.mean),
+          finite(s.integral),
           quote(n.parents.join(';')),
           quote(run?.id ?? ''),
           quote(set?.name ?? ''),
@@ -1846,7 +1874,7 @@ export class SignalEngine {
           region?.start ?? '',
           region?.end ?? '',
           region ? String(region.endInclusive) : '',
-          s.weightedMean ?? '',
+          finite(s.weightedMean),
         ].join(','),
       );
     }

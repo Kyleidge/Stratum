@@ -323,7 +323,11 @@ export class WorkflowIndex {
     );
   }
   /** Iterative DAG traversal includes every binary and trigger dependency. */
-  lineage(ids: string[]): { steps: WorkflowStep[]; originals: SignalNode[] } {
+  lineage(ids: string[]): {
+    steps: WorkflowStep[];
+    originals: SignalNode[];
+    outputIds: ReadonlySet<string>;
+  } {
     const visited = new Set<string>(),
       stepIds = new Set<string>();
     const originals: SignalNode[] = [];
@@ -343,6 +347,7 @@ export class WorkflowIndex {
         .map((id) => this.steps.get(id)!)
         .sort((a, b) => a.sequence - b.sequence),
       originals,
+      outputIds: visited,
     };
   }
 }

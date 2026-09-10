@@ -1,7 +1,8 @@
 import { app, BrowserWindow, Menu, net, protocol, session } from 'electron';
 import { resolve, relative, isAbsolute, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 
 app.setName('Stratus');
@@ -28,6 +29,8 @@ if (smoke)
 const singleInstance = smoke || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 let window;
+const downloads = [];
+const downloaded = new Set();
 if (smoke)
   setTimeout(() => {
     process.stderr.write('Desktop startup or integration test timed out.\n');
@@ -58,6 +61,54 @@ async function createWindow() {
       if (message.startsWith('STRATUS_SMOKE_OK')) {
         process.stdout.write(`${message}\n`);
         if (uiSmoke) {
+          try {
+            await Promise.all(downloads);
+            for (const name of [
+              'Stratus-values-1.csv',
+              'Stratus-values-40.csv',
+              'Stratus-samples-1.csv',
+              'Stratus-report-1.html',
+            ])
+              assert.ok(
+                downloaded.has(name),
+                `Missing native download: ${name}`,
+              );
+            const contents = (name) =>
+              readFileSync(resolve('outputs', name), 'utf8');
+            assert.equal(
+              contents('Stratus-values-1.csv').split('\r\n').length,
+              2,
+            );
+            assert.equal(
+              contents('Stratus-values-40.csv').split('\r\n').length,
+              41,
+            );
+            const sampleLines = contents('Stratus-samples-1.csv')
+              .trim()
+              .split('\r\n');
+            assert.ok(sampleLines.length > 2);
+            for (const line of sampleLines.slice(1)) {
+              const time = Number(line.split(',').at(-2));
+              assert.ok(
+                time >= 15 && time <= 20,
+                'Nested export time outside selected signal',
+              );
+            }
+            assert.ok(
+              contents('Stratus-report-1.html').includes(
+                'Contributing operation history',
+              ),
+            );
+            process.stdout.write(
+              'Native downloads verified: exact one-value and 40-value scopes, nested samples and standalone report.\n',
+            );
+          } catch (error) {
+            process.stderr.write(
+              `Export verification failed: ${error.message}\n`,
+            );
+            app.exit(1);
+            return;
+          }
           window.setContentSize(1540, 940);
           await new Promise((resolve) => setTimeout(resolve, 300));
           const output = resolve('outputs');
@@ -70,6 +121,21 @@ async function createWindow() {
           await new Promise((resolve) => setTimeout(resolve, 300));
           writeFileSync(
             resolve(output, 'workflow-desktop-compact.png'),
+            (await window.webContents.capturePage()).toPNG(),
+          );
+          assert.ok(
+            await window.webContents.executeJavaScript(`
+            document.querySelector('.workflow-chart-panel').getBoundingClientRect().bottom < innerHeight
+          `),
+            'The compact viewport must expose the complete plot and summary',
+          );
+          await window.webContents.executeJavaScript(`
+            [...document.querySelectorAll('[role="treeitem"][data-kind="output"]')]
+              .find(row => row.title.includes('15–20 s'))?.click()
+          `);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          writeFileSync(
+            resolve(output, 'workflow-desktop-derived.png'),
             (await window.webContents.capturePage()).toPNG(),
           );
         }
@@ -101,6 +167,21 @@ if (singleInstance) {
     .whenReady()
     .then(async () => {
       Menu.setApplicationMenu(null);
+      if (uiSmoke)
+        session.defaultSession.on('will-download', (_event, item) => {
+          const name = item.getFilename();
+          const output = resolve('outputs');
+          mkdirSync(output, { recursive: true });
+          item.setSavePath(resolve(output, name));
+          downloads.push(
+            new Promise((resolveDownload) =>
+              item.once('done', (_event, state) => {
+                if (state === 'completed') downloaded.add(name);
+                resolveDownload();
+              }),
+            ),
+          );
+        });
       session.defaultSession.setPermissionRequestHandler(
         (_contents, _permission, callback) => callback(false),
       );

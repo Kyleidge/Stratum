@@ -16,6 +16,7 @@ export function workflowRows(
   collapsed: ReadonlySet<string>,
   query = '',
   selectedOutput?: string,
+  contributingOutputs?: ReadonlySet<string>,
 ): WorkflowRow[] {
   const rows: WorkflowRow[] = [];
   const search = query.trim().toLowerCase();
@@ -25,14 +26,17 @@ export function workflowRows(
       `#${String(step.sequence + 1).padStart(3, '0')} ${step.sequence + 1} ${label}`
         .toLowerCase()
         .includes(search);
+    const candidates = contributingOutputs
+      ? step.outputIds.filter((id) => contributingOutputs.has(id))
+      : step.outputIds;
     const outputs =
       search && !matchesStep
-        ? step.outputIds.filter((id) =>
+        ? candidates.filter((id) =>
             `${index.label(id)} ${index.kind(id)} ${index.nodes.get(id)?.unit ?? index.values.get(id)?.unit ?? ''}`
               .toLowerCase()
               .includes(search),
           )
-        : step.outputIds;
+        : candidates;
     if (search && !matchesStep && !outputs.length) continue;
     rows.push({ key: step.id, kind: 'step', step, label });
     if (!search && collapsed.has(step.id)) continue;

@@ -1,4 +1,9 @@
 /** End-to-end checks against the actual native renderer and its worker. */
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import WorkflowExport from '../components/workflow-export';
+import type { EngineResponse, Project } from '../lib/signal-types';
+
 export async function workflowUiSmoke() {
   const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
   async function until<T>(
@@ -68,6 +73,7 @@ export async function workflowUiSmoke() {
     await settled();
   }
   async function openFirstOutput() {
+    await outputsTab();
     (
       await until(
         () =>
@@ -76,6 +82,43 @@ export async function workflowUiSmoke() {
         'output',
       )
     ).click();
+    await delay();
+  }
+  async function outputsTab() {
+    const tab = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ].find((element) => element.textContent?.startsWith('Step outputs'));
+    if (!tab) throw new Error('Output collection tab missing.');
+    tab.click();
+    await delay();
+  }
+  async function choose(label: string, text: string) {
+    const chooser = (await dialog()).querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`,
+    );
+    if (!chooser) throw new Error(`Missing chooser ${label}`);
+    chooser.click();
+    await delay();
+    (
+      await until(
+        () =>
+          [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+            (option) => option.textContent?.trim() === text,
+          ),
+        text,
+      )
+    ).click();
+    await delay();
+  }
+  async function exportFile(options?: { scope?: string; report?: boolean }) {
+    await click('Export / report');
+    if (options?.scope) await choose('Include', options.scope);
+    if (options?.report) await choose('File format', 'Printable report (HTML)');
+    await click('Download file', await dialog());
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'download prepared',
+    );
     await delay();
   }
   function assert(condition: unknown, message: string): asserts condition {
@@ -104,11 +147,18 @@ export async function workflowUiSmoke() {
       'A segment batch did not expose three individual signals.',
     );
     await openFirstOutput();
+    assert(
+      document.querySelector('.workflow-next strong')?.textContent ===
+        '3 signals checked',
+      'Inspecting a member silently replaced the checked batch.',
+    );
+    await click('Use only this signal');
     await segment('15, 20');
     assert(
       document.querySelector('h1')?.textContent?.includes('15–20 s'),
       'Nested segment interval was not exposed.',
     );
+    await exportFile();
     await click('Calculate value');
     await click('Create 1 value', await dialog());
     await settled();
@@ -138,6 +188,7 @@ export async function workflowUiSmoke() {
       button('Segment'),
       'Following a scalar input did not return to a reusable signal.',
     );
+    await outputsTab();
     await click('Repeat with new settings');
     const repeatModal = await dialog();
     assert(
@@ -158,7 +209,7 @@ export async function workflowUiSmoke() {
     await segment(Array.from({ length: 40 }, () => '15, 16').join('\n'));
     assert(
       document.querySelector('.workflow-next strong')?.textContent ===
-        '40 signals selected',
+        '40 signals checked',
       'Batch processing selection lost members.',
     );
     assert(
@@ -205,6 +256,9 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('Value'),
       'A late batch member cannot be selected.',
     );
+    await exportFile();
+    await exportFile({ scope: 'All outputs from #007 · 40 outputs' });
+    await exportFile({ report: true });
     await click('Show lineage in tree');
     assert(
       !document
@@ -277,6 +331,75 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close final dialog',
     );
+    // A queued request may resolve normally even after cancellation. The UI
+    // must suppress delivery independently of the worker cancellation flag.
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const exportProject: Project = {
+      sources: [],
+      segments: [],
+      nodes: [
+        {
+          id: 'cancel-input',
+          sourceId: 'test-source',
+          name: 'Queued export',
+          unit: 'V',
+          parents: [],
+          operation: 'raw',
+          parameters: {},
+          createdAt: '2026-09-10T00:00:00Z',
+          version: 1,
+          color: '#61d9b0',
+        },
+      ],
+    };
+    let resolveExport: ((response: EngineResponse) => void) | undefined;
+    let savedCancelledExport = false,
+      cancelledExport = false;
+    root.render(
+      createElement(WorkflowExport, {
+        open: true,
+        onOpenChange: () => {},
+        project: exportProject,
+        viewedId: 'cancel-input',
+        checkedIds: [],
+        request: () =>
+          new Promise<EngineResponse>((resolve) => {
+            resolveExport = resolve;
+          }),
+        cancel: () => {
+          cancelledExport = true;
+        },
+        onSaved: () => {
+          savedCancelledExport = true;
+        },
+      }),
+    );
+    await click('Download file', await dialog());
+    await click('Cancel export', await dialog());
+    assert(
+      resolveExport && cancelledExport,
+      'Export cancellation did not reach the pending request.',
+    );
+    resolveExport({
+      type: 'export',
+      requestId: 1,
+      blob: new Blob(['should not download']),
+    });
+    await until(
+      () =>
+        document
+          .querySelector('[role="dialog"] [role="alert"]')
+          ?.textContent?.includes('Export cancelled'),
+      'cancelled export result',
+    );
+    assert(
+      !savedCancelledExport,
+      'A cancelled queued export still downloaded.',
+    );
+    root.unmount();
+    host.remove();
     console.info(
       'STRATUS_SMOKE_OK: Workflow UI passed derivation, nested segmentation, scalar values, 40-member batches, pagination, lineage, keyboard navigation and original-signal recovery.',
     );

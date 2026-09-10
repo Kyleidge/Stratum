@@ -22,12 +22,14 @@ export default function WorkflowHistory({
   query,
   selection,
   onSelect,
+  contributingOutputs,
 }: {
   steps: WorkflowStep[];
   index: WorkflowIndex;
   query: string;
   selection: WorkflowSelection;
   onSelect: (selection: WorkflowSelection) => void;
+  contributingOutputs?: ReadonlySet<string>;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const selectedOwner =
@@ -45,10 +47,26 @@ export default function WorkflowHistory({
         effectiveCollapsed,
         query,
         selection.kind === 'output' ? selection.id : undefined,
+        contributingOutputs,
       ),
-    [steps, index, effectiveCollapsed, query, selection],
+    [steps, index, effectiveCollapsed, query, selection, contributingOutputs],
   );
   const container = useRef<HTMLDivElement>(null);
+  const positions = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const row of rows) {
+      const key = row.kind === 'step' ? 'root' : row.step.id;
+      const group = groups.get(key) ?? [];
+      group.push(row.key);
+      groups.set(key, group);
+    }
+    const result = new Map<string, { position: number; size: number }>();
+    for (const group of groups.values())
+      group.forEach((key, position) =>
+        result.set(key, { position: position + 1, size: group.length }),
+      );
+    return result;
+  }, [rows]);
   const pendingFocus = useRef<number | null>(null);
   const [scroll, setScroll] = useState(0);
   const [height, setHeight] = useState(600);
@@ -88,10 +106,11 @@ export default function WorkflowHistory({
     )
       element.scrollTop = Math.max(0, top - element.clientHeight / 3);
   }, [selectedRow, selectedKey]);
-  function toggle(id: string) {
+  function setExpanded(id: string, expanded: boolean) {
+    if (!expanded && selectedOwner === id) onSelect({ kind: 'step', id });
     setCollapsed((old) => {
       const next = new Set(old);
-      if (next.has(id)) next.delete(id);
+      if (expanded) next.delete(id);
       else next.add(id);
       return next;
     });
@@ -193,6 +212,8 @@ export default function WorkflowHistory({
                 key={row.key}
                 role="treeitem"
                 aria-level={row.kind === 'step' ? 1 : 2}
+                aria-posinset={positions.get(row.key)?.position}
+                aria-setsize={positions.get(row.key)?.size}
                 aria-expanded={
                   row.kind === 'step' && step.outputIds.length > 0
                     ? expanded
@@ -221,12 +242,14 @@ export default function WorkflowHistory({
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
-                    if (row.kind === 'step' && !expanded) toggle(step.id);
+                    if (row.kind === 'step' && !expanded)
+                      setExpanded(step.id, true);
                     else if (row.kind === 'step' && step.outputIds.length)
                       focusRow(position + 1);
                   } else if (event.key === 'ArrowLeft') {
                     event.preventDefault();
-                    if (row.kind === 'step' && expanded) toggle(step.id);
+                    if (row.kind === 'step' && expanded)
+                      setExpanded(step.id, false);
                     else
                       focusRow(rows.findIndex((item) => item.key === step.id));
                   } else if (event.key === 'Enter' || event.key === ' ') {
@@ -243,9 +266,7 @@ export default function WorkflowHistory({
                     disabled={!step.outputIds.length}
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (selectedOwner === step.id)
-                        onSelect({ kind: 'step', id: step.id });
-                      toggle(step.id);
+                      setExpanded(step.id, !expanded);
                     }}
                   >
                     {expanded ? (
@@ -273,7 +294,7 @@ export default function WorkflowHistory({
                       </strong>
                       <small>
                         {row.kind === 'step'
-                          ? `${step.outputIds.length} ${step.kind === 'value' ? 'values' : 'signals'}${step.kind === 'regions' ? ' · saved ranges' : ''}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ` +${inputSteps.length - 3}` : ''}` : ''}`
+                          ? `${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length} ${contributingOutputs ? 'contributing ' : ''}${step.kind === 'value' ? 'values' : 'signals'}${step.kind === 'regions' ? ' · saved ranges' : ''}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ` +${inputSteps.length - 3}` : ''}` : ''}`
                           : `${index.kind(row.outputId!)} · ${index.nodes.get(row.outputId!)?.unit ?? index.values.get(row.outputId!)?.unit ?? ''}`}
                       </small>
                     </span>
