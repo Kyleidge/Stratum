@@ -36,6 +36,9 @@ globalThis.onmessage = (
             'Operation cancelled. Your existing work is unchanged.',
           );
         switch (r.type) {
+          case 'time-operation':
+            await engine.applyTimeOperation(r.settings);
+            break;
           case 'backup-workspace':
             send({
               type: 'export',

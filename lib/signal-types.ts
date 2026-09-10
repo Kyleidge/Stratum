@@ -12,6 +12,7 @@ import type {
 } from './workflow-types';
 
 export type Operation =
+  | keyof typeof import('./time-types').TIME_OPERATIONS
   | 'raw'
   | 'crop'
   | 'smooth'
@@ -35,9 +36,12 @@ export type Operation =
   | 'power'
   | 'bsfc';
 export type SignalNode = {
+  timeReference?: import('./time-types').TimeReference;
+  timeRecipe?: import('./time-types').TimeRecipe;
   id: string;
   name: string;
   unit: string;
+  /** Empty for workspace outputs; provenance is the complete parent graph. */
   sourceId: string;
   parents: string[];
   operation: Operation;
@@ -160,6 +164,7 @@ export type Summary = {
 };
 export type Plot = { id: string; points: Point[]; summary: Summary };
 export type EngineRequest =
+  | { type: 'time-operation'; settings: import('./time-types').TimeSettings }
   | { type: 'delete-operation'; stepId: string }
   | {
       type: 'edit-operation';

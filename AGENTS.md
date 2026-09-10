@@ -11,6 +11,16 @@ There are no server API routes or cloud signal uploads.
 
 ## Architecture
 
+- `lib/time-types.ts`, `time-model.ts`, and `time-executor.ts`: explicit time
+  references, grouped event/offset/two-point alignment, shared/reference grids,
+  interpolation/gap policy, optional centered FIR filtering and cross-file math.
+  `components/time-workbench.tsx` exposes Compare & align. Time outputs use the
+  workspace scope (`sourceId: ''`); derive provenance from every parent, never
+  invent a source recording. Ordinary unary outputs inherit their time reference.
+  Workspace segmentation uses its current time axis. See `docs/time-bases.md`.
+  Keep time settings in workflow history for atomic Edit/replay and archive
+  validation. Samples CSV identifies the time reference and all source recordings.
+
 - React 19 and strict TypeScript, with Next-style App Router conventions supplied
   by vinext. Use the existing vinext/Vite commands rather than replacing the stack.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.

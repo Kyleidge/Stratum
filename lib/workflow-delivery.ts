@@ -107,7 +107,11 @@ export function reportHtml(
         <p>Min ${html(finite(plot.summary.min))} · Max ${html(finite(plot.summary.max))} · Sample average ${html(finite(plot.summary.mean))} ${html(node!.unit)} · ${plot.summary.count} finite samples</p>
         <p class="muted">Plot uses a bounded min/max envelope. Export Samples CSV for every evaluated time and value.</p>`;
       } else throw new Error('A signal plot is missing from the report.');
-      return `<section><h2>${html(index.label(id))}</h2><p class="muted">${html(index.kind(id))} · ${html(stepRef(id))} · ${html(source?.name ?? '')} · ${bounds ? `${html(bounds[0])}–${html(bounds[1])} s` : ''}</p>
+      const timeReference = graph.timeReferences.get(
+        node?.id ?? value!.inputId,
+      );
+      return `<section><h2>${html(index.label(id))}</h2><p class="muted">${html(index.kind(id))} · ${html(stepRef(id))} · ${html(source?.name ?? 'Workspace result')} · ${bounds ? `${html(bounds[0])}–${html(bounds[1])} s` : ''}</p>
+      <p class="muted">Time reference: ${html(timeReference?.name ?? '')} (${html(timeReference?.kind ?? '')})</p>
       ${content}<p><b>From:</b> ${html(inputs || 'Original recording')}</p><p class="muted">Output ID: ${html(id)}</p></section>`;
     })
     .join('');
@@ -122,7 +126,7 @@ export function reportHtml(
         .map((id) => index.label(id))
         .join('; '),
     )}</td>
-    <td>${html(JSON.stringify(step.definition ?? step.parameters ?? {}))}</td></tr>`,
+    <td>${html(JSON.stringify(step.timeSettings ?? step.definition ?? step.parameters ?? {}))}</td></tr>`,
     )
     .join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

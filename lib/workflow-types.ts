@@ -25,6 +25,7 @@ export type ScalarValue = {
 
 /** Chronological invocation record; explicit edits increment its revision. */
 export type WorkflowStep = {
+  timeSettings?: import('./time-types').TimeSettings;
   revision?: number;
   updatedAt?: string;
   name?: string;

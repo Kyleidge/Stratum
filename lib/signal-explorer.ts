@@ -1,6 +1,10 @@
 import type { Operation, Project, SignalNode } from './signal-types';
 
 export const operationLabels: Record<Operation, string> = {
+  'time-align': 'Align time bases',
+  'time-resample': 'Resample to a shared grid',
+  'time-combine': 'Calculate between signals',
+  'time-crop': 'Crop comparison interval',
   raw: 'Raw signal',
   crop: 'Segment',
   smooth: 'Moving average',

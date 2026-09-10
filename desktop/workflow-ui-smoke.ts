@@ -823,6 +823,80 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close final dialog',
     );
+    // Cross-file processing through the real worker and dialogs.
+    const timeFiles = new DataTransfer();
+    timeFiles.items.add(
+      new File(['t,time-a [V]\n10,0\n11,2\n12,4'], 'Time A.csv'),
+    );
+    timeFiles.items.add(
+      new File(['t,time-b [V]\n100,1\n100.5,2\n101,3\n102,5'], 'Time B.csv'),
+    );
+    const timeImport = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Import CSV recording"]',
+    )!;
+    timeImport.files = timeFiles.files;
+    timeImport.dispatchEvent(new Event('change', { bubbles: true }));
+    await until(
+      () =>
+        document.body.textContent?.includes('time-a') &&
+        document.body.textContent?.includes('time-b'),
+      'both time sources imported',
+    );
+    await click('Compare & align');
+    const picker = (await dialog()).querySelector<HTMLDetailsElement>(
+      '.time-picker',
+    )!;
+    if (!picker.open) picker.querySelector('summary')!.click();
+    setValue(
+      (await dialog()).querySelector<HTMLInputElement>(
+        'input[aria-label="Find comparison signals"]',
+      )!,
+      'time-',
+    );
+    await delay();
+    await click('Select matching signals', await dialog());
+    await choose('Time operation', 'Align time bases');
+    await click('Create derived signals', await dialog());
+    await settled();
+    await click('Compare & align');
+    await until(
+      () => document.querySelector('.time-dialog .signal-chart svg'),
+      'cross-file overlay',
+    );
+    await choose('Time operation', 'Resample to a shared grid');
+    setValue(
+      (await dialog()).querySelector<HTMLInputElement>(
+        'input[aria-label="Output rate"]',
+      )!,
+      '2',
+    );
+    await delay();
+    await click('Create derived signals', await dialog());
+    await settled();
+    await click('Compare & align');
+    await choose('Time operation', 'Calculate between signals');
+    await click('Create derived signals', await dialog());
+    await settled();
+    await click('Calculate value');
+    await click('Create 1 value', await dialog());
+    await settled();
+    assert(
+      Math.abs(
+        Number.parseFloat(
+          document.querySelector('.workflow-value-card strong')?.textContent ??
+            'NaN',
+        ),
+      ) === 1,
+      'Cross-file difference did not produce the expected constant value.',
+    );
+    await click('Signals & values');
+    setValue(search, 'Motor speed');
+    await delay();
+    document
+      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
+      .click();
+    await delay();
+    await click('History tree');
     // A queued request may resolve normally even after cancellation. The UI
     // must suppress delivery independently of the worker cancellation flag.
     const host = document.createElement('div');

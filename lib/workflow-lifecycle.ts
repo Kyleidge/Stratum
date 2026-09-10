@@ -5,7 +5,13 @@ import { segmentationOperation } from './segmentation-operation';
 export type WorkflowCommand =
   | Extract<
       EngineRequest,
-      { type: 'derive-many' | 'calculate-values' | 'region-function' }
+      {
+        type:
+          | 'derive-many'
+          | 'calculate-values'
+          | 'region-function'
+          | 'time-operation';
+      }
     >
   | {
       type: 'segment';
@@ -165,6 +171,11 @@ export function savedCommand(
   project: Project,
   step: WorkflowStep,
 ): WorkflowCommand {
+  if (step.timeSettings)
+    return {
+      type: 'time-operation',
+      settings: structuredClone(step.timeSettings),
+    };
   if (step.kind === 'segment' && step.segmentationId) {
     const saved = segmentationOperation(project, step.segmentationId);
     return {

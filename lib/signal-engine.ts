@@ -1,5 +1,8 @@
 import { CsvParser, Envelope, power } from './signal-math';
 import { SignalGraph } from './signal-graph';
+import { timeNodes, workspaceTimeScope } from './time-model';
+import { TIME_OPERATIONS, timeInputs } from './time-types';
+import type { TimeSettings } from './time-types';
 import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
 import {
@@ -84,6 +87,52 @@ function complete(tx: IDBTransaction): Promise<void> {
 }
 
 export class SignalEngine {
+  async applyTimeOperation(settings: TimeSettings) {
+    const original = this.project;
+    const before = withWorkflowHistory(original);
+    const snapshot = structuredClone(settings);
+    const nodes = await timeNodes(
+      before,
+      snapshot,
+      (id) => this.evaluate(id),
+      () => this.check(),
+    );
+    const step = {
+      id: crypto.randomUUID(),
+      sourceId: '',
+      sequence: (before.workflowSteps ?? []).reduce(
+        (max, item) => Math.max(max, item.sequence + 1),
+        0,
+      ),
+      createdAt: new Date().toISOString(),
+      kind: 'derive' as const,
+      operation: `time-${snapshot.kind}` as keyof typeof TIME_OPERATIONS,
+      inputIds: timeInputs(snapshot),
+      outputIds: nodes.map((node) => node.id),
+      timeSettings: snapshot,
+    };
+    const next = {
+      ...before,
+      nodes: [...before.nodes, ...nodes],
+      workflowSteps: [...(before.workflowSteps ?? []), step],
+    };
+    try {
+      this.project = next;
+      this.invalidate();
+      for (const node of nodes) {
+        const plot = await this.plot(node.id);
+        if (!plot.summary.count && snapshot.kind === 'crop')
+          throw new Error(
+            'A selected signal has no finite samples in this interval.',
+          );
+      }
+    } finally {
+      this.project = original;
+      this.invalidate();
+    }
+    await this.save(next);
+    return nodes;
+  }
   project: Project = emptyProject();
   cancelled = false;
   private db!: IDBDatabase;
@@ -398,6 +447,9 @@ export class SignalEngine {
   }
   private async applyCommand(command: WorkflowCommand) {
     switch (command.type) {
+      case 'time-operation':
+        await this.applyTimeOperation(command.settings);
+        break;
       case 'derive-many':
         await this.deriveMany(
           command.parentIds,
@@ -898,8 +950,8 @@ export class SignalEngine {
     if (inputIds.length > 10000)
       throw new Error('Limit a calculation to 10,000 signals.');
     const inputs = inputIds.map((id) => this.find(id));
-    if (new Set(inputs.map((node) => node.sourceId)).size !== 1)
-      throw new Error('Choose signals from one recording.');
+    const mixedSources =
+      new Set(inputs.map((node) => node.sourceId)).size !== 1;
     const batchId = uid(),
       createdAt = new Date().toISOString();
     const values: ScalarValue[] = [];
@@ -960,7 +1012,7 @@ export class SignalEngine {
       const [start, end] = this.bounds(input.id);
       values.push({
         id: uid(),
-        sourceId: input.sourceId,
+        sourceId: mixedSources ? '' : input.sourceId,
         inputId: input.id,
         batchId,
         name: `${input.name} · ${spec.name}`,
@@ -1511,6 +1563,8 @@ export class SignalEngine {
       throw new Error('Choose unique inputs for this operation.');
     const nodes: SignalNode[] = [];
     const batchId = uid();
+    const mixedSources =
+      new Set(parentIds.map((id) => this.find(id).sourceId)).size > 1;
     for (const parentId of parentIds) {
       this.check();
       const parent = this.find(parentId);
@@ -1573,7 +1627,7 @@ export class SignalEngine {
             ? `${parent.unit}·s`
             : parent.unit;
       const n = this.node(
-        parent.sourceId,
+        mixedSources ? '' : parent.sourceId,
         `${parent.name.split(' · ')[0]} · ${labels[operation]}`,
         unit,
         operation,
@@ -1604,7 +1658,7 @@ export class SignalEngine {
   }
   /** Constant translation from recording time to this node's displayed time. */
   private axisOffset(id: string): number {
-    this.find(id);
+    if (this.find(id).sourceId === '') return 0;
     return this.graph().offsets.get(id)!;
   }
   private async hasSample(
@@ -1616,6 +1670,15 @@ export class SignalEngine {
     let node = this.find(id);
     while (true) {
       if (end < start) return false;
+      if (node.timeRecipe) {
+        for await (const chunk of this.evaluate(node.id))
+          for (const time of chunk.time) {
+            this.check();
+            if (time >= start && (endExclusive ? time < end : time <= end))
+              return true;
+          }
+        return false;
+      }
       if (node.operation === 'raw') {
         const source = this.project.sources.find(
           (item) => item.id === node.sourceId,
@@ -1696,6 +1759,14 @@ export class SignalEngine {
     const operations: [Operation, Record<string, number>][] = [];
     let node = this.find(id);
     while (node.operation !== 'raw') {
+      if (node.timeRecipe?.kind === 'resample')
+        return JSON.stringify([
+          node.timeReference?.id,
+          node.timeRecipe.grid,
+          operations,
+        ]);
+      if (node.timeRecipe?.kind === 'align' || node.timeRecipe?.kind === 'crop')
+        return JSON.stringify([node.id, operations]);
       if (node.operation === 'min-max')
         return JSON.stringify([node.id, operations]);
       if (
@@ -1808,7 +1879,11 @@ export class SignalEngine {
     ]);
     if (cacheKey === this.segmentPreviewCache?.key)
       return structuredClone(this.segmentPreviewCache.plan);
-    const source = this.project.sources.find((s) => s.id === sourceId);
+    const source =
+      this.project.sources.find((s) => s.id === sourceId) ??
+      (sourceId === ''
+        ? workspaceTimeScope(this.project, this.graph())
+        : undefined);
     if (!source) throw new Error('Choose a recording to segment.');
     if (!targetIds.length || new Set(targetIds).size !== targetIds.length)
       throw new Error('Choose at least one unique output signal.');
@@ -1817,6 +1892,14 @@ export class SignalEngine {
       if (node.sourceId !== sourceId)
         throw new Error(
           'Triggers and output signals must belong to the same recording.',
+        );
+      if (
+        sourceId === '' &&
+        this.graph().timeReferences.get(id)?.id !==
+          this.graph().timeReferences.get(targetIds[0])?.id
+      )
+        throw new Error(
+          'Segmentation inputs and triggers must share a time reference. Align them first.',
         );
       return node;
     };
@@ -2110,6 +2193,11 @@ export class SignalEngine {
     independently: boolean,
     scope?: SegmentationScope,
   ): SegmentationScope {
+    if (sourceId === '') {
+      if (scope === 'file')
+        throw new Error('Workspace outputs use signal segmentation.');
+      return 'signals';
+    }
     const source = this.project.sources.find((item) => item.id === sourceId);
     if (!source) throw new Error('Choose a recording to segment.');
     const targets = new Set(targetIds);
@@ -2270,7 +2358,7 @@ export class SignalEngine {
     const { WorkflowIndex } = await import('./workflow-history');
     const index = new WorkflowIndex(this.project);
     const parts: BlobPart[] = [
-      'Signal,Signal ID,Recording,Unit,Time (s),Value\r\n',
+      'Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value\r\n',
     ];
     let exportBytes = 0;
     for (const id of new Set(ids)) {
@@ -2278,7 +2366,30 @@ export class SignalEngine {
       const source = this.project.sources.find(
         (item) => item.id === node.sourceId,
       );
-      const prefix = [index.label(id), id, source?.name ?? '', node.unit]
+      const timeReference = this.graph().timeReferences.get(id)!;
+      const sources = source
+        ? source.name
+        : [
+            ...new Set(
+              index
+                .lineage([id])
+                .originals.map(
+                  (original) =>
+                    this.project.sources.find(
+                      (item) => item.id === original.sourceId,
+                    )?.name ?? original.sourceId,
+                ),
+            ),
+          ].join('; ');
+      const prefix = [
+        index.label(id),
+        id,
+        sources,
+        node.unit,
+        timeReference.name,
+        timeReference.id,
+        timeReference.kind,
+      ]
         .map(csvText)
         .join(',');
       for await (const chunk of this.evaluate(id)) {

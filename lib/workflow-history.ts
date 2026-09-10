@@ -1,4 +1,5 @@
 import { FUNCTIONS } from './signal-functions';
+import { TIME_OPERATIONS } from './time-types';
 import { VALUE_FUNCTIONS } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
@@ -10,6 +11,8 @@ export function stepName(step: WorkflowStep): string {
   if (step.kind === 'regions') return 'Saved region ranges';
   if (step.operation === 'power') return 'Brake power';
   if (step.operation === 'bsfc') return 'Specific fuel consumption';
+  if (step.operation in TIME_OPERATIONS)
+    return TIME_OPERATIONS[step.operation as keyof typeof TIME_OPERATIONS];
   return (
     VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??

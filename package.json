@@ -12,7 +12,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts",
+    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts tests/time-bases.test.ts",
     "test:preview": "electron tests/preview-worker-smoke.mjs",
     "desktop:build": "vite build --config desktop/vite.config.ts",
     "desktop": "pnpm desktop:build && electron desktop/main.mjs",

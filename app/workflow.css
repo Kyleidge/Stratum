@@ -7,6 +7,77 @@
   background: var(--background);
   color: var(--foreground);
 }
+.time-dialog {
+  width: min(1000px, calc(100vw - 32px));
+  max-width: 1000px;
+}
+.time-open {
+  float: right;
+  margin: 0 0 6px 14px;
+}
+.time-controls {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.time-controls p {
+  line-height: 1.55;
+}
+.time-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.time-fields > * {
+  flex: 1 1 180px;
+}
+.time-group {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+}
+.time-check,
+.time-signal-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.time-signal-choice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.time-signal-choice small {
+  display: block;
+  color: var(--muted-foreground);
+  margin-top: 4px;
+}
+.time-picker-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px 0;
+}
+.time-picker summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.time-advice {
+  color: var(--muted-foreground);
+  border-left: 3px solid var(--primary);
+  padding-left: 12px;
+}
+.time-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  list-style: none;
+  padding: 0;
+  font-size: 13px;
+}
 .workflow-management {
   display: flex;
   gap: 10px 18px;

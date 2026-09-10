@@ -7,18 +7,21 @@ export default function WorkflowList<T>({
   summary,
   className,
   children,
+  initialOpen = false,
 }: {
   items: readonly T[];
   summary: ReactNode;
   className?: string;
   children: (page: readonly T[]) => ReactNode;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false),
+  const [open, setOpen] = useState(initialOpen),
     [page, setPage] = useState(0);
   const pages = Math.max(1, Math.ceil(items.length / 30));
   const current = Math.min(page, pages - 1);
   return (
     <details
+      open={open}
       className={className}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >

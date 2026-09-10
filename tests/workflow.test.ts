@@ -820,7 +820,10 @@ void test('sample exports contain evaluated nested and shifted samples, includin
     const expected = await samples(engine, shifted.id);
     const blob = await engine.exportSamples([shifted.id]);
     const lines = (await blob.text()).trim().split('\r\n');
-    assert.equal(lines[0], 'Signal,Signal ID,Recording,Unit,Time (s),Value');
+    assert.equal(
+      lines[0],
+      'Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value',
+    );
     assert.equal(lines.length, expected.length + 1);
     assert.deepEqual(
       lines.slice(1).map((line) => line.split(',').slice(-2)),

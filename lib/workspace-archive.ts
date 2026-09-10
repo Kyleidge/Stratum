@@ -5,6 +5,8 @@ import {
   isArithmetic,
   isBinaryOperation,
 } from './signal-arithmetic';
+import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
+import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
@@ -137,6 +139,7 @@ export function validateWorkspace(value: unknown): Project {
       throw new Error('Invalid recording chunk ranges.');
   }
   const operations = new Set([
+    ...Object.keys(TIME_OPERATIONS),
     'raw',
     'crop',
     'power',
@@ -145,7 +148,7 @@ export function validateWorkspace(value: unknown): Project {
   ]);
   for (const node of project.nodes) {
     if (
-      !sources.has(node.sourceId) ||
+      (node.sourceId !== '' && !sources.has(node.sourceId)) ||
       !operations.has(node.operation) ||
       typeof node.name !== 'string' ||
       typeof node.unit !== 'string' ||
@@ -153,20 +156,59 @@ export function validateWorkspace(value: unknown): Project {
       typeof node.createdAt !== 'string' ||
       node.version !== 1 ||
       !optionalText(node.batchId) ||
-      !stringList(node.parents, !isArithmetic(node.operation)) ||
+      !stringList(
+        node.parents,
+        !isArithmetic(node.operation) && node.timeRecipe?.kind !== 'resample',
+      ) ||
       !node.parameters ||
       !Object.values(node.parameters).every(Number.isFinite)
     )
       throw new Error('Invalid signal recipe.');
     if (
       node.operation === 'raw' &&
-      (!sources.get(node.sourceId)!.channels.includes(node.id) ||
+      (!sources.get(node.sourceId)?.channels.includes(node.id) ||
         node.parents.length)
     )
       throw new Error('Invalid original signal.');
-    if (node.parents.some((id) => nodes.get(id)?.sourceId !== node.sourceId))
+    if (
+      node.parents.some(
+        (id) =>
+          !nodes.has(id) ||
+          (node.sourceId !== '' && nodes.get(id)?.sourceId !== node.sourceId),
+      )
+    )
       throw new Error('Signal parents must belong to the same recording.');
-    if (node.operation === 'crop') {
+    if (
+      node.timeReference &&
+      (typeof node.timeReference.id !== 'string' ||
+        !node.timeReference.id ||
+        typeof node.timeReference.name !== 'string' ||
+        !node.timeReference.name.trim() ||
+        !['relative', 'absolute'].includes(node.timeReference.kind))
+    )
+      throw new Error('Invalid time reference.');
+    if (node.operation in TIME_OPERATIONS || node.timeRecipe) {
+      if (
+        !node.timeRecipe ||
+        node.operation !== `time-${node.timeRecipe.kind}` ||
+        node.sourceId !== '' ||
+        !node.timeReference ||
+        !node.parents.length
+      )
+        throw new Error('Invalid time operation output.');
+      validateTimeRecipe(node.timeRecipe);
+      const recipe = node.timeRecipe;
+      if (
+        (recipe.kind === 'combine' && node.parents.length !== 2) ||
+        (recipe.kind === 'crop' && node.parents.length !== 1) ||
+        (recipe.kind === 'resample' &&
+          (recipe.grid.kind === 'reference'
+            ? node.parents.length !== 2 ||
+              node.parents[1] !== recipe.grid.signalId
+            : node.parents.length !== 1))
+      )
+        throw new Error('Invalid time recipe dependencies.');
+    } else if (node.operation === 'crop') {
       if (
         !node.parents.length ||
         !Number.isFinite(node.parameters.start) ||
@@ -215,6 +257,31 @@ export function validateWorkspace(value: unknown): Project {
     }
   }
   const graph = new SignalGraph(project);
+  for (const node of project.nodes) {
+    const recipe = node.timeRecipe;
+    if (recipe && recipe.kind !== 'align') {
+      const reference = graph.timeReferences.get(node.parents[0])!.id;
+      if (
+        node.timeReference?.id !== reference ||
+        ((recipe.kind === 'combine' ||
+          (recipe.kind === 'resample' && recipe.grid.kind === 'reference')) &&
+          graph.timeReferences.get(node.parents[1])!.id !== reference)
+      )
+        throw new Error(
+          'Time recipe inputs do not share their declared clock.',
+        );
+      if (
+        recipe.kind === 'combine' &&
+        node.unit !==
+          arithmeticUnit(
+            COMPARISON_MATH[recipe.operator],
+            nodes.get(node.parents[0])!.unit,
+            nodes.get(node.parents[1])!.unit,
+          )
+      )
+        throw new Error('Time calculation has incompatible input units.');
+    }
+  }
   for (const range of graph.ranges.values())
     if (!range.every(Number.isFinite))
       throw new Error('Invalid signal time bounds.');
@@ -225,7 +292,8 @@ export function validateWorkspace(value: unknown): Project {
   for (const value of project.values ?? [])
     if (
       !nodes.has(value.inputId) ||
-      nodes.get(value.inputId)?.sourceId !== value.sourceId ||
+      (value.sourceId !== '' &&
+        nodes.get(value.inputId)?.sourceId !== value.sourceId) ||
       typeof value.name !== 'string' ||
       typeof value.unit !== 'string' ||
       typeof value.batchId !== 'string' ||
@@ -249,7 +317,7 @@ export function validateWorkspace(value: unknown): Project {
   const sequences = new Set<number>();
   for (const step of project.workflowSteps ?? []) {
     if (
-      !sources.has(step.sourceId) ||
+      (step.sourceId !== '' && !sources.has(step.sourceId)) ||
       !['import', 'derive', 'segment', 'value', 'regions'].includes(
         step.kind,
       ) ||
@@ -265,7 +333,11 @@ export function validateWorkspace(value: unknown): Project {
       step.sequence < 0 ||
       sequences.has(step.sequence) ||
       step.outputIds.some((id) => !outputs.has(id)) ||
-      step.inputIds.some((id) => nodes.get(id)?.sourceId !== step.sourceId) ||
+      step.inputIds.some(
+        (id) =>
+          !nodes.has(id) ||
+          (step.sourceId !== '' && nodes.get(id)?.sourceId !== step.sourceId),
+      ) ||
       (step.parameters !== undefined &&
         (!step.parameters ||
           typeof step.parameters !== 'object' ||
@@ -275,6 +347,18 @@ export function validateWorkspace(value: unknown): Project {
     )
       throw new Error('Invalid operation history.');
     sequences.add(step.sequence);
+    if (step.timeSettings) {
+      validateTimeSettings(step.timeSettings);
+      const inputs = timeInputs(step.timeSettings);
+      if (
+        step.sourceId !== '' ||
+        step.operation !== `time-${step.timeSettings.kind}` ||
+        inputs.length !== step.inputIds.length ||
+        inputs.some((id) => !step.inputIds.includes(id))
+      )
+        throw new Error('Time settings do not match operation inputs.');
+    } else if (step.operation in TIME_OPERATIONS)
+      throw new Error('Missing saved time settings.');
     const dependencies = new Set<string>();
     for (const id of step.outputIds) {
       if (owners.has(id))
@@ -336,7 +420,7 @@ export function validateWorkspace(value: unknown): Project {
       throw new Error('Operation history is not chronological.');
   for (const segment of project.segments)
     if (
-      !sources.has(segment.sourceId) ||
+      (segment.sourceId !== '' && !sources.has(segment.sourceId)) ||
       typeof segment.id !== 'string' ||
       typeof segment.name !== 'string' ||
       !Number.isFinite(segment.start) ||
@@ -393,7 +477,7 @@ export function validateWorkspace(value: unknown): Project {
   for (const operation of project.segmentationOperations ?? []) {
     if (
       typeof operation.id !== 'string' ||
-      !sources.has(operation.sourceId) ||
+      (operation.sourceId !== '' && !sources.has(operation.sourceId)) ||
       !stringList(operation.targetIds) ||
       !operation.targetIds.length ||
       operation.targetIds.some(
@@ -443,7 +527,7 @@ export function validateWorkspace(value: unknown): Project {
       typeof run.createdAt !== 'string' ||
       !Number.isSafeInteger(run.sequence) ||
       !nonnegative(run.skipped) ||
-      !sources.has(run.sourceId) ||
+      (run.sourceId !== '' && !sources.has(run.sourceId)) ||
       !operations.has(run.operation) ||
       !Number.isFinite(run.parameter) ||
       !stringList(run.inputIds) ||

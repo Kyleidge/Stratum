@@ -4,6 +4,7 @@ import {
   isArithmetic,
   isBinaryOperation,
 } from './signal-arithmetic';
+import { executeTime } from './time-executor';
 import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
 import type { SignalGraph } from './signal-graph';
 import type { Point, SeriesChunk, SignalNode } from './signal-types';
@@ -30,6 +31,10 @@ export async function* executeSignal(
     node: SignalNode,
     inputRange?: [number, number],
   ): Process {
+    if (node.timeRecipe) {
+      yield* executeTime(node, graph, check);
+      return;
+    }
     if (node.operation === 'raw') {
       for await (const chunk of raw(node.id, inputRange))
         yield { kind: 'output', chunk };

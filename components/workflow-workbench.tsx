@@ -38,6 +38,9 @@ import {
 } from '@/components/ui/table';
 import { useSignalEngine } from '@/hooks/use-signal-engine';
 import { SignalGraph } from '@/lib/signal-graph';
+import TimeWorkbench from './time-workbench';
+import type { TimeSettings } from '@/lib/time-types';
+import { workspaceTimeScope } from '@/lib/time-model';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { FUNCTIONS } from '@/lib/signal-functions';
 import { operationLabels } from '@/lib/signal-explorer';
@@ -98,23 +101,33 @@ export default function WorkflowWorkbench() {
   const { project } = engine;
   const index = useMemo(() => new WorkflowIndex(project), [project]);
   const graph = useMemo(() => new SignalGraph(project), [project]);
-  const [sourceId, setSourceId] = useState('');
+  const [sourceId, setSourceId] = useState('all');
+  const [timeEditor, setTimeEditor] = useState<{
+    ids: string[];
+    saved?: TimeSettings;
+    editingId?: string;
+    mode?: 'crop';
+  }>();
   const source =
     project.sources.find((item) => item.id === sourceId) ?? project.sources[0];
   const steps = useMemo(
     () =>
       (project.workflowSteps ?? []).filter(
-        (step) => step.sourceId === source?.id,
+        (step) => sourceId === 'all' || step.sourceId === source?.id,
       ),
-    [project, source?.id],
+    [project, source?.id, sourceId],
   );
   const [chosen, setChosen] = useState<WorkflowSelection | null>(null);
   const selection =
     chosen &&
-    (chosen.kind === 'step'
-      ? index.steps.get(chosen.id)?.sourceId
-      : (index.nodes.get(chosen.id)?.sourceId ??
-        index.values.get(chosen.id)?.sourceId)) === source?.id
+    (sourceId === 'all'
+      ? chosen.kind === 'step'
+        ? index.steps.has(chosen.id)
+        : index.nodes.has(chosen.id) || index.values.has(chosen.id)
+      : (chosen.kind === 'step'
+          ? index.steps.get(chosen.id)?.sourceId
+          : (index.nodes.get(chosen.id)?.sourceId ??
+            index.values.get(chosen.id)?.sourceId)) === source?.id)
       ? chosen
       : { kind: 'output' as const, id: source?.channels[0] ?? '' };
   const step =
@@ -127,7 +140,7 @@ export default function WorkflowWorkbench() {
     selection.kind === 'output' ? index.values.get(selection.id) : undefined;
   const [inputs, setInputs] = useState<string[] | null>(null);
   const inputIds = (inputs ?? (activeNode ? [activeNode.id] : [])).filter(
-    (id) => index.nodes.get(id)?.sourceId === source?.id,
+    (id) => index.nodes.has(id),
   );
   const [past, setPast] = useState<WorkflowSelection[]>([]);
   const [view, setView] = useState('result');
@@ -154,6 +167,11 @@ export default function WorkflowWorkbench() {
   const [editor, setEditorState] = useState<Editor>();
   const [managementRequest, setManagementRequest] =
     useState<WorkflowManagementRequest>();
+  const editorSource = editor
+    ? (project.sources.find(
+        (item) => item.id === index.nodes.get(editor.ids[0])?.sourceId,
+      ) ?? workspaceTimeScope(project, graph))
+    : source;
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
   function setEditor(next: Editor | undefined) {
@@ -292,12 +310,18 @@ export default function WorkflowWorkbench() {
       setPage(Math.floor(owner.outputIds.indexOf(next.id) / PAGE_SIZE));
   }
   function follow(id: string) {
+    if (
+      (index.nodes.get(id)?.sourceId ?? index.values.get(id)?.sourceId) !==
+      source?.id
+    )
+      setSourceId('all');
     setQuery('');
     setSidebar('history');
     setLineageRoot(null);
     select({ kind: 'output', id });
   }
   function selectStep(id: string) {
+    if (index.steps.get(id)?.sourceId !== source?.id) setSourceId('all');
     setQuery('');
     setSidebar('history');
     setLineageRoot(null);
@@ -306,7 +330,6 @@ export default function WorkflowWorkbench() {
   function switchSource(id: string) {
     setSourceId(id);
     setChosen(null);
-    setInputs(null);
     setView('result');
     setNotice('');
     setPast([]);
@@ -336,7 +359,7 @@ export default function WorkflowWorkbench() {
   function reveal(next: Project) {
     const last = next.workflowSteps?.at(-1);
     if (!last) return;
-    setSourceId(last.sourceId);
+    setSourceId(last.sourceId || 'all');
     setQuery('');
     setTableQuery('');
     setLineageRoot(null);
@@ -444,6 +467,14 @@ export default function WorkflowWorkbench() {
   function repeat(editing = false, stepToOpen = step) {
     const step = stepToOpen;
     if (!step || !source) return;
+    if (step.timeSettings) {
+      setTimeEditor({
+        ids: step.inputIds,
+        saved: step.timeSettings,
+        editingId: editing ? step.id : undefined,
+      });
+      return;
+    }
     const open = (next: Editor) =>
       setEditor({ ...next, editingStepId: editing ? step.id : undefined });
     const nodeIds = step.inputIds.filter((id) => index.nodes.has(id));
@@ -548,12 +579,17 @@ export default function WorkflowWorkbench() {
         ? stepName(step)
         : 'Your workflow';
   const allValues = step?.kind === 'value';
-  const originalCount = source?.channels.length ?? 0;
+  const originalCount =
+    sourceId === 'all'
+      ? project.sources.reduce((sum, item) => sum + item.channels.length, 0)
+      : (source?.channels.length ?? 0);
   const derivedCount = project.nodes.filter(
-    (node) => node.sourceId === source?.id && node.operation !== 'raw',
+    (node) =>
+      (sourceId === 'all' || node.sourceId === source?.id) &&
+      node.operation !== 'raw',
   ).length;
   const valueCount = (project.values ?? []).filter(
-    (value) => value.sourceId === source?.id,
+    (value) => sourceId === 'all' || value.sourceId === source?.id,
   ).length;
   return (
     <div className="workflow-app">
@@ -578,11 +614,14 @@ export default function WorkflowWorkbench() {
         {source && (
           <RegionSelect
             label="Recording"
-            value={source.id}
-            items={project.sources.map((item) => ({
-              value: item.id,
-              label: `${item.name}${item.synthetic ? ' · Example' : ''}`,
-            }))}
+            value={sourceId === 'all' ? 'all' : source.id}
+            items={[
+              { value: 'all', label: 'All recordings & workspace results' },
+              ...project.sources.map((item) => ({
+                value: item.id,
+                label: `${item.name}${item.synthetic ? ' · Example' : ''}`,
+              })),
+            ]}
             onChange={switchSource}
           />
         )}
@@ -648,16 +687,21 @@ export default function WorkflowWorkbench() {
           ref={file}
           type="file"
           accept=".csv,text/csv"
+          multiple
           className="sr-only"
           aria-label="Import CSV recording"
           onChange={(event) => {
-            const selected = event.target.files?.[0];
+            const selected = Array.from(event.target.files ?? []);
             event.target.value = '';
-            if (selected)
-              void perform(
-                { type: 'import', file: selected },
-                'Importing original signals…',
-              ).catch(() => {});
+            if (selected.length)
+              void (async () => {
+                for (const file of selected)
+                  await perform(
+                    { type: 'import', file },
+                    `Importing ${file.name}…`,
+                  );
+                if (selected.length > 1) setSourceId('all');
+              })().catch(() => {});
           }}
         />
       </header>
@@ -968,7 +1012,15 @@ export default function WorkflowWorkbench() {
                 <h1>{title}</h1>
                 {step && (
                   <p className="workflow-subtitle">
-                    {source?.name} ·{' '}
+                    {activeNode
+                      ? (graph.timeReferences.get(activeNode.id)?.name ??
+                        'Workspace')
+                      : step.sourceId
+                        ? project.sources.find(
+                            (item) => item.id === step.sourceId,
+                          )?.name
+                        : 'Workspace results'}{' '}
+                    ·{' '}
                     {activeNode
                       ? `${number(graph.ranges.get(activeNode.id)![0])}–${number(graph.ranges.get(activeNode.id)![1])} s · ${activeNode.unit}`
                       : activeValue
@@ -1011,7 +1063,14 @@ export default function WorkflowWorkbench() {
                       </span>
                     ))
                   ) : (
-                    <span>{source?.name} · original recording</span>
+                    <span>
+                      {
+                        project.sources.find(
+                          (item) => item.id === activeNode?.sourceId,
+                        )?.name
+                      }{' '}
+                      · original recording
+                    </span>
                   )}
                   {immediateInputs.length > 4 && (
                     <WorkflowList
@@ -1098,6 +1157,13 @@ export default function WorkflowWorkbench() {
                 aria-label="Next operation"
               >
                 <div>
+                  <button
+                    className="workflow-link time-open"
+                    disabled={engine.busy}
+                    onClick={() => setTimeEditor({ ids: inputIds })}
+                  >
+                    Compare & align
+                  </button>
                   <strong>
                     {inputIds.length
                       ? `${inputIds.length} signal${inputIds.length === 1 ? '' : 's'} ${inputs === null ? 'in view' : 'checked'}`
@@ -1177,7 +1243,11 @@ export default function WorkflowWorkbench() {
                         className="secondary-button"
                         disabled={!inputIds.length || engine.busy}
                         onClick={() =>
-                          setEditor({ kind: 'segment', ids: inputIds })
+                          new Set(
+                            inputIds.map((id) => index.nodes.get(id)?.sourceId),
+                          ).size > 1
+                            ? setTimeEditor({ ids: inputIds, mode: 'crop' })
+                            : setEditor({ kind: 'segment', ids: inputIds })
                         }
                       >
                         <Scissors size={15} />
@@ -1763,7 +1833,7 @@ export default function WorkflowWorkbench() {
               </button>
             </div>
           )}
-          {editor && source && (
+          {editor && editorSource && (
             <>
               <WorkflowList
                 className="workflow-editor-inputs"
@@ -1791,14 +1861,17 @@ export default function WorkflowWorkbench() {
                   defaultRange={(() => {
                     const id = editor.ids[0];
                     const bounds = graph.ranges.get(id);
-                    const offset = graph.offsets.get(id) ?? 0;
+                    const offset =
+                      index.nodes.get(id)?.sourceId === ''
+                        ? 0
+                        : (graph.offsets.get(id) ?? 0);
                     return bounds
                       ? [bounds[0] - offset, bounds[1] - offset]
                       : undefined;
                   })()}
-                  source={source}
+                  source={editorSource}
                   nodes={project.nodes.filter(
-                    (node) => node.sourceId === source.id,
+                    (node) => node.sourceId === editorSource.id,
                   )}
                   segments={project.segments}
                   selectedIds={editor.ids}
@@ -1813,7 +1886,7 @@ export default function WorkflowWorkbench() {
                   ) => {
                     const response = await engine.preview({
                       type: 'segment-preview',
-                      sourceId: source.id,
+                      sourceId: editorSource.id,
                       definition,
                       targetIds,
                       independently,
@@ -1827,7 +1900,7 @@ export default function WorkflowWorkbench() {
                     perform(
                       {
                         type: 'segment',
-                        sourceId: source.id,
+                        sourceId: editorSource.id,
                         definition,
                         targetIds,
                         independently,
@@ -1858,7 +1931,7 @@ export default function WorkflowWorkbench() {
                         {
                           type: 'region-function',
                           settings: {
-                            sourceId: source.id,
+                            sourceId: index.nodes.get(editor.ids[0])!.sourceId,
                             inputIds: editor.ids,
                             secondaryIds: [secondaryId],
                             operation,
@@ -1883,6 +1956,41 @@ export default function WorkflowWorkbench() {
           )}
         </DialogContent>
       </Dialog>
+      {timeEditor && (
+        <TimeWorkbench
+          project={project}
+          initialIds={timeEditor.ids}
+          saved={timeEditor.saved}
+          initialMode={timeEditor.mode}
+          editing={!!timeEditor.editingId}
+          busy={engine.busy}
+          request={request}
+          onCancel={engine.cancel}
+          onClose={() => setTimeEditor(undefined)}
+          onApply={async (settings) => {
+            const editingId = timeEditor.editingId;
+            const next = await engine.mutate(
+              editingId
+                ? {
+                    type: 'edit-operation',
+                    stepId: editingId,
+                    command: { type: 'time-operation', settings },
+                  }
+                : { type: 'time-operation', settings },
+              'Processing time bases…',
+            );
+            setTimeEditor(undefined);
+            if (editingId) {
+              setSourceId('all');
+              setChosen({ kind: 'step', id: editingId });
+              setView('outputs');
+              setNotice(
+                'Time operation updated and dependent results recalculated.',
+              );
+            } else reveal(next);
+          }}
+        />
+      )}
       <Dialog open={help} onOpenChange={setHelp}>
         <DialogContent className="workflow-dialog">
           <DialogTitle>Build a signal workflow</DialogTitle>
