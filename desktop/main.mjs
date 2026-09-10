@@ -1,4 +1,12 @@
-import { app, BrowserWindow, Menu, net, protocol, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  net,
+  protocol,
+  session,
+  dialog,
+} from 'electron';
 import { resolve, relative, isAbsolute, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -56,8 +64,41 @@ async function createWindow() {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
+  if (!smoke) {
+    let recovering = false;
+    const recover = async (detail) => {
+      if (recovering || window.isDestroyed()) return;
+      recovering = true;
+      const choice = await dialog.showMessageBox(window, {
+        type: 'error',
+        title: 'Stratus workspace recovery',
+        message: 'The workspace stopped responding or could not load.',
+        detail: `${detail}\nThe last committed workspace is still saved.`,
+        buttons: ['Reload workspace', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      recovering = false;
+      if (choice.response === 0) window.webContents.reload();
+      else app.quit();
+    };
+    window.webContents.on(
+      'render-process-gone',
+      (_event, details) => void recover(details.reason),
+    );
+    window.webContents.on(
+      'did-fail-load',
+      (_event, _code, description) => void recover(description),
+    );
+    window.on(
+      'unresponsive',
+      () => void recover('The interface is not responding.'),
+    );
+  }
   if (smoke) {
     window.webContents.on('console-message', async ({ message }) => {
+      if (message.startsWith('TypeError') || message.startsWith('Error:'))
+        process.stderr.write(`${message}\n`);
       if (message.startsWith('STRATUS_SMOKE_OK')) {
         process.stdout.write(`${message}\n`);
         if (uiSmoke) {
@@ -99,6 +140,15 @@ async function createWindow() {
                 'Contributing operation history',
               ),
             );
+            const backupName = [...downloaded].find((name) =>
+              name.endsWith('.stratus'),
+            );
+            assert.ok(backupName, 'Missing workspace backup download');
+            const archive = contents(backupName).trimEnd().split('\n');
+            const header = JSON.parse(archive[0]);
+            assert.equal(header.format, 'stratus-workspace');
+            assert.ok(header.project.workflowSteps.length >= 9);
+            assert.equal(JSON.parse(archive.at(-1)).complete, true);
             process.stdout.write(
               'Native downloads verified: exact one-value and 40-value scopes, nested samples and standalone report.\n',
             );
@@ -151,9 +201,14 @@ async function createWindow() {
       app.exit(1);
     });
   }
-  await window.loadURL(
-    `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : ''}`,
-  );
+  try {
+    await window.loadURL(
+      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : ''}`,
+    );
+  } catch (error) {
+    // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.
+    if (smoke || window.isDestroyed()) throw error;
+  }
 }
 
 if (singleInstance) {
@@ -225,6 +280,11 @@ if (singleInstance) {
       });
     })
     .catch((error) => {
+      if (!smoke)
+        dialog.showErrorBox(
+          'Stratus could not start',
+          error instanceof Error ? error.message : String(error),
+        );
       process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);
       app.exit(1);
     });

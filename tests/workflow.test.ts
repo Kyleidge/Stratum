@@ -4,8 +4,14 @@ import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { withWorkflowHistory, WorkflowIndex } from '../lib/workflow-history';
 import { workflowRows } from '../lib/workflow-tree';
-import type { Project, SignalNode } from '../lib/signal-types';
+import type {
+  EngineRequest,
+  EngineResponse,
+  Project,
+  SignalNode,
+} from '../lib/signal-types';
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
+import { affectedOperations } from '../lib/workflow-lifecycle';
 
 void test('trigger segments retain trigger provenance and mixed-input batches never absorb siblings', async () => {
   const { engine, source } = await fixture(
@@ -96,6 +102,551 @@ async function samples(engine: SignalEngine, id: string) {
       values.push([chunk.time[i], chunk.values[i]]);
   return values;
 }
+
+void test('Undo to an empty workspace retains Redo after restart and initialization', async () => {
+  const { engine, source, database } = await fixture();
+  await engine.travel('undo');
+  engine.close();
+  const reopened = new SignalEngine(undefined, database);
+  try {
+    await reopened.open();
+    await reopened.initializeWorkflow();
+    assert.equal(reopened.project.sources.length, 0);
+    assert.ok(reopened.canRedo);
+    await reopened.travel('redo');
+    assert.equal(reopened.project.sources[0].id, source.id);
+    assert.equal((await samples(reopened, source.channels[0])).length, 6);
+  } finally {
+    reopened.close();
+  }
+});
+
+void test('worker cancellation includes queued mutations, coalesces inspections, and recovers from lock rejection', async () => {
+  const priorPost = globalThis.postMessage;
+  const priorHandler = globalThis.onmessage;
+  const priorLocks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+  const pending = new Map<number, (response: EngineResponse) => void>();
+  let rejectLock = false;
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: {
+      request: async (_name: string, run: () => Promise<void>) => {
+        if (rejectLock) {
+          rejectLock = false;
+          throw new Error('Injected lock failure');
+        }
+        await run();
+      },
+    },
+  });
+  globalThis.postMessage = (response: EngineResponse) => {
+    if (response.type !== 'progress')
+      pending.get(response.requestId)?.(response);
+  };
+  await import('../lib/signal.worker');
+  let sequence = 0;
+  const send = (message: EngineRequest) => {
+    const requestId = ++sequence;
+    const response = new Promise<EngineResponse>((resolve) =>
+      pending.set(requestId, resolve),
+    );
+    const handler = globalThis.onmessage as (event: MessageEvent) => void;
+    handler({ data: { ...message, requestId } } as MessageEvent);
+    return { requestId, response };
+  };
+  try {
+    assert.equal(
+      (await send({ type: 'init-workflow' }).response).type,
+      'project',
+    );
+    const loaded = await send({
+      type: 'import',
+      file: new File(['t,A [V]\n0,1\n1,2\n2,3'], 'worker.csv'),
+    }).response;
+    assert.equal(loaded.type, 'project');
+    if (loaded.type !== 'project') throw new Error('Import failed.');
+    const id = loaded.project.sources[0].channels[0];
+    const first = send({ type: 'view', ids: [id], inspection: true });
+    const second = send({ type: 'view', ids: [id], inspection: true });
+    const third = send({ type: 'view', ids: [id], inspection: true });
+    assert.equal((await first.response).type, 'error');
+    assert.equal((await second.response).type, 'error');
+    assert.equal((await third.response).type, 'plots');
+    const backup = send({ type: 'backup-workspace' });
+    const cancelled = send({
+      type: 'derive-many',
+      parentIds: [id],
+      operation: 'scale',
+      parameter: 2,
+    });
+    send({ type: 'cancel', requestIds: [cancelled.requestId] });
+    assert.equal((await backup.response).type, 'export');
+    const stopped = await cancelled.response;
+    assert.equal(stopped.type, 'error');
+    rejectLock = true;
+    const failed = await send({ type: 'rename', id, name: 'Must not save' })
+      .response;
+    assert.equal(failed.type, 'error');
+    const healthy = await send({ type: 'rename', id, name: 'Recovered' })
+      .response;
+    assert.equal(healthy.type, 'project');
+    if (healthy.type === 'project') {
+      assert.equal(
+        healthy.project.nodes.length,
+        1,
+        'Cancelled queued mutation committed',
+      );
+      assert.equal(healthy.project.labels?.[id], 'Recovered');
+    }
+  } finally {
+    globalThis.postMessage = priorPost;
+    globalThis.onmessage = priorHandler;
+    if (priorLocks) Object.defineProperty(navigator, 'locks', priorLocks);
+    else Reflect.deleteProperty(navigator, 'locks');
+  }
+});
+
+void test('interrupted-import recovery preserves Redo sources and unknown legacy storage', async () => {
+  const { engine, source, database } = await fixture();
+  await engine.travel('undo');
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(database);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    const tx = db.transaction(['project', 'chunks'], 'readwrite');
+    tx.objectStore('project').put(true, ['pending-import', 'orphan']);
+    tx.objectStore('project').put(true, ['pending-import', source.id]);
+    tx.objectStore('chunks').put(new Float64Array([1]), ['orphan', 0, 'time']);
+    tx.objectStore('chunks').put(new Float64Array([1]), ['legacy', 0, 'time']);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    await engine.recoverImports();
+    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+      const request = db
+        .transaction('chunks')
+        .objectStore('chunks')
+        .getAllKeys();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    assert.ok(!keys.some((key) => Array.isArray(key) && key[0] === 'orphan'));
+    assert.ok(keys.some((key) => Array.isArray(key) && key[0] === 'legacy'));
+    await engine.travel('redo');
+    assert.equal((await samples(engine, source.channels[0])).length, 6);
+  } finally {
+    db.close();
+    engine.close();
+  }
+});
+
+void test('editing atomically recalculates descendants and persistent Undo/Redo restores recipes and values', async () => {
+  const { engine, source, database } = await fixture();
+  try {
+    const scaled = await engine.derive(source.channels[0], 'scale', 2);
+    const [segment] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[1, 4]] },
+      [scaled.id],
+      false,
+      'signals',
+    );
+    const [value] = await engine.calculateValues([segment.nodes[0]], 'maximum');
+    const original = await samples(engine, source.channels[0]);
+    const step = new WorkflowIndex(engine.project).owner.get(scaled.id)!;
+    await engine.editOperation(step.id, {
+      type: 'derive-many',
+      parentIds: [source.channels[0]],
+      operation: 'scale',
+      parameter: 3,
+    });
+    assert.equal(
+      engine.project.values!.find((item) => item.id === value.id)!.value,
+      30,
+    );
+    assert.deepEqual(await samples(engine, source.channels[0]), original);
+    assert.equal(
+      new WorkflowIndex(engine.project).owner.get(scaled.id)!.revision,
+      2,
+    );
+    assert.equal(engine.project.workflowSteps!.length, 4);
+    const committed = structuredClone(engine.project);
+    await assert.rejects(() =>
+      engine.editOperation(step.id, {
+        type: 'derive-many',
+        parentIds: [segment.nodes[0]],
+        operation: 'scale',
+        parameter: 5,
+      }),
+    );
+    assert.deepEqual(engine.project, committed);
+    engine.close();
+    const reopened = new SignalEngine(undefined, database);
+    await reopened.open();
+    assert.ok(reopened.canUndo);
+    await reopened.travel('undo');
+    assert.equal(
+      reopened.project.values!.find((item) => item.id === value.id)!.value,
+      20,
+    );
+    await reopened.travel('redo');
+    assert.equal(
+      reopened.project.values!.find((item) => item.id === value.id)!.value,
+      30,
+    );
+    reopened.close();
+  } finally {
+    engine.close();
+  }
+});
+
+void test('deletion previews and removes dependent invocations, retains unrelated branches, and is reversible', async () => {
+  const { engine, source, database } = await fixture();
+  try {
+    const a = await engine.derive(source.channels[0], 'scale', 2);
+    const b = await engine.derive(source.channels[1], 'offset', 10);
+    await engine.calculateValues([a.id], 'maximum');
+    const id = new WorkflowIndex(engine.project).owner.get(a.id)!.id;
+    assert.equal(affectedOperations(engine.project, id).length, 2);
+    await engine.deleteOperation(id);
+    assert.ok(!engine.project.nodes.some((node) => node.id === a.id));
+    assert.ok(engine.project.nodes.some((node) => node.id === b.id));
+    assert.equal(engine.project.values!.length, 0);
+    await engine.travel('undo');
+    assert.ok(engine.project.nodes.some((node) => node.id === a.id));
+    await engine.deleteOperation(`import:${source.id}`);
+    assert.equal(engine.project.sources.length, 0);
+    engine.close();
+    const reopened = new SignalEngine(undefined, database);
+    await reopened.open();
+    await reopened.initializeWorkflow();
+    assert.equal(reopened.project.sources.length, 0);
+    await reopened.travel('undo');
+    assert.equal(reopened.project.sources.length, 1);
+    assert.ok((await samples(reopened, a.id)).length);
+    reopened.close();
+  } finally {
+    engine.close();
+  }
+});
+
+void test('segmentation edits reject unsafe cardinality changes and value edits preserve output identity', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const [segment] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[0, 4]] },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const [value] = await engine.calculateValues(segment.nodes, 'minimum');
+    const index = new WorkflowIndex(engine.project),
+      before = structuredClone(engine.project);
+    await assert.rejects(
+      () =>
+        engine.editOperation(index.owner.get(segment.nodes[0])!.id, {
+          type: 'segment',
+          sourceId: source.id,
+          definition: {
+            method: 'ranges',
+            boundary: 'clip',
+            ranges: [
+              [0, 1],
+              [1, 4],
+            ],
+          },
+          targetIds: [source.channels[0]],
+          independently: false,
+          scope: 'signals',
+        }),
+      /number of outputs/,
+    );
+    assert.deepEqual(engine.project, before);
+    await engine.editOperation(index.owner.get(value.id)!.id, {
+      type: 'calculate-values',
+      inputIds: segment.nodes,
+      operation: 'maximum',
+    });
+    assert.equal(
+      engine.project.values!.find((item) => item.id === value.id)!.value,
+      10,
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('lifecycle dependencies include saved inputs that produced no segment output', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const [early] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[0, 1]] },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const earlyStep = new WorkflowIndex(engine.project).owner.get(
+      early.nodes[0],
+    )!;
+    const later = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[4, 7]] },
+      [early.nodes[0], source.channels[1]],
+      true,
+      'signals',
+    );
+    assert.equal(later.length, 1);
+    assert.equal(affectedOperations(engine.project, earlyStep.id).length, 2);
+    await engine.deleteOperation(earlyStep.id);
+    assert.equal(engine.project.segmentationOperations!.length, 0);
+    assert.equal(engine.project.segments.length, 0);
+    await engine.travel('undo');
+    assert.ok((await samples(engine, later[0].nodes[0])).length);
+  } finally {
+    engine.close();
+  }
+});
+
+void test('workspace backup round trips nested samples, gaps, aliases and values; invalid restores are atomic', async () => {
+  const { engine, source } = await fixture();
+  const target = new SignalEngine(undefined, crypto.randomUUID());
+  await target.open();
+  await target.initializeWorkflow();
+  try {
+    const derived = await engine.derive(source.channels[0], 'time-shift', 3);
+    const [value] = await engine.calculateValues([derived.id], 'time-average');
+    await engine.rename(derived.id, 'Reviewed signal');
+    const backup = await engine.backupWorkspace();
+    await target.restoreWorkspace(new File([backup], 'backup.stratus'));
+    assert.deepEqual(
+      await samples(target, derived.id),
+      await samples(engine, derived.id),
+    );
+    assert.equal(
+      new WorkflowIndex(target.project).label(derived.id),
+      'Reviewed signal',
+    );
+    assert.equal(
+      target.project.values!.find((item) => item.id === value.id)!.value,
+      value.value,
+    );
+    const before = structuredClone(target.project);
+    const truncated = (await backup.text()).split('\n').slice(0, -2).join('\n');
+    await assert.rejects(() =>
+      target.restoreWorkspace(new File([truncated], 'truncated.stratus')),
+    );
+    assert.deepEqual(target.project, before);
+    assert.deepEqual(
+      await samples(target, derived.id),
+      await samples(engine, derived.id),
+    );
+    await target.travel('undo');
+    assert.equal(target.project.sources.length, 0);
+  } finally {
+    engine.close();
+    target.close();
+  }
+});
+
+void test('a stale writer cannot delete or edit a newer workspace', async () => {
+  const { engine, source, database } = await fixture();
+  const stale = new SignalEngine(undefined, database);
+  await stale.open();
+  try {
+    await engine.derive(source.channels[0], 'scale', 2);
+    await assert.rejects(
+      () => stale.deleteOperation(`import:${source.id}`),
+      /another window/,
+    );
+    const reopened = new SignalEngine(undefined, database);
+    await reopened.open();
+    assert.equal(reopened.project.nodes.length, 3);
+    reopened.close();
+  } finally {
+    engine.close();
+    stale.close();
+  }
+});
+
+void test('archive validation rejects corrupt display, value, history and sample metadata before replacing work', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const scaled = await engine.derive(source.channels[0], 'scale', 2);
+    await engine.derive(scaled.id, 'offset', 10);
+    await engine.calculateValues([scaled.id], 'maximum');
+    const lines = (await (await engine.backupWorkspace()).text())
+      .trimEnd()
+      .split('\n');
+    const before = structuredClone(engine.project);
+    const corruptions: ((project: Project) => void)[] = [
+      (p) => {
+        Reflect.set(p, 'labels', { [scaled.id]: { broken: true } });
+      },
+      (p) => {
+        Reflect.deleteProperty(p.values![0], 'sampleCount');
+      },
+      (p) => {
+        p.workflowSteps![2].inputIds = [];
+      },
+      (p) => {
+        Reflect.deleteProperty(p.sources[0], 'chunkRanges');
+      },
+      (p) => {
+        p.sources[0].chunkRanges[0][1] = 999;
+      },
+      (p) => {
+        p.nodes.find((node) => node.id === scaled.id)!.parameters = {};
+      },
+      (p) => {
+        p.workflowSteps![2].outputIds = [scaled.id];
+      },
+      (p) => {
+        Reflect.set(p, 'functionRuns', { invalid: true });
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const header = JSON.parse(lines[0]) as { project: Project };
+      corrupt(header.project);
+      await assert.rejects(() =>
+        engine.restoreWorkspace(
+          new File(
+            [[JSON.stringify(header), ...lines.slice(1)].join('\n')],
+            'invalid.stratus',
+          ),
+        ),
+      );
+      assert.deepEqual(engine.project, before);
+      assert.equal((await samples(engine, scaled.id))[1][1], 20);
+    }
+  } finally {
+    engine.close();
+  }
+});
+
+void test('binary unit variants and legacy region workflows round trip through the same archive validator', async () => {
+  const { engine, source } = await fixture(
+    't,Torque [N·m],Speed [RPM],Fuel [kg/h]\n0,10,1000,2\n1,20,2000,3\n2,30,3000,4',
+  );
+  const restored = new SignalEngine(undefined, crypto.randomUUID());
+  await restored.open();
+  try {
+    const power = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'power',
+      parameter: 0,
+      inputIds: [source.channels[0]],
+      secondaryIds: [source.channels[1]],
+    });
+    const bsfc = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'bsfc',
+      parameter: 0,
+      inputIds: [source.channels[2]],
+      secondaryIds: [power.outputs[0].signalId],
+    });
+    await restored.restoreWorkspace(
+      new File([await engine.backupWorkspace()], 'binary.stratus'),
+    );
+    assert.deepEqual(
+      await samples(restored, bsfc.outputs[0].signalId),
+      await samples(engine, bsfc.outputs[0].signalId),
+    );
+    const set = await engine.createRegions({
+      sourceId: source.id,
+      name: 'Ranges',
+      timeReference: 'recording',
+      definition: {
+        method: 'ranges',
+        boundary: 'clip',
+        ranges: [
+          [0, 1],
+          [1, 2],
+        ],
+      },
+    });
+    const run = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'scale',
+      parameter: 2,
+      inputIds: [source.channels[0]],
+      regionSetId: set.id,
+    });
+    await restored.restoreWorkspace(
+      new File([await engine.backupWorkspace()], 'regions.stratus'),
+    );
+    assert.deepEqual(
+      await samples(restored, run.outputs[0].signalId),
+      await samples(engine, run.outputs[0].signalId),
+    );
+  } finally {
+    engine.close();
+    restored.close();
+  }
+});
+
+void test('deleting migrated segmentation removes owned region scopes while deleting a metric preserves shared ranges', async () => {
+  const { engine, source } = await fixture();
+  try {
+    await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[0, 4]] },
+      source.channels,
+      false,
+      'file',
+    );
+    const segmentation = engine.project.workflowSteps!.at(-1)!;
+    await engine.initializeRegions();
+    const set = engine.project.regionSets!.find(
+      (set) => set.id === segmentation.segmentationId,
+    )!;
+    assert.ok(set);
+    const first = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'scale',
+      parameter: 2,
+      inputIds: [source.channels[0]],
+      regionSetId: set.id,
+    });
+    const second = await engine.applyRegionFunction({
+      sourceId: source.id,
+      operation: 'scale',
+      parameter: 3,
+      inputIds: [source.channels[0]],
+      regionSetId: set.id,
+    });
+    const index = new WorkflowIndex(engine.project);
+    await engine.deleteOperation(
+      index.owner.get(first.outputs[0].signalId)!.id,
+    );
+    assert.ok(engine.project.regionSets!.some((item) => item.id === set.id));
+    assert.ok(
+      engine.project.nodes.some(
+        (item) => item.id === second.outputs[0].signalId,
+      ),
+    );
+    await engine.deleteOperation(segmentation.id);
+    assert.ok(!engine.project.regionSets!.some((item) => item.id === set.id));
+    assert.ok(
+      !engine.project.workflowSteps!.some(
+        (item) => item.regionSetId === set.id,
+      ),
+    );
+    assert.ok(
+      !engine.project.nodes.some(
+        (item) => item.id === second.outputs[0].signalId,
+      ),
+    );
+    await engine.travel('undo');
+    assert.ok((await samples(engine, second.outputs[0].signalId)).length);
+  } finally {
+    engine.close();
+  }
+});
 
 void test('sample exports contain evaluated nested and shifted samples, including missing values', async () => {
   const { engine, source } = await fixture();

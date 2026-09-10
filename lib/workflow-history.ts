@@ -4,6 +4,7 @@ import type { Project, SignalNode } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
 
 export function stepName(step: WorkflowStep): string {
+  if (step.name) return step.name;
   if (step.kind === 'import') return 'Import recording';
   if (step.kind === 'segment') return 'Segment signals';
   if (step.kind === 'regions') return 'Saved region ranges';
@@ -295,6 +296,7 @@ export class WorkflowIndex {
     }
   }
   label(id: string): string {
+    if (this.project.labels?.[id]) return this.project.labels[id];
     const node = this.nodes.get(id);
     if (!node) {
       const value = this.values.get(id);

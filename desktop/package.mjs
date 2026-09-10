@@ -1,9 +1,19 @@
 import { packager } from '@electron/packager';
-import { mkdir, copyFile, cp, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  copyFile,
+  cp,
+  writeFile,
+} from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const staging = fileURLToPath(
-  new URL('../build/desktop-stage/', import.meta.url),
+const build = fileURLToPath(new URL('../build/', import.meta.url));
+await mkdir(build, { recursive: true });
+const staging = await mkdtemp(`${build}/desktop-stage-`);
+const manifest = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 );
 await mkdir(`${staging}/desktop`, { recursive: true });
 await cp(
@@ -20,7 +30,7 @@ await writeFile(
   JSON.stringify({
     name: 'stratus',
     productName: 'Stratus',
-    version: '0.1.0',
+    version: manifest.version,
     type: 'module',
     main: 'desktop/main.mjs',
   }),

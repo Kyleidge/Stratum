@@ -3,6 +3,19 @@ import { SignalGraph } from './signal-graph';
 import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
 import { withWorkflowHistory } from './workflow-history';
+import {
+  affectedOperations,
+  withoutOperations,
+  savedCommand,
+  remapProject,
+} from './workflow-lifecycle';
+import type { WorkflowCommand } from './workflow-lifecycle';
+import {
+  ARCHIVE_LIMIT,
+  EXPORT_LIMIT,
+  archiveLines,
+  validateWorkspace,
+} from './workspace-archive';
 import { VALUE_FUNCTIONS } from './workflow-types';
 import type { ScalarValue, ValueOperation } from './workflow-types';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
@@ -67,6 +80,24 @@ export class SignalEngine {
   private columnCache = new Map<string, Float64Array>();
   private cacheBytes = 0;
   private revision = 0;
+  private undoStack: Project[] = [];
+  private redoStack: Project[] = [];
+  private staging = false;
+  get canUndo() {
+    return this.undoStack.length > 0;
+  }
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+  private invalidate() {
+    this.cache.clear();
+    this.extremaTimes.clear();
+    this.columnCache.clear();
+    this.cacheBytes = 0;
+    this.segmentPreviewCache = undefined;
+    this.indexedProject = undefined;
+    this.indexedGraph = undefined;
+  }
   private indexedProject?: Project;
   private indexedGraph?: SignalGraph;
   private indexedCount = -1;
@@ -97,11 +128,18 @@ export class SignalEngine {
     const tx = this.db.transaction('project');
     const snapshot = tx.objectStore('project').get('current');
     const revision = tx.objectStore('project').get('revision');
+    const journal = tx.objectStore('project').get('history');
     this.project =
       ((await result(snapshot)) as Project | undefined) ?? emptyProject();
     this.revision = Number(await result(revision)) || 0;
+    const history = (await result(journal)) as
+      | { undo: Project[]; redo: Project[] }
+      | undefined;
+    this.undoStack = history?.undo ?? [];
+    this.redoStack = history?.redo ?? [];
     const restored = restoreSegmentationOperations(this.project);
-    if (restored !== this.project) await this.save(restored);
+    if (restored !== this.project)
+      await this.save(restored, { undo: this.undoStack, redo: this.redoStack });
     return this.project;
   }
   close() {
@@ -113,9 +151,21 @@ export class SignalEngine {
         'Operation cancelled. Your existing signals are unchanged.',
       );
   }
-  private async save(next: Project) {
+  private async save(
+    next: Project,
+    history?: { undo: Project[]; redo: Project[] },
+  ) {
     this.check();
     if (this.project.workflowSteps) next = withWorkflowHistory(next);
+    if (this.staging) {
+      this.project = next;
+      this.invalidate();
+      return;
+    }
+    const journal = history ?? {
+      undo: [...this.undoStack.slice(-19), this.project],
+      redo: [],
+    };
     const tx = this.db.transaction('project', 'readwrite');
     const done = complete(tx);
     const store = tx.objectStore('project');
@@ -129,6 +179,7 @@ export class SignalEngine {
       }
       store.put(next, 'current');
       store.put(this.revision + 1, 'revision');
+      store.put(journal, 'history');
     };
     try {
       await done;
@@ -141,6 +192,302 @@ export class SignalEngine {
     }
     this.project = next;
     this.revision++;
+    this.undoStack = journal.undo;
+    this.redoStack = journal.redo;
+    this.invalidate();
+  }
+  async travel(direction: 'undo' | 'redo') {
+    const stack = direction === 'undo' ? this.undoStack : this.redoStack;
+    const target = stack.at(-1);
+    if (!target) throw new Error(`Nothing to ${direction}.`);
+    await this.save(
+      target,
+      direction === 'undo'
+        ? {
+            undo: this.undoStack.slice(0, -1),
+            redo: [...this.redoStack, this.project],
+          }
+        : {
+            undo: [...this.undoStack, this.project],
+            redo: this.redoStack.slice(0, -1),
+          },
+    );
+  }
+  async deleteOperation(stepId: string) {
+    await this.save(
+      withoutOperations(this.project, affectedOperations(this.project, stepId)),
+    );
+  }
+  async rename(id: string, name: string) {
+    name = name.trim();
+    if (!name || name.length > 160)
+      throw new Error('Enter a name between 1 and 160 characters.');
+    if (this.project.sources.some((source) => source.id === id))
+      return this.save({
+        ...this.project,
+        sources: this.project.sources.map((source) =>
+          source.id === id ? { ...source, name } : source,
+        ),
+      });
+    if (this.project.workflowSteps?.some((step) => step.id === id))
+      return this.save({
+        ...this.project,
+        workflowSteps: this.project.workflowSteps.map((step) =>
+          step.id === id ? { ...step, name } : step,
+        ),
+      });
+    if (
+      !this.project.nodes.some((node) => node.id === id) &&
+      !this.project.values?.some((value) => value.id === id)
+    )
+      throw new Error('That output no longer exists.');
+    await this.save({
+      ...this.project,
+      labels: { ...this.project.labels, [id]: name },
+    });
+  }
+  async backupWorkspace() {
+    const parts: BlobPart[] = [];
+    let bytes = 0,
+      chunks = 0;
+    const append = (value: unknown) => {
+      const line = JSON.stringify(value) + '\n';
+      bytes += new TextEncoder().encode(line).length;
+      if (bytes > ARCHIVE_LIMIT)
+        throw new Error(
+          'This workspace exceeds the 128 MiB archive limit. Nothing was downloaded.',
+        );
+      parts.push(line);
+    };
+    append({
+      format: 'stratus-workspace',
+      version: 1,
+      project: withWorkflowHistory(this.project),
+    });
+    for (const source of this.project.sources)
+      for (let index = 0; index < source.chunks; index++)
+        for (const column of [
+          'time',
+          ...source.channels.map((_, index) => index),
+        ]) {
+          this.check();
+          const data = await this.column(source.id, index, column);
+          append({
+            sourceId: source.id,
+            index,
+            column,
+            data: Array.from(data, (value) =>
+              Number.isFinite(value) ? value : null,
+            ),
+          });
+          chunks++;
+        }
+    append({ complete: true, chunks });
+    return new Blob(parts, { type: 'application/x-stratus-workspace' });
+  }
+  async restoreWorkspace(file: File) {
+    let next: Project | undefined;
+    const sourceMapping = new Map<string, string>(),
+      seen = new Set<string>();
+    const previousTimes = new Map<string, number>();
+    let completed = false;
+    try {
+      for await (const value of archiveLines(file)) {
+        this.check();
+        if (!value || typeof value !== 'object' || completed)
+          throw new Error('Invalid or extra archive records.');
+        const record = value as Record<string, unknown>;
+        if (!next) {
+          if (record.format !== 'stratus-workspace' || record.version !== 1)
+            throw new Error('Choose a supported Stratus workspace backup.');
+          next = validateWorkspace(record.project);
+          next.sources.forEach((source) => sourceMapping.set(source.id, uid()));
+          for (const id of sourceMapping.values())
+            await this.trackImport(id, true);
+          continue;
+        }
+        if (record.complete === true) {
+          if (record.chunks !== seen.size)
+            throw new Error('Archive chunk count is incorrect.');
+          completed = true;
+          continue;
+        }
+        const source = next.sources.find((item) => item.id === record.sourceId);
+        const index = record.index as number,
+          column = record.column as string | number;
+        if (
+          !source ||
+          !Number.isSafeInteger(index) ||
+          index < 0 ||
+          index >= source.chunks ||
+          !(
+            column === 'time' ||
+            (Number.isSafeInteger(column) &&
+              Number(column) >= 0 &&
+              Number(column) < source.channels.length)
+          ) ||
+          !Array.isArray(record.data)
+        )
+          throw new Error('Invalid archive sample column.');
+        const key = JSON.stringify([source.id, index, column]);
+        if (
+          seen.has(key) ||
+          record.data.length !==
+            Math.min(CHUNK_SIZE, source.rows - index * CHUNK_SIZE)
+        )
+          throw new Error('Duplicate or incomplete archive samples.');
+        const data = Float64Array.from(record.data, (sample: unknown) => {
+          if (sample === null && column !== 'time') return NaN;
+          if (typeof sample !== 'number' || !Number.isFinite(sample))
+            throw new Error('Invalid sample value.');
+          return sample;
+        });
+        if (column === 'time') {
+          const bounds = source.chunkRanges[index];
+          if (bounds[0] !== data[0] || bounds[1] !== data.at(-1))
+            throw new Error('Archive chunk ranges do not match samples.');
+          for (const time of data) {
+            if (time <= (previousTimes.get(source.id) ?? -Infinity))
+              throw new Error('Archive timestamps must increase.');
+            previousTimes.set(source.id, time);
+          }
+          if (
+            (index === 0 && data[0] !== source.start) ||
+            (index === source.chunks - 1 && data.at(-1) !== source.end)
+          )
+            throw new Error('Archive time bounds do not match metadata.');
+        }
+        const tx = this.db.transaction('chunks', 'readwrite'),
+          done = complete(tx);
+        tx.objectStore('chunks').add(data, [
+          sourceMapping.get(source.id)!,
+          index,
+          column,
+        ]);
+        await done;
+        seen.add(key);
+      }
+      if (
+        !next ||
+        !completed ||
+        seen.size !==
+          next.sources.reduce(
+            (sum, source) => sum + source.chunks * (source.channels.length + 1),
+            0,
+          )
+      )
+        throw new Error('The archive is truncated or missing samples.');
+      await this.save(remapProject(next, sourceMapping));
+      for (const id of sourceMapping.values())
+        await this.trackImport(id, false).catch(() => {});
+    } catch (error) {
+      for (const id of sourceMapping.values()) await this.removeIncomplete(id);
+      throw error;
+    }
+  }
+  private async applyCommand(command: WorkflowCommand) {
+    switch (command.type) {
+      case 'derive-many':
+        await this.deriveMany(
+          command.parentIds,
+          command.operation,
+          command.parameter,
+        );
+        break;
+      case 'calculate-values':
+        await this.calculateValues(command.inputIds, command.operation);
+        break;
+      case 'segment':
+        await this.segment(
+          command.sourceId,
+          command.definition,
+          command.targetIds,
+          command.independently,
+          command.scope,
+        );
+        break;
+      case 'region-function':
+        await this.applyRegionFunction(command.settings);
+        break;
+    }
+  }
+  async editOperation(stepId: string, command: WorkflowCommand) {
+    const before = this.project;
+    const affected = affectedOperations(before, stepId);
+    if (
+      affected[0]?.id !== stepId ||
+      ['import', 'regions'].includes(affected[0].kind)
+    )
+      throw new Error('This operation cannot be edited with signal settings.');
+    let next: Project;
+    this.staging = true;
+    try {
+      this.project = withoutOperations(before, affected);
+      this.invalidate();
+      for (const old of affected) {
+        this.check();
+        const prior = new Set(
+          this.project.workflowSteps?.map((step) => step.id),
+        );
+        await this.applyCommand(
+          old.id === stepId ? command : savedCommand(before, old),
+        );
+        const added =
+          this.project.workflowSteps?.filter((step) => !prior.has(step.id)) ??
+          [];
+        if (added.length !== 1)
+          throw new Error(
+            'This legacy operation cannot be rebuilt as one atomic step. Existing work is unchanged.',
+          );
+        const generated = added[0];
+        if (
+          generated.outputIds.length !== old.outputIds.length &&
+          affected.length > 1
+        )
+          throw new Error(
+            'The new settings change the number of outputs used by later operations. Remove or revise those dependent operations first. Existing work is unchanged.',
+          );
+        const mapping = new Map<string, string>([[generated.id, old.id]]);
+        if (generated.outputIds.length === old.outputIds.length)
+          generated.outputIds.forEach((id, position) =>
+            mapping.set(id, old.outputIds[position]),
+          );
+        if (generated.segmentationId && old.segmentationId)
+          mapping.set(generated.segmentationId, old.segmentationId);
+        this.project = remapProject(this.project, mapping);
+        this.project = {
+          ...this.project,
+          workflowSteps: this.project
+            .workflowSteps!.map((step) =>
+              step.id === old.id
+                ? {
+                    ...step,
+                    sequence: old.sequence,
+                    createdAt: old.createdAt,
+                    name: old.name,
+                    revision: (old.revision ?? 1) + 1,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : step,
+            )
+            .sort((a, b) => a.sequence - b.sequence),
+        };
+        this.invalidate();
+      }
+      // Build every affected signal before commit so bad recipes never publish.
+      const affectedIds = new Set(affected.map((step) => step.id));
+      const signalIds = new Set(this.project.nodes.map((node) => node.id));
+      for (const step of this.project.workflowSteps ?? [])
+        if (affectedIds.has(step.id))
+          for (const id of step.outputIds)
+            if (signalIds.has(id)) await this.plot(id);
+      next = this.project;
+    } finally {
+      this.staging = false;
+      this.project = before;
+      this.invalidate();
+    }
+    await this.save(next);
   }
   private async writeChunk(sourceId: string, index: number, chunk: Chunk) {
     this.check();
@@ -190,6 +537,34 @@ export class SignalEngine {
     );
     await done;
   }
+  private async trackImport(sourceId: string, active: boolean) {
+    const tx = this.db.transaction('project', 'readwrite'),
+      done = complete(tx);
+    const store = tx.objectStore('project');
+    if (active) store.put(true, ['pending-import', sourceId]);
+    else store.delete(['pending-import', sourceId]);
+    await done;
+  }
+  /** Caller must hold the shared workspace writer lock. Legacy unknown chunks are untouched. */
+  async recoverImports() {
+    const keys = await result(
+      this.db.transaction('project').objectStore('project').getAllKeys(),
+    );
+    const published = new Set(
+      [this.project, ...this.undoStack, ...this.redoStack].flatMap((project) =>
+        project.sources.map((source) => source.id),
+      ),
+    );
+    for (const key of keys)
+      if (
+        Array.isArray(key) &&
+        key[0] === 'pending-import' &&
+        typeof key[1] === 'string'
+      ) {
+        if (!published.has(key[1])) await this.removeIncomplete(key[1]);
+        await this.trackImport(key[1], false);
+      }
+  }
   private node(
     sourceId: string,
     name: string,
@@ -219,6 +594,7 @@ export class SignalEngine {
   async importCsv(file: Blob & { name?: string }, synthetic = false) {
     this.cancelled = false;
     const id = uid();
+    await this.trackImport(id, true);
     const parser = new CsvParser();
     const decoder = new TextDecoder('utf-8', { fatal: true });
     let headers: string[] = [];
@@ -324,9 +700,11 @@ export class SignalEngine {
         sources: [...this.project.sources, source],
         nodes: [...this.project.nodes, ...nodes],
       });
+      await this.trackImport(id, false).catch(() => {});
       return source;
     } catch (error) {
       await this.removeIncomplete(id);
+      await this.trackImport(id, false);
       throw error;
     }
   }
@@ -437,13 +815,18 @@ export class SignalEngine {
   }
   async initializeRegions() {
     const migrated = migrateRegionHistory(this.project);
-    if (migrated !== this.project) await this.save(migrated);
+    if (migrated !== this.project)
+      await this.save(migrated, { undo: this.undoStack, redo: this.redoStack });
   }
   async initializeWorkflow() {
     const next = withWorkflowHistory(this.project);
-    if (next !== this.project) await this.save(next);
+    if (next !== this.project)
+      await this.save(next, { undo: this.undoStack, redo: this.redoStack });
     else if (!this.project.workflowSteps)
-      await this.save({ ...this.project, workflowSteps: [] });
+      await this.save(
+        { ...this.project, workflowSteps: [] },
+        { undo: this.undoStack, redo: this.redoStack },
+      );
   }
   async calculateValues(inputIds: string[], operation: ValueOperation) {
     const spec = VALUE_FUNCTIONS.find((item) => item.operation === operation);
@@ -1819,6 +2202,7 @@ export class SignalEngine {
     const parts: BlobPart[] = [
       'Signal,Signal ID,Recording,Unit,Time (s),Value\r\n',
     ];
+    let exportBytes = 0;
     for (const id of new Set(ids)) {
       const node = this.find(id);
       const source = this.project.sources.find(
@@ -1833,7 +2217,13 @@ export class SignalEngine {
           lines.push(
             `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}\r\n`,
           );
-        parts.push(lines.join(''));
+        const part = lines.join('');
+        exportBytes += new TextEncoder().encode(part).length;
+        if (exportBytes > EXPORT_LIMIT)
+          throw new Error(
+            'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
+          );
+        parts.push(part);
       }
     }
     return new Blob(parts, { type: 'text/csv;charset=utf-8' });
@@ -1858,7 +2248,7 @@ export class SignalEngine {
       const { summary: s } = await this.plot(id);
       lines.push(
         [
-          quote(n.name),
+          quote(this.project.labels?.[id] ?? n.name),
           quote(n.operation),
           quote(n.unit),
           s.count,

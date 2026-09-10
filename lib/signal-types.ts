@@ -122,6 +122,7 @@ export type SegmentationPlan = {
   incomplete: number;
 };
 export type Project = {
+  labels?: Record<string, string>;
   workflowSteps?: WorkflowStep[];
   values?: ScalarValue[];
   sources: Source[];
@@ -154,6 +155,15 @@ export type Summary = {
 };
 export type Plot = { id: string; points: Point[]; summary: Summary };
 export type EngineRequest =
+  | { type: 'delete-operation'; stepId: string }
+  | {
+      type: 'edit-operation';
+      stepId: string;
+      command: import('./workflow-lifecycle').WorkflowCommand;
+    }
+  | { type: 'rename'; id: string; name: string }
+  | { type: 'undo' | 'redo' | 'backup-workspace' | 'demo-workflow' }
+  | { type: 'restore-workspace'; file: File }
   | RegionRequest
   | { type: 'init-workflow' }
   | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
@@ -182,14 +192,19 @@ export type EngineRequest =
       scope?: SegmentationScope;
     }
   | { type: 'segment-metrics'; ids: string[] }
-  | { type: 'view'; ids: string[]; range?: [number, number] }
-  | { type: 'rows'; id: string; offset: number }
+  | {
+      type: 'view';
+      ids: string[];
+      range?: [number, number];
+      inspection?: boolean;
+    }
+  | { type: 'rows'; id: string; offset: number; inspection?: boolean }
   | { type: 'export'; ids: string[] }
   | { type: 'export-samples'; ids: string[] }
-  | { type: 'cancel' };
+  | { type: 'cancel'; requestIds?: number[] };
 export type EngineResponse = { requestId: number } & (
   | { type: 'region-plan'; plan: RegionPlan }
-  | { type: 'project'; project: Project }
+  | { type: 'project'; project: Project; canUndo?: boolean; canRedo?: boolean }
   | { type: 'segment-plan'; plan: SegmentationPlan }
   | { type: 'plots'; plots: Plot[] }
   | { type: 'rows'; rows: Point[]; hasMore: boolean }

@@ -27,6 +27,8 @@ export function useSignalEngine(
     segments: [],
   });
   const [ready, setReady] = useState(false),
+    [canUndo, setCanUndo] = useState(false),
+    [canRedo, setCanRedo] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [status, setStatus] = useState('Opening local workspace…');
@@ -39,12 +41,25 @@ export function useSignalEngine(
         }
         const requestId = ++serial.current;
         pending.current.set(requestId, { resolve, reject });
-        worker.current.postMessage({ ...message, requestId });
+        try {
+          worker.current.postMessage({ ...message, requestId });
+        } catch {
+          pending.current.delete(requestId);
+          reject(new Error('The worker is unavailable. Reload the workspace.'));
+        }
       }),
     [],
   );
   useEffect(() => {
-    const engine = createSignalWorker();
+    let engine: Worker;
+    try {
+      engine = createSignalWorker();
+    } catch {
+      queueMicrotask(() =>
+        setError('The signal worker could not start. Reload the workspace.'),
+      );
+      return;
+    }
     worker.current = engine;
     engine.onmessage = ({ data }: MessageEvent<EngineResponse>) => {
       if (data.type === 'progress') {
@@ -57,19 +72,27 @@ export function useSignalEngine(
       if (data.type === 'error') waiting.reject(new Error(data.message));
       else waiting.resolve(data);
     };
-    engine.onerror = () => {
+    const fail = () => {
       const failure = new Error(
         'The signal worker stopped. Reload the workspace.',
       );
       setError(failure.message);
+      engine.terminate();
+      worker.current = null;
+      setReady(false);
+      setBusy(false);
       for (const waiting of pending.current.values()) waiting.reject(failure);
       pending.current.clear();
     };
+    engine.onerror = fail;
+    engine.onmessageerror = fail;
     let alive = true;
     void request({ type: initialization })
       .then((response) => {
         if (alive && response.type === 'project') {
           setProject(response.project);
+          setCanUndo(!!response.canUndo);
+          setCanRedo(!!response.canRedo);
           setStatus('Ready · local processing');
           setReady(true);
         }
@@ -96,6 +119,8 @@ export function useSignalEngine(
       if (response.type !== 'project')
         throw new Error('Unexpected engine response.');
       setProject(response.project);
+      setCanUndo(!!response.canUndo);
+      setCanRedo(!!response.canRedo);
       setStatus('Saved · source data unchanged');
       return response.project;
     } catch (caught) {
@@ -121,6 +146,8 @@ export function useSignalEngine(
   return {
     project,
     ready,
+    canUndo,
+    canRedo,
     busy,
     error,
     status,
@@ -128,6 +155,10 @@ export function useSignalEngine(
     mutate,
     preview,
     setError,
-    cancel: () => worker.current?.postMessage({ type: 'cancel' }),
+    cancel: () =>
+      worker.current?.postMessage({
+        type: 'cancel',
+        requestIds: [...pending.current.keys()],
+      }),
   };
 }

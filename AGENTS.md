@@ -2,7 +2,7 @@
 
 ## Current purpose and scope
 
-Stratus is a desktop signal-workflow prototype with a Sites browser preview.
+Stratus is a local desktop signal-workflow application with a Sites browser preview.
 It imports immutable CSV signals. Derivations and segments create ordinary derived
 signals, which can feed further derivations, segmentation, and scalar values.
 The primary navigation is chronological operation history with explicit output
@@ -30,10 +30,25 @@ There are no server API routes or cloud signal uploads.
   Never substitute decimated plot points for sample data. CSV text cells must
   remain text in spreadsheets. Cancellation must prevent the download even
   when a worker request was queued behind another read.
-- `lib/workflow-history.ts`: append-only invocation history, legacy adaptation,
+- `lib/workflow-history.ts`: chronological invocation history, legacy adaptation,
   output ownership, and iterative lineage including binary and trigger inputs.
   `lib/workflow-types.ts`: immutable scalar records and explicit operation records.
-  History and outputs commit together. Stored operations never move or retarget.
+  History and outputs commit together. New operations append. Explicit Edit
+  rebuilds the operation and dependent invocations atomically, preserves their
+  sequence/output IDs when cardinality matches, and increments revisions.
+  `lib/workflow-lifecycle.ts` owns dependency impact, deletion and recipe replay.
+  Removing one operation removes dependent invocation batches, not arbitrary
+  individual outputs. Shared region scopes are dependencies, not owned data.
+  `workflow-management.tsx` exposes impact confirmation, edit, duplicate and names.
+  Undo/Redo retains 20 project snapshots across restarts. Housekeeping migrations
+  must preserve the journal; do not journal them as user actions.
+- `lib/workspace-archive.ts` validates versioned NDJSON workspace backups before
+  publication. Restore stages original columns under fresh source IDs and commits
+  metadata atomically, preserving the prior workspace for Undo. Archives are
+  limited to 128 MiB; samples CSV to 64 MiB. Never publish partial archives or
+  delete published/Undo/Redo source chunks during import recovery.
+- `components/workflow-list.tsx`: render disclosure rows only while open, with
+  30-item pages. Keep large lineage and checked-input lists bounded in the DOM.
 - `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
 - `components/region-workbench.tsx`: retained region workspace. Regions
   are reusable recording-time pointers, not automatic channel copies. The left
@@ -82,7 +97,11 @@ There are no server API routes or cloud signal uploads.
   or engine-ramp heuristics. Pair crossings before applying offsets; retain
   source-time provenance and translate derived output axes. Segmentation creates
   crops only; engineering metrics are a separate explicit operation.
-- `lib/signal.worker.ts`: serialized processing away from the UI thread.
+- `lib/signal.worker.ts`: serialized processing away from the UI thread, coordinated
+  across windows by Web Locks plus optimistic metadata revisions. Cancellation
+  includes queued requests; plot and samples inspections coalesce separately.
+  Failed lock acquisition must never poison the queue. Fatal worker/renderer
+  failures expose recovery, not another request to a dead worker.
 - `lib/create-signal-worker.ts`: shared Vite worker factory. Use its explicit
   `?worker` import; vinext's source-identity rewrite makes application
   `import.meta.url` unsuitable for constructing browser worker URLs.
@@ -159,6 +178,10 @@ to address those issues during repository setup.
 - `tests/workflow.test.ts` covers append-only operation ordering, scalar numerical
   semantics, immutable nested segment chains, legacy migration, atomic batches,
   concurrent writers, and bounded history previews through 5,000 levels.
+  It also covers atomic editing/deletion, persisted Undo/Redo, worker cancellation,
+  lock failures, abandoned import recovery, archive round trips and corrupt
+  archive rejection. `desktop:ui-smoke` exercises actual edit/delete/rename,
+  Undo/Redo, backup download and invalid restore dialogs with isolated storage.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin

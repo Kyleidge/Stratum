@@ -23,8 +23,11 @@ export type ScalarValue = {
   createdAt: string;
 };
 
-/** Append-only invocation record. Output order and membership are explicit. */
+/** Chronological invocation record; explicit edits increment its revision. */
 export type WorkflowStep = {
+  revision?: number;
+  updatedAt?: string;
+  name?: string;
   id: string;
   sourceId: string;
   sequence: number;

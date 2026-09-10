@@ -190,6 +190,12 @@ function ExportForm({
         />
       </fieldset>
       <p>{description}</p>
+      {resolvedFormat === 'samples' && (
+        <p className="workflow-muted">
+          Samples CSV is limited to 64 MiB per file. For larger recordings,
+          export shorter segments or fewer signals.
+        </p>
+      )}
       <div className="workflow-export-preview">
         <strong>
           {ids.length} {allValues ? 'values' : 'signals'} included

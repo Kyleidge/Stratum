@@ -2,6 +2,7 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import WorkflowExport from '../components/workflow-export';
+import WorkflowList from '../components/workflow-list';
 import type { EngineResponse, Project } from '../lib/signal-types';
 
 export async function workflowUiSmoke() {
@@ -17,7 +18,7 @@ export async function workflowUiSmoke() {
       await delay();
     }
     throw new Error(
-      `Timed out: ${label}. ${document.querySelector('[role="alert"]')?.textContent ?? ''}`,
+      `Timed out: ${label}. ${document.querySelector('[role="alert"]')?.textContent ?? ''} Controls: ${[...document.querySelectorAll<HTMLButtonElement>('button[aria-label]')].map((item) => `${item.getAttribute('aria-label')}:${item.disabled}`).join(', ')}. Status: ${document.querySelector('.workflow-status')?.textContent}. Screen: ${document.body.innerText.slice(0, 1500)}`,
     );
   }
   const button = (text: string, root: Document | HTMLElement = document) =>
@@ -125,6 +126,11 @@ export async function workflowUiSmoke() {
     if (!condition) throw new Error(message);
   }
   try {
+    await until(
+      () => button('Open example recording') || button('Derive signal'),
+      'workspace startup',
+    );
+    if (button('Open example recording')) await click('Open example recording');
     await until(() => button('Derive signal'), 'initial signal');
     assert(
       document
@@ -320,6 +326,220 @@ export async function workflowUiSmoke() {
       'Original signal was lost after downstream processing.',
     );
     await click('History tree');
+    // Everyday management must work through the actual dialogs and worker.
+    await click('Derive signal');
+    await choose('Signal operation', 'Scale signal');
+    let managementModal = await dialog();
+    setValue(
+      managementModal.querySelector<HTMLInputElement>(
+        'input[aria-label="Scale factor"]',
+      )!,
+      '2',
+    );
+    await delay();
+    await click('Create 1 derived signal', managementModal);
+    await settled();
+    await click('Rename output');
+    managementModal = await dialog();
+    setValue(
+      managementModal.querySelector<HTMLInputElement>(
+        'input[aria-label="Display name"]',
+      )!,
+      'Reviewed speed',
+    );
+    await delay();
+    await click('Save name', managementModal);
+    await settled();
+    assert(
+      document.querySelector('h1')?.textContent === 'Reviewed speed',
+      'Rename lost the selected output.',
+    );
+    await click('Calculate value');
+    await click('Create 1 value', await dialog());
+    await settled();
+    const initialValue = Number.parseFloat(
+      document
+        .querySelector('.workflow-value-card strong')
+        ?.textContent?.replaceAll(',', '') ?? 'NaN',
+    );
+    document
+      .querySelector<HTMLButtonElement>('.workflow-input-link button')!
+      .click();
+    await delay();
+    await click('Edit settings');
+    managementModal = await dialog();
+    assert(
+      managementModal.textContent?.includes('1 dependent operation'),
+      'Edit omitted downstream impact.',
+    );
+    setValue(
+      managementModal.querySelector<HTMLInputElement>(
+        'input[aria-label="Scale factor"]',
+      )!,
+      '3',
+    );
+    await delay();
+    await click('Save changes and recalculate', managementModal);
+    await settled();
+    assert(
+      document.querySelector('h1')?.textContent === 'Reviewed speed',
+      'Editing lost the output alias.',
+    );
+    await click('Delete operation');
+    let impact = await until(
+      () =>
+        document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+        undefined,
+      'delete impact',
+    );
+    assert(
+      impact.textContent?.includes('2 operations'),
+      'Delete failed to include the dependent value.',
+    );
+    await click('Keep operation', impact);
+    await until(
+      () => !document.querySelector('[role="alertdialog"]'),
+      'cancel deletion',
+    );
+    await click('Delete operation');
+    impact = await until(
+      () =>
+        document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+        undefined,
+      'delete impact again',
+    );
+    await click('Delete listed operations', impact);
+    await until(
+      () =>
+        !document.querySelector('[role="alertdialog"]') &&
+        document.querySelector('h1')?.textContent !== 'Reviewed speed',
+      'delete committed',
+    );
+    async function historyAction(label: string) {
+      label += ' last change';
+      (
+        await until(
+          () =>
+            document.querySelector<HTMLButtonElement>(
+              `button[aria-label="${label}"]:not(:disabled)`,
+            ) ?? undefined,
+          label,
+        )
+      ).click();
+      await delay();
+      await until(
+        () =>
+          document
+            .querySelector('.workflow-notice')
+            ?.textContent?.includes(
+              label.startsWith('Undo')
+                ? 'Undid last change'
+                : 'Redid last change',
+            ),
+        `${label} settled`,
+      );
+    }
+    await historyAction('Undo');
+    await click('Signals & values');
+    setValue(search, 'Reviewed speed');
+    await until(
+      () => document.querySelector('.workflow-catalog-item') ?? undefined,
+      'undo restores named signal',
+    );
+    await historyAction('Redo');
+    setValue(search, 'Reviewed speed');
+    await delay();
+    assert(
+      !document.querySelector('.workflow-catalog-item'),
+      'Redo did not remove the restored signal.',
+    );
+    await historyAction('Undo');
+    setValue(search, 'Reviewed speed');
+    await delay();
+    await until(
+      () => document.querySelector('.workflow-catalog-item') ?? undefined,
+      'second undo restores signal',
+    );
+    // The flat index finds the dependent scalar outside the virtualized tree viewport.
+    const lastValue = [
+      ...document.querySelectorAll<HTMLElement>('.workflow-catalog-item'),
+    ].find((item) => item.textContent?.includes('Time average'));
+    assert(lastValue, 'Dependent value is missing after Undo.');
+    lastValue.click();
+    await until(
+      () => document.querySelector('.workflow-value-card strong') ?? undefined,
+      'restored value',
+    );
+    const revisedValue = Number.parseFloat(
+      document
+        .querySelector('.workflow-value-card strong')
+        ?.textContent?.replaceAll(',', '') ?? 'NaN',
+    );
+    assert(
+      Number.isFinite(initialValue) &&
+        Math.abs(revisedValue / initialValue - 1.5) < 0.002,
+      `Editing did not refresh the dependent value in the UI: ${initialValue} → ${revisedValue}, ${document.querySelector('h1')?.textContent}.`,
+    );
+    await click('Workspace');
+    managementModal = await dialog();
+    await click('Download workspace backup', managementModal);
+    await until(
+      () =>
+        managementModal
+          .querySelector('output')
+          ?.textContent?.includes('Backup download prepared'),
+      'workspace backup',
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['invalid archive'], 'invalid.stratus'));
+    const backupInput = managementModal.querySelector<HTMLInputElement>(
+      'input[aria-label="Workspace backup file"]',
+    )!;
+    backupInput.files = transfer.files;
+    backupInput.dispatchEvent(new Event('change', { bubbles: true }));
+    impact = await until(
+      () =>
+        document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+        undefined,
+      'restore confirmation',
+    );
+    await click('Restore and replace', impact);
+    await until(
+      () => impact.querySelector('[role="alert"]')?.textContent,
+      'invalid archive error remains visible',
+    );
+    await click('Keep current workspace', impact);
+    await until(
+      () => !document.querySelector('[role="alertdialog"]'),
+      'keep workspace',
+    );
+    managementModal
+      .querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!
+      .click();
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close workspace',
+    );
+    assert(
+      Number.parseFloat(
+        document
+          .querySelector('.workflow-value-card strong')
+          ?.textContent?.replaceAll(',', '') ?? 'NaN',
+      ) === revisedValue,
+      'Invalid restore changed the visible workspace.',
+    );
+    document
+      .querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')
+      ?.click();
+    await delay();
+    await click('Signals & values');
+    setValue(search, 'Engine speed');
+    await delay();
+    document
+      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
+      .click();
+    await delay();
+    await click('History tree');
     // Leave a representative view for the optional native screenshot.
     await click('Segment');
     const lastModal = await dialog();
@@ -336,6 +556,36 @@ export async function workflowUiSmoke() {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
+    root.render(
+      createElement(WorkflowList<number>, {
+        items: Array.from({ length: 5000 }, (_, i) => i),
+        summary: 'Large lineage test',
+        // oxlint-disable-next-line react/no-children-prop -- This .ts harness invokes the component's render prop without JSX.
+        children: (items) =>
+          createElement(
+            'ol',
+            null,
+            items.map((item) =>
+              createElement('li', { key: item }, `Step ${item + 1}`),
+            ),
+          ),
+      }),
+    );
+    await until(
+      () => host.querySelector('summary') ?? undefined,
+      'large list fixture',
+    );
+    assert(!host.querySelector('li'), 'Closed lineage rendered hidden rows.');
+    host.querySelector('summary')!.click();
+    await until(
+      () => host.querySelectorAll('li').length === 30,
+      'bounded open lineage',
+    );
+    await click('Next', host);
+    assert(
+      host.querySelector('li')?.textContent === 'Step 31',
+      'Lineage paging lost members.',
+    );
     const exportProject: Project = {
       sources: [],
       segments: [],
@@ -401,7 +651,7 @@ export async function workflowUiSmoke() {
     root.unmount();
     host.remove();
     console.info(
-      'STRATUS_SMOKE_OK: Workflow UI passed derivation, nested segmentation, scalar values, 40-member batches, pagination, lineage, keyboard navigation and original-signal recovery.',
+      'STRATUS_SMOKE_OK: Workflow UI passed editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
     );
   } catch (error) {
     console.error(

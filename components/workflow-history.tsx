@@ -293,6 +293,9 @@ export default function WorkflowHistory({
                         {row.label}
                       </strong>
                       <small>
+                        {row.kind === 'step' &&
+                          (step.revision ?? 1) > 1 &&
+                          `v${step.revision} · `}
                         {row.kind === 'step'
                           ? `${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length} ${contributingOutputs ? 'contributing ' : ''}${step.kind === 'value' ? 'values' : 'signals'}${step.kind === 'regions' ? ' · saved ranges' : ''}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ` +${inputSteps.length - 3}` : ''}` : ''}`
                           : `${index.kind(row.outputId!)} · ${index.nodes.get(row.outputId!)?.unit ?? index.values.get(row.outputId!)?.unit ?? ''}`}

@@ -1,4 +1,4 @@
-# Stratus prototype architecture
+# Stratus architecture
 
 The same React workspace runs inside Electron and the Sites browser preview.
 Desktop builds bundle the renderer and worker locally and need no web server or
@@ -17,22 +17,44 @@ or empty (stored as NaN). Invalid imports fail without publishing a source.
 Data is stored in append-only, 16,384-sample Float64 columns. Each recording has a
 shared timestamp column and a time-range index for its chunks. Reads return
 copies, so evaluation cannot mutate cached source buffers. The read cache has a
-16 MiB limit. Committed raw data has no update or delete operation in the app.
+16 MiB limit. Operations cannot update raw samples. Removing a recording removes
+its workspace metadata; retained Undo/Redo snapshots can still reference its data.
 This is application-level immutability, not a cryptographic archival guarantee.
 
 Source metadata is published only after every chunk commits. A project revision
 is checked inside the same IndexedDB write transaction to reject stale writers
 from another window. Failed and cancelled imports delete only their own
-unpublished chunks. A process crash during import can leave orphan chunks; safe
-maintenance/garbage collection is deferred rather than risking another window's
-active import. Electron permits one app instance per user profile.
+unpublished chunks. Imports and restores journal their staged source IDs.
+Initialization recovers abandoned imports while holding the shared Web Lock,
+preserving sources referenced by the current workspace or Undo/Redo. Unjournaled
+chunks from older versions are left untouched. Electron permits one app instance
+per user profile. Every worker job takes the workspace lock when supported;
+metadata revisions still reject stale writers rather than silently overwriting.
 
-Derived nodes form an append-only DAG with immutable IDs, operation versions,
-parent IDs, parameters, units, and creation time. Operations always reference
-existing nodes; modifying parameters creates a new node. Multiple-parent
-calculations retain every dependency.
+Derived nodes form a DAG with explicit parent IDs, parameters, units and creation
+time. New invocations append to chronological history. Edit rebuilds the selected
+operation and its dependents in a staging project, evaluates them, and publishes
+the entire result in one transaction. Matching output counts preserve identities;
+an incompatible cardinality change with dependents rejects the entire edit.
+Step positions remain stable and revisions record the change. Duplicate appends
+a separate operation. Delete previews and removes the transitive dependent
+invocations as complete batches. Immutable original samples are never rewritten.
 
-The active workspace (`region-workbench.tsx`) separates three concepts:
+Undo/Redo persists 20 metadata snapshots in the same transaction as the project.
+Initialization/migration does not erase Redo. Raw chunks remain available for
+retained snapshots; general historical-storage compaction is not implemented.
+Workspace backup uses versioned NDJSON metadata and exact raw columns; NaN samples
+are encoded as null. Restore validates records, graphs, ownership, dependencies,
+time bounds and column completeness, then stages fresh source IDs before an atomic
+metadata replacement. Invalid files leave the prior workspace unchanged.
+
+The active workspace is `workflow-workbench.tsx`: a virtualized, two-level
+chronological history plus a flat signal/value index. Output tables and open
+lineage/input disclosures are paginated. Inspection and processing selections are
+independent. New installations start empty, with an explicit example action.
+The latest usability/recovery review is in [production-review.md](production-review.md).
+
+The retained region workspace (`region-workbench.tsx`) separates three concepts:
 
 - Signals: raw columns and lazy derived recipes.
 - Region sets: versioned collections of time intervals on the recording clock.
@@ -66,7 +88,7 @@ Existing segmentation operations migrate to region sets without modifying their
 signal recipes, IDs, samples or inclusive endpoint semantics. Old calculations
 become function history records with their actual input IDs, including binary
 inputs. Legacy tree/editor modules and worker requests remain for compatibility
-and regression coverage; new UI entrypoints use the region workflow.
+and regression coverage; new UI entrypoints use the signal workflow described above.
 
 Graph validation, bounds, history traversal, and streaming evaluation use
 iterative algorithms, with no configured operation-depth limit. The evaluator
@@ -192,12 +214,18 @@ take a full scan; pagination also scans preceding derived values. Browser disk
 quota and storage eviction apply. The architecture avoids a full-file UI load;
 multi-gigabyte throughput and peak memory have not been benchmarked or certified.
 There is no fixed operation-depth cap, but finite memory and processing time
-still apply. The first next step for production scale should
-be an on-disk summary pyramid, job prioritization, and a native columnar store.
+still apply. Obsolete plot and sample-page inspections are coalesced in separate
+lanes; cancellation includes queued mutations and exports. On-disk summary
+pyramids and a native columnar store remain scale work.
+
+Version 1 workspace archives are capped at 128 MiB and evaluated samples CSV at
+64 MiB. Both still accumulate a bounded output Blob; they are not native streaming
+exports. Larger recordings can exceed these limits. Reports are printable HTML
+snapshots; multi-gigabyte throughput has not been certified.
 
 The workbench includes fifteen selectable operations plus explicit power and BSFC.
 FFT, higher-order filters, general formula parsing, arbitrary source generation,
-native TDMS/MDF import, signed installers, project interchange/backup, and plugin
+native TDMS/MDF import, signed installers, and plugin
 execution are not implemented. No user data is uploaded by analysis operations.
 
 Security follows the [Electron security guidance](https://www.electronjs.org/docs/latest/tutorial/security)

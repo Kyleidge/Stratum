@@ -36,6 +36,7 @@ type Props = {
   selectionKind?: ExplorerEntry['kind'];
   savedOperation?: SegmentationOperation;
   workflowMode?: boolean;
+  applyLabel?: string;
   defaultRange?: [number, number];
   onPreview: (
     definition: SegmentationDefinition,
@@ -127,6 +128,7 @@ export default function SegmentationEditor({
   selectionKind,
   savedOperation,
   workflowMode = false,
+  applyLabel,
   defaultRange,
   onPreview,
   onCreate,
@@ -543,18 +545,21 @@ export default function SegmentationEditor({
           onClick={() => void run(false)}
         >
           <Scissors size={14} />
-          {savedOperation
-            ? 'Create revised segments'
-            : target === 'file'
-              ? 'Create file segments'
-              : 'Create signal segments'}
+          {applyLabel ??
+            (savedOperation
+              ? 'Create revised segments'
+              : target === 'file'
+                ? 'Create file segments'
+                : 'Create signal segments')}
         </button>
       </div>
       <p className="input-hint">
         <GitBranch size={12} />{' '}
-        {savedOperation
-          ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
-          : 'Creates immutable crop recipes. Calculations remain separate steps.'}
+        {applyLabel
+          ? 'Saving updates this operation and recalculates its dependent results. Undo restores the previous version.'
+          : savedOperation
+            ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
+            : 'Creates immutable crop recipes. Calculations remain separate steps.'}
       </p>
     </fieldset>
   );

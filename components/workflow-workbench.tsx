@@ -17,6 +17,8 @@ import {
   Scissors,
   Waves,
   X,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import {
   Dialog,
@@ -54,6 +56,11 @@ import SignalChart, { formatValue } from './signal-chart';
 import SegmentationEditor from './segmentation-editor';
 import { RegionSelect, RegionNumber, finite } from './region-controls';
 import WorkflowExport from './workflow-export';
+import WorkflowManagement from './workflow-management';
+import WorkflowStorage from './workflow-storage';
+import WorkflowList from './workflow-list';
+import { affectedOperations } from '@/lib/workflow-lifecycle';
+import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
 
 const PAGE_SIZE = 30;
 const number = (value: number) => formatValue(value, 3);
@@ -63,6 +70,7 @@ const SIGNAL_FUNCTIONS = FUNCTIONS.filter(
   (spec) => spec.operation !== 'segment' && spec.operation !== 'min-max',
 );
 type Editor = {
+  editingStepId?: string;
   kind: 'derive' | 'segment' | 'value';
   ids: string[];
   operation?: Operation | ValueOperation;
@@ -118,10 +126,12 @@ export default function WorkflowWorkbench() {
     () => index.lineage(lineageRoot ?? []),
     [index, lineageRoot],
   );
+  const lineageSteps = useMemo(
+    () => new Set(lineage.steps.map((step) => step.id)),
+    [lineage],
+  );
   const shownSteps = lineageRoot
-    ? steps.filter((item) =>
-        lineage.steps.some((ancestor) => ancestor.id === item.id),
-      )
+    ? steps.filter((item) => lineageSteps.has(item.id))
     : steps;
   const lineageSubject =
     lineageRoot?.length === 1
@@ -172,17 +182,21 @@ export default function WorkflowWorkbench() {
     safePage * PAGE_SIZE,
     (safePage + 1) * PAGE_SIZE,
   );
-  const catalog = steps
-    .flatMap((item) => item.outputIds)
-    .filter((id) => {
-      const kind = index.kind(id);
-      return (
-        (catalogKind === 'all' || kind === catalogKind) &&
-        `${index.label(id)} ${reference(index.owner.get(id))} ${index.nodes.get(id)?.unit ?? index.values.get(id)?.unit ?? ''}`
-          .toLowerCase()
-          .includes(query.toLowerCase())
-      );
-    });
+  const catalog = useMemo(
+    () =>
+      steps
+        .flatMap((item) => item.outputIds)
+        .filter((id) => {
+          const kind = index.kind(id);
+          return (
+            (catalogKind === 'all' || kind === catalogKind) &&
+            `${index.label(id)} ${reference(index.owner.get(id))} ${index.nodes.get(id)?.unit ?? index.values.get(id)?.unit ?? ''}`
+              .toLowerCase()
+              .includes(query.toLowerCase())
+          );
+        }),
+    [steps, index, catalogKind, query],
+  );
   const safeCatalogPage = Math.min(
     catalogPage,
     Math.max(0, Math.ceil(catalog.length / PAGE_SIZE) - 1),
@@ -197,7 +211,7 @@ export default function WorkflowWorkbench() {
   useEffect(() => {
     if (!engine.ready || !plotId) return;
     let alive = true;
-    void request({ type: 'view', ids: [plotId] })
+    void request({ type: 'view', ids: [plotId], inspection: true })
       .then((response) => {
         if (alive && response.type === 'plots')
           setPlotState({ id: plotId, plot: response.plots[0] });
@@ -208,7 +222,7 @@ export default function WorkflowWorkbench() {
     return () => {
       alive = false;
     };
-  }, [request, engine.ready, plotId]);
+  }, [request, engine.ready, plotId, project]);
   const plot = plotState?.id === plotId ? plotState.plot : undefined;
   const [showSamples, setShowSamples] = useState(false),
     [samplePage, setSamplePage] = useState(0);
@@ -221,7 +235,12 @@ export default function WorkflowWorkbench() {
   useEffect(() => {
     if (!showSamples || !plotId) return;
     let alive = true;
-    void request({ type: 'rows', id: plotId, offset: samplePage * 100 })
+    void request({
+      type: 'rows',
+      id: plotId,
+      offset: samplePage * 100,
+      inspection: true,
+    })
       .then((response) => {
         if (alive && response.type === 'rows')
           setSamples({
@@ -237,7 +256,7 @@ export default function WorkflowWorkbench() {
     return () => {
       alive = false;
     };
-  }, [showSamples, plotId, samplePage, request]);
+  }, [showSamples, plotId, samplePage, request, project]);
 
   function select(next: WorkflowSelection) {
     if (next.id !== selection.id || next.kind !== selection.kind)
@@ -293,13 +312,19 @@ export default function WorkflowWorkbench() {
     setEditor(undefined);
     setPast((old) => [...old.slice(-99), selection]);
     setChosen(
-      last.outputIds.length === 1
+      last.kind === 'import' || last.outputIds.length === 1
         ? { kind: 'output', id: last.outputIds[0] }
         : { kind: 'step', id: last.id },
     );
-    setView(last.outputIds.length === 1 ? 'result' : 'outputs');
+    setView(
+      last.kind === 'import' || last.outputIds.length === 1
+        ? 'result'
+        : 'outputs',
+    );
     setInputs(
-      last.kind === 'value' || last.outputIds.length === 1
+      last.kind === 'import' ||
+        last.kind === 'value' ||
+        last.outputIds.length === 1
         ? null
         : last.outputIds,
     );
@@ -308,10 +333,62 @@ export default function WorkflowWorkbench() {
     );
   }
   async function perform(message: EngineRequest, label: string) {
+    if (editorOpen && editor?.editingStepId) {
+      const editedId = editor.editingStepId;
+      const updated = await engine.mutate(
+        {
+          type: 'edit-operation',
+          stepId: editedId,
+          command: message as WorkflowCommand,
+        },
+        'Rebuilding operation and dependent results…',
+      );
+      setEditor(undefined);
+      setInputs(null);
+      setQuery('');
+      setLineageRoot(null);
+      const outputs =
+        updated.workflowSteps?.find((item) => item.id === editedId)
+          ?.outputIds ?? [];
+      const viewed =
+        selection.kind === 'output' && outputs.includes(selection.id)
+          ? selection.id
+          : outputs.length === 1
+            ? outputs[0]
+            : undefined;
+      setChosen(
+        viewed
+          ? { kind: 'output', id: viewed }
+          : { kind: 'step', id: editedId },
+      );
+      setView(viewed ? 'result' : 'outputs');
+      setNotice(
+        'Operation updated and dependent results recalculated. Undo restores the earlier version.',
+      );
+      return;
+    }
     reveal(await engine.mutate(message, label));
   }
-  function repeat() {
+  async function manage(message: EngineRequest, label: string) {
+    await engine.mutate(message, label);
+    if (message.type === 'rename') {
+      setNotice(label);
+      return;
+    }
+    setInputs(null);
+    setQuery('');
+    setTableQuery('');
+    setLineageRoot(null);
+    setPast([]);
+    setPage(0);
+    setNotice(label);
+    setChosen(null);
+    setView('result');
+  }
+  function repeat(editing = false) {
     if (!step || !source) return;
+    const open = (next: Editor) =>
+      setEditor({ ...next, editingStepId: editing ? step.id : undefined });
     const nodeIds = step.inputIds.filter((id) => index.nodes.has(id));
     if (step.kind === 'segment') {
       const saved = step.segmentationId
@@ -336,7 +413,7 @@ export default function WorkflowWorkbench() {
             ]
           : [];
       });
-      setEditor({
+      open({
         kind: 'segment',
         ids: targets,
         savedSegment: saved ?? {
@@ -358,7 +435,7 @@ export default function WorkflowWorkbench() {
         (item) => item.id === step.regionSetId,
       );
       if (!set) return;
-      setEditor({
+      open({
         kind: 'segment',
         ids: inputIds.length ? inputIds : source.channels,
         savedSegment: {
@@ -387,7 +464,7 @@ export default function WorkflowWorkbench() {
           ),
         ),
       ];
-      setEditor({
+      open({
         kind: step.kind,
         ids: binary ? [...new Set(parents)] : nodeIds,
         operation: step.operation as Operation | ValueOperation,
@@ -453,6 +530,41 @@ export default function WorkflowWorkbench() {
           />
         )}
         <div className="workflow-header-actions">
+          <WorkflowStorage
+            disabled={engine.busy || !engine.ready}
+            recordings={project.sources.length}
+            request={request}
+            restore={(file) =>
+              manage({ type: 'restore-workspace', file }, 'Workspace restored.')
+            }
+            cancel={engine.cancel}
+          />
+          <button
+            className="workflow-icon-button"
+            aria-label="Undo last change"
+            title="Undo last change (kept across restarts)"
+            disabled={!engine.canUndo || engine.busy}
+            onClick={() =>
+              void manage({ type: 'undo' }, 'Undid last change.').catch(
+                () => {},
+              )
+            }
+          >
+            <Undo2 size={17} />
+          </button>
+          <button
+            className="workflow-icon-button"
+            aria-label="Redo last change"
+            title="Redo last change"
+            disabled={!engine.canRedo || engine.busy}
+            onClick={() =>
+              void manage({ type: 'redo' }, 'Redid last change.').catch(
+                () => {},
+              )
+            }
+          >
+            <Redo2 size={17} />
+          </button>
           <span className="workflow-local">
             <LockKeyhole size={14} /> Local workspace
           </span>
@@ -639,9 +751,46 @@ export default function WorkflowWorkbench() {
         </aside>
         <main className="workflow-main" ref={main}>
           {!engine.ready ? (
-            <p className="workflow-empty">
+            <div className="workflow-empty">
               {engine.error || 'Opening your workflow…'}
-            </p>
+              {engine.error && (
+                <button
+                  className="secondary-button"
+                  onClick={() => location.reload()}
+                >
+                  Reload workspace
+                </button>
+              )}
+            </div>
+          ) : !source ? (
+            <section className="workflow-empty-workspace">
+              <Waves size={32} />
+              <h1>Start a workflow</h1>
+              <p>
+                Import a recording to plot signals, derive results and calculate
+                values. Your work is saved on this device.
+              </p>
+              <button
+                className="primary-button"
+                disabled={engine.busy}
+                onClick={() => file.current?.click()}
+              >
+                Import CSV
+              </button>
+              <button
+                className="workflow-link"
+                disabled={engine.busy}
+                onClick={() =>
+                  void perform(
+                    { type: 'demo-workflow' },
+                    'Opening example recording…',
+                  ).catch(() => {})
+                }
+              >
+                Open example recording
+              </button>
+              {engine.error && <p role="alert">{engine.error}</p>}
+            </section>
           ) : (
             <>
               <div className="workflow-detail-heading">
@@ -686,6 +835,12 @@ export default function WorkflowWorkbench() {
                       onClick={() => selectStep(step.id)}
                     >
                       {reference(step)} · {stepName(step)}
+                      {(step.revision ?? 1) > 1 && (
+                        <span title={`Updated ${step.updatedAt ?? ''}`}>
+                          {' '}
+                          · revision {step.revision}
+                        </span>
+                      )}
                     </button>
                   )}
                   {activeNode?.operation === 'raw' && (
@@ -705,6 +860,28 @@ export default function WorkflowWorkbench() {
                         ? `${activeValue.unit} · calculated from one signal`
                         : `${step.outputIds.length} outputs${step.kind === 'regions' ? ' · saved ranges from the earlier workspace' : ''}`}
                   </p>
+                )}
+                {step && (
+                  <WorkflowManagement
+                    key={`${step.id}:${selection.id}`}
+                    project={project}
+                    step={step}
+                    outputId={
+                      selection.kind === 'output' ? selection.id : undefined
+                    }
+                    busy={engine.busy}
+                    onEdit={() => repeat(true)}
+                    onDuplicate={() => repeat()}
+                    onDelete={() =>
+                      manage(
+                        { type: 'delete-operation', stepId: step.id },
+                        'Operation removed. Undo is available.',
+                      )
+                    }
+                    onRename={(id, name) =>
+                      manage({ type: 'rename', id, name }, 'Name saved.')
+                    }
+                  />
                 )}
               </div>
               <section
@@ -733,43 +910,63 @@ export default function WorkflowWorkbench() {
                     <span>{source?.name} · original recording</span>
                   )}
                   {immediateInputs.length > 4 && (
-                    <details>
-                      <summary>All {immediateInputs.length} inputs</summary>
-                      <div className="workflow-link-list">
-                        {immediateInputs.map((id) => (
-                          <button key={id} onClick={() => follow(id)}>
-                            {reference(index.owner.get(id))} {index.label(id)}
-                          </button>
-                        ))}
-                      </div>
-                    </details>
+                    <WorkflowList
+                      items={immediateInputs}
+                      summary={`All ${immediateInputs.length} inputs`}
+                    >
+                      {(visible) => (
+                        <div className="workflow-link-list">
+                          {visible.map((id) => (
+                            <button key={id} onClick={() => follow(id)}>
+                              {reference(index.owner.get(id))} {index.label(id)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </WorkflowList>
                   )}
                 </div>
                 {step?.kind !== 'import' && !!selectedLineage.steps.length && (
-                  <details className="workflow-lineage-details">
-                    <summary>
-                      Trace to originals · {selectedLineage.steps.length} steps
-                    </summary>
-                    <p>All contributing branches, in creation order.</p>
-                    <ol>
-                      {selectedLineage.steps.map((ancestor) => (
-                        <li key={ancestor.id}>
-                          <button onClick={() => selectStep(ancestor.id)}>
-                            {reference(ancestor)} {stepName(ancestor)}
-                          </button>
-                          <span>{ancestor.outputIds.length} outputs</span>
-                        </li>
-                      ))}
-                    </ol>
-                    <div className="workflow-link-list">
-                      {selectedLineage.originals.map((node) => (
-                        <button key={node.id} onClick={() => follow(node.id)}>
-                          <LockKeyhole size={12} />
-                          {node.name}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
+                  <WorkflowList
+                    key={selection.id}
+                    className="workflow-lineage-details"
+                    items={selectedLineage.steps}
+                    summary={`Trace to originals · ${selectedLineage.steps.length} steps`}
+                  >
+                    {(visible) => (
+                      <>
+                        <p>All contributing branches, in creation order.</p>
+                        <ol>
+                          {visible.map((ancestor) => (
+                            <li key={ancestor.id}>
+                              <button onClick={() => selectStep(ancestor.id)}>
+                                {reference(ancestor)} {stepName(ancestor)}
+                              </button>
+                              <span>{ancestor.outputIds.length} outputs</span>
+                            </li>
+                          ))}
+                        </ol>
+                        <WorkflowList
+                          items={selectedLineage.originals}
+                          summary={`${selectedLineage.originals.length} original signals`}
+                        >
+                          {(originals) => (
+                            <div className="workflow-link-list">
+                              {originals.map((node) => (
+                                <button
+                                  key={node.id}
+                                  onClick={() => follow(node.id)}
+                                >
+                                  <LockKeyhole size={12} />
+                                  {node.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </WorkflowList>
+                      </>
+                    )}
+                  </WorkflowList>
                 )}
                 {step?.kind !== 'import' && (
                   <button
@@ -816,29 +1013,32 @@ export default function WorkflowWorkbench() {
                             : 'Choose an output below, or select a signal in the history.'}
                   </small>
                   {inputs !== null && inputIds.length > 0 && (
-                    <details className="workflow-checked-inputs">
-                      <summary>
-                        Review checked inputs ({inputIds.length})
-                      </summary>
-                      <ul>
-                        {inputIds.map((id) => (
-                          <li key={id}>
-                            <span>{index.label(id)}</span>
-                            <button
-                              className="workflow-icon-button"
-                              aria-label={`Remove ${index.label(id)} from checked inputs`}
-                              onClick={() =>
-                                setInputs(
-                                  inputIds.filter((input) => input !== id),
-                                )
-                              }
-                            >
-                              <X size={14} />
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
+                    <WorkflowList
+                      className="workflow-checked-inputs"
+                      items={inputIds}
+                      summary={`Review checked inputs (${inputIds.length})`}
+                    >
+                      {(visible) => (
+                        <ul>
+                          {visible.map((id) => (
+                            <li key={id}>
+                              <span>{index.label(id)}</span>
+                              <button
+                                className="workflow-icon-button"
+                                aria-label={`Remove ${index.label(id)} from checked inputs`}
+                                onClick={() =>
+                                  setInputs(
+                                    inputIds.filter((input) => input !== id),
+                                  )
+                                }
+                              >
+                                <X size={14} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </WorkflowList>
                   )}
                   {activeNode && inputs !== null && (
                     <button
@@ -896,6 +1096,12 @@ export default function WorkflowWorkbench() {
               {engine.error && (
                 <div className="workflow-error" role="alert">
                   {engine.error}
+                  <button
+                    className="workflow-link"
+                    onClick={() => location.reload()}
+                  >
+                    Reload workspace
+                  </button>
                   <button
                     aria-label="Dismiss error"
                     onClick={() => engine.setError('')}
@@ -1093,7 +1299,7 @@ export default function WorkflowWorkbench() {
                             <button
                               className="secondary-button"
                               disabled={engine.busy}
-                              onClick={repeat}
+                              onClick={() => repeat()}
                             >
                               {step.kind === 'regions'
                                 ? 'Create signal segments'
@@ -1338,22 +1544,25 @@ export default function WorkflowWorkbench() {
               </Tabs>
               {!!usedBy.length && (
                 <section className="workflow-used-by">
-                  <strong>
-                    Used by {usedBy.length} later operation
-                    {usedBy.length === 1 ? '' : 's'}
-                  </strong>
-                  <div>
-                    {usedBy.map((consumer) => (
-                      <button
-                        className="workflow-link"
-                        key={consumer.id}
-                        onClick={() => selectStep(consumer.id)}
-                      >
-                        {reference(consumer)} {stepName(consumer)}{' '}
-                        <ArrowRight size={13} />
-                      </button>
-                    ))}
-                  </div>
+                  <WorkflowList
+                    items={usedBy}
+                    summary={`Used by ${usedBy.length} later operation${usedBy.length === 1 ? '' : 's'}`}
+                  >
+                    {(visible) => (
+                      <div>
+                        {visible.map((consumer) => (
+                          <button
+                            className="workflow-link"
+                            key={consumer.id}
+                            onClick={() => selectStep(consumer.id)}
+                          >
+                            {reference(consumer)} {stepName(consumer)}{' '}
+                            <ArrowRight size={13} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </WorkflowList>
                 </section>
               )}
             </>
@@ -1406,37 +1615,58 @@ export default function WorkflowWorkbench() {
           showCloseButton={!engine.busy}
         >
           <DialogTitle>
-            {editor?.kind === 'derive'
-              ? 'Derive signals'
-              : editor?.kind === 'segment'
-                ? 'Segment signals'
-                : 'Calculate values'}
+            {editor?.editingStepId
+              ? 'Edit operation settings'
+              : editor?.kind === 'derive'
+                ? 'Derive signals'
+                : editor?.kind === 'segment'
+                  ? 'Segment signals'
+                  : 'Calculate values'}
           </DialogTitle>
           <DialogDescription>
-            {editor?.kind === 'segment'
-              ? 'Each time chunk becomes a derived signal. Existing inputs and history stay unchanged.'
-              : editor?.kind === 'value'
-                ? 'Create one scalar value per selected signal. Results retain a link to their input.'
-                : 'Create new signals from the selected inputs. Existing signals stay unchanged.'}
+            {editorOpen &&
+            editor?.editingStepId &&
+            index.steps.has(editor.editingStepId)
+              ? `Saving replaces this operation and recalculates ${affectedOperations(project, editor.editingStepId).length - 1} dependent operations. Originals stay unchanged. Undo restores the previous version. Changes that cannot safely rebuild every dependent result are rejected.`
+              : editor?.kind === 'segment'
+                ? 'Each time chunk becomes a derived signal. Existing inputs and history stay unchanged.'
+                : editor?.kind === 'value'
+                  ? 'Create one scalar value per selected signal. Results retain a link to their input.'
+                  : 'Create new signals from the selected inputs. Existing signals stay unchanged.'}
           </DialogDescription>
+          {engine.busy && (
+            <div className="workflow-processing">
+              <output>{engine.status}</output>
+              <button className="secondary-button" onClick={engine.cancel}>
+                Cancel operation
+              </button>
+            </div>
+          )}
           {editor && source && (
             <>
-              <details className="workflow-editor-inputs">
-                <summary>
-                  {editor.ids.length} input signal
-                  {editor.ids.length === 1 ? '' : 's'} · review selection
-                </summary>
-                <ul>
-                  {editor.ids.map((id) => (
-                    <li key={id}>
-                      {reference(index.owner.get(id))} {index.label(id)}
-                    </li>
-                  ))}
-                </ul>
-              </details>
+              <WorkflowList
+                className="workflow-editor-inputs"
+                items={editor.ids}
+                summary={`${editor.ids.length} input signal${editor.ids.length === 1 ? '' : 's'} · review selection`}
+              >
+                {(visible) => (
+                  <ul>
+                    {visible.map((id) => (
+                      <li key={id}>
+                        {reference(index.owner.get(id))} {index.label(id)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </WorkflowList>
               {editor.kind === 'segment' ? (
                 <SegmentationEditor
                   workflowMode
+                  applyLabel={
+                    editor.editingStepId
+                      ? 'Save changes and recalculate'
+                      : undefined
+                  }
                   defaultRange={(() => {
                     const id = editor.ids[0];
                     const bounds = graph.ranges.get(id);
@@ -1764,9 +1994,11 @@ function FunctionEditor({
         }}
       >
         {editor.kind === 'value' ? <Hash size={15} /> : <Waves size={15} />}
-        {editor.kind === 'value'
-          ? `Create ${editor.ids.length} value${editor.ids.length === 1 ? '' : 's'}`
-          : `Create ${editor.ids.length} derived signal${editor.ids.length === 1 ? '' : 's'}`}
+        {editor.editingStepId
+          ? 'Save changes and recalculate'
+          : editor.kind === 'value'
+            ? `Create ${editor.ids.length} value${editor.ids.length === 1 ? '' : 's'}`
+            : `Create ${editor.ids.length} derived signal${editor.ids.length === 1 ? '' : 's'}`}
       </button>
     </fieldset>
   );

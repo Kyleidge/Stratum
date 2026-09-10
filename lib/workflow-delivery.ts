@@ -115,7 +115,7 @@ export function reportHtml(
     .map(
       (
         step,
-      ) => `<tr><td>#${String(step.sequence + 1).padStart(3, '0')}</td><td>${html(stepName(step))}</td>
+      ) => `<tr><td>#${String(step.sequence + 1).padStart(3, '0')} · v${step.revision ?? 1}</td><td>${html(stepName(step))}${step.updatedAt ? `<br><small>Updated ${html(step.updatedAt)}</small>` : ''}</td>
     <td>${html(
       step.outputIds
         .filter((id) => lineage.outputIds.has(id))

@@ -36,6 +36,18 @@ Select a step to inspect its complete output table; use its checkboxes for exact
 batch selection. Every output provides **From** links, full lineage, and links to
 later operations that use it. **Repeat with new settings** appends a new step.
 
+**Edit settings** revises the selected operation and recalculates dependent
+operations as one transaction. Step numbers and output identities are retained;
+the history displays the revision. If a changed segment count would invalidate
+downstream mappings, the edit is rejected and the existing work stays intact.
+**Duplicate operation** creates a separate branch instead.
+
+**Delete operation** previews the complete dependent batches it will remove.
+**Remove recording** removes a recording and its analysis from the workspace.
+The header's **Undo** and **Redo** retain the last 20 changes across restarts.
+Recordings, operations and individual output display names can be renamed.
+Original samples are never edited.
+
 Minimum, maximum, time average, and sample average create stored scalar values.
 Time average weights by valid elapsed time and excludes missing intervals.
 
@@ -84,8 +96,20 @@ Time [s],Engine speed [rpm],Torque [Nm],Fuel flow [kg/h]
 ```
 
 Times must be strictly increasing; empty signal cells remain missing. Imports
-are processed locally in chunks and saved in IndexedDB. Clearing application
-storage deletes that workspace; project backup/interchange is not implemented.
+are processed locally in chunks and saved in IndexedDB. An empty workspace offers
+CSV import or an explicit example recording; examples are never inserted automatically.
+
+Use **Workspace → Download workspace backup** to save original samples, recipes,
+names, results and history in a versioned `.stratus` archive. Restore validates
+the entire archive before replacing the workspace; the prior workspace remains
+available through Undo. Keep backups outside the app's profile. Clearing local
+storage deletes the local workspace and its Undo history.
+
+Archive version 1 is limited to **128 MiB**; evaluated samples CSV is limited to
+**64 MiB per file**. These exports prepare local downloads; they do not claim
+that a file has finished saving. For larger exports, use shorter segments or
+fewer signals. Reports are standalone printable HTML snapshots of the chosen
+outputs and their contributing history.
 
 ## Validate
 
@@ -98,6 +122,7 @@ pnpm exec oxfmt --check
 pnpm build
 pnpm desktop:build
 pnpm desktop:smoke
+pnpm desktop:ui-smoke
 ```
 
 The test suite exercises numerical results and storage behavior; the native smoke
@@ -112,6 +137,6 @@ regressions cover keeping
 one function item for partial or mixed input batches. The preview integration
 also runs every selectable example through the actual HTTP worker module.
 
-See [architecture and limitations](docs/architecture.md) for the processing model,
-units, algorithm details, and path toward multi-gigabyte workloads. This is an
-initial functional prototype, not a complete NI DIAdem replacement.
+See [the usability and reliability review](docs/production-review.md) for the
+implemented recovery guarantees and remaining release limits, and
+[architecture and limitations](docs/architecture.md) for numerical semantics.
