@@ -5,6 +5,11 @@ import type {
   RegionRequest,
   RegionSet,
 } from './region-types';
+import type {
+  ScalarValue,
+  ValueOperation,
+  WorkflowStep,
+} from './workflow-types';
 
 export type Operation =
   | 'raw'
@@ -117,6 +122,8 @@ export type SegmentationPlan = {
   incomplete: number;
 };
 export type Project = {
+  workflowSteps?: WorkflowStep[];
+  values?: ScalarValue[];
   sources: Source[];
   nodes: SignalNode[];
   segments: Segment[];
@@ -148,6 +155,8 @@ export type Summary = {
 export type Plot = { id: string; points: Point[]; summary: Summary };
 export type EngineRequest =
   | RegionRequest
+  | { type: 'init-workflow' }
+  | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
   | { type: 'init' }
   | { type: 'import'; file: File }
   | { type: 'demo' }

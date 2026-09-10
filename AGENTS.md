@@ -2,21 +2,33 @@
 
 ## Current purpose and scope
 
-Stratus is a desktop signal-analysis prototype with a Sites browser preview.
-It imports immutable CSV signals, records derived dependencies, segments using
-generic triggers/ranges/windows, and computes explicit per-segment power and fuel
-consumption. Data is local to the device; there are no server API routes or cloud
-signal uploads.
+Stratus is a desktop signal-workflow prototype with a Sites browser preview.
+It imports immutable CSV signals. Derivations and segments create ordinary derived
+signals, which can feed further derivations, segmentation, and scalar values.
+The primary navigation is chronological operation history with explicit output
+membership and direct input/lineage links. Data stays local to the device.
+There are no server API routes or cloud signal uploads.
 
 ## Architecture
 
 - React 19 and strict TypeScript, with Next-style App Router conventions supplied
   by vinext. Use the existing vinext/Vite commands rather than replacing the stack.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.
-- `components/region-workbench.tsx`: active desktop/browser workspace. Regions
+- `components/workflow-workbench.tsx`: active desktop/browser workspace. Original
+  and derived signals can be processed, segmented again, or reduced to values.
+  `components/workflow-history.tsx` is a virtualized two-level chronological tree;
+  `lib/workflow-tree.ts` bounds output previews and reveals selected members.
+  Do not encode dependency depth as recursive indentation or regroup by names.
+- `lib/workflow-history.ts`: append-only invocation history, legacy adaptation,
+  output ownership, and iterative lineage including binary and trigger inputs.
+  `lib/workflow-types.ts`: immutable scalar records and explicit operation records.
+  History and outputs commit together. Stored operations never move or retarget.
+- `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
+- `components/region-workbench.tsx`: retained region workspace. Regions
   are reusable recording-time pointers, not automatic channel copies. The left
   history has one item per invocation; region/results tables keep families compact.
-- `hooks/use-signal-engine.ts`: worker request client using `init-regions`.
+- `hooks/use-signal-engine.ts`: worker request client; the active UI requests
+  `init-workflow`. Region compatibility callers retain `init-regions`.
 - `lib/region-types.ts` and `lib/region-model.ts`: region versions, parent links,
   function invocations, ancestry and legacy migration. Never mutate an existing
   region version or retarget its children/results. View selection must remain
@@ -96,6 +108,10 @@ Run commands from the repository root:
 - `pnpm desktop:build`: compile the offline desktop renderer into dist-desktop/.
 - `pnpm desktop:smoke`: after the desktop build, run a hidden native worker and
   IndexedDB integration check against the demonstration recording.
+- `pnpm desktop:ui-smoke`: after the desktop build, exercise the actual workflow
+  UI in a hidden native window with isolated temporary storage. Covers nested
+  segments, scalar values, large batches, lineage and keyboard navigation; saves
+  an ignored screenshot in `outputs/workflow-desktop.png`.
 - `pnpm desktop:package`: create a portable app under build/releases/ for the
   current operating system. This is an unsigned development package.
 
@@ -129,6 +145,9 @@ to address those issues during repository setup.
   `tests/signal-history.test.ts` covers collection ordering, atomic batches,
   independent re-segmentation, sparse extrema, binary chunk alignment, and
   5,000-stage evaluation/persistence without a configured depth limit.
+- `tests/workflow.test.ts` covers append-only operation ordering, scalar numerical
+  semantics, immutable nested segment chains, legacy migration, atomic batches,
+  concurrent writers, and bounded history previews through 5,000 levels.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin

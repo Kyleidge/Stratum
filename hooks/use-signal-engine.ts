@@ -7,7 +7,9 @@ import type {
   Project,
 } from '@/lib/signal-types';
 
-export function useSignalEngine() {
+export function useSignalEngine(
+  initialization: 'init-regions' | 'init-workflow' = 'init-regions',
+) {
   const worker = useRef<Worker | null>(null),
     serial = useRef(0);
   const pending = useRef(
@@ -64,7 +66,7 @@ export function useSignalEngine() {
       pending.current.clear();
     };
     let alive = true;
-    void request({ type: 'init-regions' })
+    void request({ type: initialization })
       .then((response) => {
         if (alive && response.type === 'project') {
           setProject(response.project);
@@ -84,7 +86,7 @@ export function useSignalEngine() {
         item.reject(new Error('Worker closed.'));
       waiting.clear();
     };
-  }, [request]);
+  }, [request, initialization]);
   async function mutate(message: EngineRequest, label: string) {
     setBusy(true);
     setError('');
@@ -108,7 +110,7 @@ export function useSignalEngine() {
   }
   async function preview(message: EngineRequest) {
     setBusy(true);
-    setStatus('Previewing region boundaries…');
+    setStatus('Previewing segment boundaries…');
     try {
       return await request(message);
     } finally {

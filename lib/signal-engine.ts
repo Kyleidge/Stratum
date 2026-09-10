@@ -2,6 +2,9 @@ import { CsvParser, Envelope, power } from './signal-math';
 import { SignalGraph } from './signal-graph';
 import { executeSignal } from './signal-executor';
 import { FUNCTIONS } from './signal-functions';
+import { withWorkflowHistory } from './workflow-history';
+import { VALUE_FUNCTIONS } from './workflow-types';
+import type { ScalarValue, ValueOperation } from './workflow-types';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
 import { restoreSegmentationOperations } from './segmentation-operation';
 import {
@@ -112,6 +115,7 @@ export class SignalEngine {
   }
   private async save(next: Project) {
     this.check();
+    if (this.project.workflowSteps) next = withWorkflowHistory(next);
     const tx = this.db.transaction('project', 'readwrite');
     const done = complete(tx);
     const store = tx.objectStore('project');
@@ -434,6 +438,105 @@ export class SignalEngine {
   async initializeRegions() {
     const migrated = migrateRegionHistory(this.project);
     if (migrated !== this.project) await this.save(migrated);
+  }
+  async initializeWorkflow() {
+    const next = withWorkflowHistory(this.project);
+    if (next !== this.project) await this.save(next);
+    else if (!this.project.workflowSteps)
+      await this.save({ ...this.project, workflowSteps: [] });
+  }
+  async calculateValues(inputIds: string[], operation: ValueOperation) {
+    const spec = VALUE_FUNCTIONS.find((item) => item.operation === operation);
+    if (!spec) throw new Error('Choose a supported value calculation.');
+    if (!inputIds.length || new Set(inputIds).size !== inputIds.length)
+      throw new Error('Choose at least one unique signal.');
+    if (inputIds.length > 10000)
+      throw new Error('Limit a calculation to 10,000 signals.');
+    const inputs = inputIds.map((id) => this.find(id));
+    if (new Set(inputs.map((node) => node.sourceId)).size !== 1)
+      throw new Error('Choose signals from one recording.');
+    const batchId = uid(),
+      createdAt = new Date().toISOString();
+    const values: ScalarValue[] = [];
+    for (const [index, input] of inputs.entries()) {
+      this.check();
+      this.progress(
+        `Calculating ${spec.name.toLowerCase()} · ${index + 1}/${inputs.length}`,
+        index / inputs.length,
+      );
+      let count = 0,
+        mean = 0,
+        minimum = Infinity,
+        maximum = -Infinity;
+      let minTime = 0,
+        maxTime = 0,
+        duration = 0,
+        area = 0;
+      let previous: Point | undefined;
+      for await (const chunk of this.evaluate(input.id)) {
+        this.check();
+        for (let i = 0; i < chunk.time.length; i++) {
+          const time = chunk.time[i],
+            value = chunk.values[i];
+          if (!Number.isFinite(value)) {
+            previous = undefined;
+            continue;
+          }
+          count++;
+          mean = mean * ((count - 1) / count) + value / count;
+          if (value < minimum) {
+            minimum = value;
+            minTime = time;
+          }
+          if (value > maximum) {
+            maximum = value;
+            maxTime = time;
+          }
+          if (previous && time > previous[0]) {
+            const dt = time - previous[0];
+            area += (previous[1] / 2 + value / 2) * dt;
+            duration += dt;
+          }
+          previous = [time, value];
+        }
+      }
+      const value =
+        operation === 'minimum'
+          ? minimum
+          : operation === 'maximum'
+            ? maximum
+            : operation === 'sample-average'
+              ? count
+                ? mean
+                : NaN
+              : duration > 0
+                ? area / duration
+                : NaN;
+      const [start, end] = this.bounds(input.id);
+      values.push({
+        id: uid(),
+        sourceId: input.sourceId,
+        inputId: input.id,
+        batchId,
+        name: `${input.name} · ${spec.name}`,
+        unit: input.unit,
+        operation,
+        value: Number.isFinite(value) ? value : null,
+        sampleCount: count,
+        validDuration: duration,
+        start,
+        end,
+        createdAt,
+        ...(count && (operation === 'minimum' || operation === 'maximum')
+          ? { timestamp: operation === 'minimum' ? minTime : maxTime }
+          : {}),
+      });
+    }
+    await this.save({
+      ...this.project,
+      values: [...(this.project.values ?? []), ...values],
+    });
+    return values;
   }
   async previewRegions(settings: RegionSettings): Promise<RegionPlan> {
     this.check();

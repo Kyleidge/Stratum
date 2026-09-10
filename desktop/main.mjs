@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, net, protocol, session } from 'electron';
 import { resolve, relative, isAbsolute, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 app.setName('Stratus');
@@ -17,7 +17,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 const root = fileURLToPath(new URL('../dist-desktop/', import.meta.url));
-const smoke = process.argv.includes('--smoke');
+const uiSmoke = process.argv.includes('--ui-smoke');
+const smoke = process.argv.includes('--smoke') || uiSmoke;
 if (smoke)
   app.setPath(
     'userData',
@@ -47,14 +48,31 @@ async function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: !smoke,
     },
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   if (smoke) {
-    window.webContents.on('console-message', ({ message }) => {
+    window.webContents.on('console-message', async ({ message }) => {
       if (message.startsWith('STRATUS_SMOKE_OK')) {
         process.stdout.write(`${message}\n`);
+        if (uiSmoke) {
+          window.setContentSize(1540, 940);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const output = resolve('outputs');
+          mkdirSync(output, { recursive: true });
+          writeFileSync(
+            resolve(output, 'workflow-desktop.png'),
+            (await window.webContents.capturePage()).toPNG(),
+          );
+          window.setContentSize(860, 820);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          writeFileSync(
+            resolve(output, 'workflow-desktop-compact.png'),
+            (await window.webContents.capturePage()).toPNG(),
+          );
+        }
         app.exit(0);
       }
       if (message.startsWith('STRATUS_SMOKE_FAILED')) {
@@ -67,7 +85,9 @@ async function createWindow() {
       app.exit(1);
     });
   }
-  await window.loadURL(`stratus://app/index.html${smoke ? '?smoke=1' : ''}`);
+  await window.loadURL(
+    `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : ''}`,
+  );
 }
 
 if (singleInstance) {

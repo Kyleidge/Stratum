@@ -1,9 +1,12 @@
 # Stratus
 
-A desktop workbench for immutable measurement signals and traceable time-series
-analysis. The included synthetic dyno recording contains three engine ramps.
-Its regions, filters, brake power, and specific fuel consumption are calculated
-by the same engine that processes imported recordings.
+A desktop workbench for workflows built from immutable time-series signals.
+Derive signals, segment them into reusable signal chunks, and calculate scalar
+values. Each operation keeps exact links to its inputs and outputs in chronological
+history. The included synthetic dyno recording is ready for exploring a workflow.
+
+See [the workflow proposal](docs/workflow-proposal.md) for the design and migration
+rules. The earlier region workspace is retained for compatibility.
 
 ## Run
 
@@ -25,6 +28,21 @@ alongside the executable. Packaging on macOS/Linux produces the corresponding
 native bundle. Packages are unsigned development builds.
 
 ## Explore
+
+The active workspace uses **History tree** and **Signals & values** navigation.
+Select an original or derived signal, then choose **Derive signal**, **Segment**,
+or **Calculate value**. Segments are derived signals and can be segmented again.
+Select a step to inspect its complete output table; use its checkboxes for exact
+batch selection. Every output provides **From** links, full lineage, and links to
+later operations that use it. **Repeat with new settings** appends a new step.
+
+Minimum, maximum, time average, and sample average create stored scalar values.
+Time average weights by valid elapsed time and excludes missing intervals.
+
+### Earlier region workspace
+
+The following describes the retained region implementation. Its saved signals,
+calculations, and region settings are preserved when opening the workflow UI.
 
 1. Choose **Worked examples** in the left panel: ramp filtering and statistics,
    nested 10-second windows, overlapping windows, or power and fuel consumption.

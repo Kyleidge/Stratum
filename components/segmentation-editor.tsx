@@ -35,6 +35,8 @@ type Props = {
   selectedIds: string[];
   selectionKind?: ExplorerEntry['kind'];
   savedOperation?: SegmentationOperation;
+  workflowMode?: boolean;
+  defaultRange?: [number, number];
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -124,6 +126,8 @@ export default function SegmentationEditor({
   selectedIds,
   selectionKind,
   savedOperation,
+  workflowMode = false,
+  defaultRange,
   onPreview,
   onCreate,
 }: Props) {
@@ -139,14 +143,14 @@ export default function SegmentationEditor({
     offset: String(trigger.offset),
   });
   const [method, setMethod] = useState<SegmentationDefinition['method']>(
-    saved?.method ?? 'triggers',
+    saved?.method ?? (workflowMode ? 'ranges' : 'triggers'),
   );
   const [start, setStart] = useState<TriggerForm>(
     savedTriggers
       ? formTrigger(savedTriggers.start)
       : {
           signalId:
-            selectionKind === 'collection'
+            workflowMode || selectionKind === 'collection'
               ? selectedIds[0]
               : source.channels[0],
           edge: 'rising',
@@ -159,7 +163,7 @@ export default function SegmentationEditor({
       ? formTrigger(savedTriggers.end)
       : {
           signalId:
-            selectionKind === 'collection'
+            workflowMode || selectionKind === 'collection'
               ? selectedIds[0]
               : source.channels[0],
           edge: 'falling',
@@ -173,13 +177,13 @@ export default function SegmentationEditor({
   const [ranges, setRanges] = useState(
     saved?.method === 'ranges'
       ? saved.ranges.map((range) => range.join(', ')).join('\n')
-      : `${source.start}, ${Math.min(source.end, source.start + 30)}`,
+      : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
   );
   const [windowStart, setWindowStart] = useState(
-    String(savedWindows?.start ?? source.start),
+    String(savedWindows?.start ?? defaultRange?.[0] ?? source.start),
   );
   const [windowEnd, setWindowEnd] = useState(
-    String(savedWindows?.end ?? source.end),
+    String(savedWindows?.end ?? defaultRange?.[1] ?? source.end),
   );
   const [duration, setDuration] = useState(
     String(savedWindows?.duration ?? 30),
@@ -194,7 +198,7 @@ export default function SegmentationEditor({
       ? savedOperation.scope === 'file'
         ? 'file'
         : 'selection'
-      : selectionKind === 'collection'
+      : workflowMode || selectionKind === 'collection'
         ? 'selection'
         : 'file',
   );
@@ -367,7 +371,9 @@ export default function SegmentationEditor({
       <p className="input-hint segmentation-scope-hint">
         {target === 'file'
           ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
-          : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
+          : workflowMode
+            ? 'Each chunk becomes a derived signal. It can be processed, segmented again, or reduced to a value.'
+            : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
       </p>
       <div className="field-label">Method</div>
       <Choice

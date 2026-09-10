@@ -20,6 +20,14 @@ globalThis.onmessage = (
     engine.cancelled = false;
     try {
       switch (r.type) {
+        case 'init-workflow':
+          await engine.open();
+          await engine.initializeWorkflow();
+          if (!engine.project.sources.length) await engine.demo(false);
+          break;
+        case 'calculate-values':
+          await engine.calculateValues(r.inputIds, r.operation);
+          break;
         case 'init-regions':
           await engine.open();
           await engine.initializeRegions();
