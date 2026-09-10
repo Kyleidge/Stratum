@@ -1111,3 +1111,27 @@
     grid-template-columns: 1fr;
   }
 }
+.workflow-example {
+  padding: 6px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  font-size: 12px;
+}
+.workflow-example summary {
+  cursor: pointer;
+  color: var(--primary);
+}
+.workflow-example[open] > div {
+  margin: 10px 0;
+}
+.workflow-example p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+}
+.workflow-example-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}

@@ -102,6 +102,8 @@ export function validateWorkspace(value: unknown): Project {
       source.start >= source.end ||
       !nonnegative(source.bytes) ||
       typeof source.synthetic !== 'boolean' ||
+      !optionalText(source.exampleKey) ||
+      (source.exampleKey !== undefined && !source.synthetic) ||
       !stringList(source.channels) ||
       !source.channels.length
     )

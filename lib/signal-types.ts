@@ -55,6 +55,7 @@ export type Source = {
   end: number;
   channels: string[];
   synthetic: boolean;
+  exampleKey?: string;
   chunkRanges: [number, number][];
 };
 export type Segment = {
@@ -162,10 +163,11 @@ export type EngineRequest =
       command: import('./workflow-lifecycle').WorkflowCommand;
     }
   | { type: 'rename'; id: string; name: string }
-  | { type: 'undo' | 'redo' | 'backup-workspace' | 'demo-workflow' }
+  | { type: 'undo' | 'redo' | 'backup-workspace' }
+  | { type: 'demo-workflow'; refresh?: boolean; sourceId?: string }
   | { type: 'restore-workspace'; file: File }
   | RegionRequest
-  | { type: 'init-workflow' }
+  | { type: 'init-workflow'; refreshExample?: boolean }
   | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
   | { type: 'init' }
   | { type: 'import'; file: File }

@@ -41,6 +41,7 @@ import { SignalGraph } from '@/lib/signal-graph';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { FUNCTIONS } from '@/lib/signal-functions';
 import { VALUE_FUNCTIONS } from '@/lib/workflow-types';
+import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
 import type {
   EngineRequest,
@@ -300,6 +301,23 @@ export default function WorkflowWorkbench() {
     setLineageRoot(null);
     setSamplePage(0);
   }
+  async function openExample(refresh = false) {
+    const next = await engine.mutate(
+      {
+        type: 'demo-workflow',
+        refresh,
+        sourceId: refresh ? source?.id : undefined,
+      },
+      refresh ? 'Refreshing example workflow…' : 'Opening example workflow…',
+    );
+    const example = next.sources.find(
+      (item) => item.exampleKey === WORKFLOW_EXAMPLE,
+    );
+    if (example) switchSource(example.id);
+    setNotice(
+      'Example ready. Follow the seven steps in History, or explore the results below.',
+    );
+  }
   function reveal(next: Project) {
     const last = next.workflowSteps?.at(-1);
     if (!last) return;
@@ -524,7 +542,7 @@ export default function WorkflowWorkbench() {
             value={source.id}
             items={project.sources.map((item) => ({
               value: item.id,
-              label: `${item.name}${item.synthetic ? ' · Demo' : ''}`,
+              label: `${item.name}${item.synthetic ? ' · Example' : ''}`,
             }))}
             onChange={switchSource}
           />
@@ -538,6 +556,8 @@ export default function WorkflowWorkbench() {
               manage({ type: 'restore-workspace', file }, 'Workspace restored.')
             }
             cancel={engine.cancel}
+            example={openExample}
+            exampleName={source?.synthetic ? source.name : undefined}
           />
           <button
             className="workflow-icon-button"
@@ -780,19 +800,69 @@ export default function WorkflowWorkbench() {
               <button
                 className="workflow-link"
                 disabled={engine.busy}
-                onClick={() =>
-                  void perform(
-                    { type: 'demo-workflow' },
-                    'Opening example recording…',
-                  ).catch(() => {})
-                }
+                onClick={() => void openExample().catch(() => {})}
               >
-                Open example recording
+                Open example workflow
               </button>
+              <p>
+                Explore a motor test: smooth signals, calculate power, segment
+                runs and compare values.
+              </p>
               {engine.error && <p role="alert">{engine.error}</p>}
             </section>
           ) : (
             <>
+              {source.exampleKey === WORKFLOW_EXAMPLE && (
+                <details
+                  className="workflow-example"
+                  aria-label="Example workflow"
+                >
+                  <summary>Explore the motor-test example</summary>
+                  <div>
+                    <strong>Example · Three motor test runs</strong>
+                    <p>
+                      Follow the history from original measurements to power,
+                      run segments and calculated values.
+                    </p>
+                  </div>
+                  <div className="workflow-example-links">
+                    {[
+                      {
+                        name: 'Plot power',
+                        step: steps.find((item) => item.operation === 'power'),
+                        output: true,
+                      },
+                      {
+                        name: 'Compare run averages',
+                        step: steps.find(
+                          (item) => item.operation === 'time-average',
+                        ),
+                      },
+                      {
+                        name: 'Explore a segmented segment',
+                        step: steps.filter(
+                          (item) => item.kind === 'segment',
+                        )[1],
+                      },
+                    ].map((item) => (
+                      <button
+                        key={item.name}
+                        className="workflow-link"
+                        disabled={!item.step}
+                        onClick={() => {
+                          setInputs(null);
+                          if (item.step) {
+                            if (item.output) follow(item.step.outputIds[0]);
+                            else selectStep(item.step.id);
+                          }
+                        }}
+                      >
+                        {item.name} <ArrowRight size={13} />
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
               <div className="workflow-detail-heading">
                 <div className="workflow-heading-top">
                   <button

@@ -19,6 +19,11 @@ import {
 import { VALUE_FUNCTIONS } from './workflow-types';
 import type { ScalarValue, ValueOperation } from './workflow-types';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
+import {
+  WORKFLOW_EXAMPLE,
+  workflowExampleFile,
+  buildExampleWorkflow,
+} from './workflow-example';
 import { restoreSegmentationOperations } from './segmentation-operation';
 import {
   migrateRegionHistory,
@@ -700,13 +705,64 @@ export class SignalEngine {
         sources: [...this.project.sources, source],
         nodes: [...this.project.nodes, ...nodes],
       });
-      await this.trackImport(id, false).catch(() => {});
+      // A staged workflow owns publication and recovery of its new columns.
+      if (!this.staging) await this.trackImport(id, false).catch(() => {});
       return source;
     } catch (error) {
       await this.removeIncomplete(id);
       await this.trackImport(id, false);
       throw error;
     }
+  }
+  async workflowExample(refresh = false, sourceId?: string) {
+    const existing = sourceId
+      ? this.project.sources.find((source) => source.id === sourceId)
+      : (this.project.sources.find(
+          (source) => source.exampleKey === WORKFLOW_EXAMPLE,
+        ) ?? this.project.sources.find((source) => source.synthetic));
+    if ((sourceId && !existing) || (existing && !existing.synthetic))
+      throw new Error('Only a built-in example can be refreshed.');
+    if (!refresh && existing?.exampleKey === WORKFLOW_EXAMPLE) return existing;
+    const before = this.project;
+    let imported: Source | undefined;
+    let next: Project;
+    this.staging = true;
+    try {
+      await this.initializeWorkflow();
+      // Opening an example never replaces saved work. Replacement is explicit.
+      if (refresh && existing)
+        await this.deleteOperation(`import:${existing.id}`);
+      imported = await this.importCsv(workflowExampleFile(), true);
+      const source = { ...imported, exampleKey: WORKFLOW_EXAMPLE };
+      await this.save({
+        ...this.project,
+        sources: [
+          source,
+          ...this.project.sources.filter((item) => item.id !== source.id),
+        ],
+      });
+      await buildExampleWorkflow(this, source);
+      next = this.project;
+    } catch (error) {
+      if (imported) {
+        await this.removeIncomplete(imported.id);
+        await this.trackImport(imported.id, false);
+      }
+      throw error;
+    } finally {
+      this.staging = false;
+      this.project = before;
+      this.invalidate();
+    }
+    try {
+      await this.save(next);
+    } catch (error) {
+      await this.removeIncomplete(imported.id);
+      await this.trackImport(imported.id, false);
+      throw error;
+    }
+    await this.trackImport(imported.id, false).catch(() => {});
+    return this.project.sources.find((source) => source.id === imported.id)!;
   }
   async demo(withAnalysis = true) {
     const existing = this.project.sources.find((s) => s.synthetic);

@@ -87,9 +87,19 @@ export function useSignalEngine(
     engine.onerror = fail;
     engine.onmessageerror = fail;
     let alive = true;
-    void request({ type: initialization })
+    const startupUrl = new URL(location.href);
+    const refreshExample = startupUrl.searchParams.has('refresh-example');
+    void request(
+      initialization === 'init-workflow'
+        ? { type: initialization, refreshExample }
+        : { type: initialization },
+    )
       .then((response) => {
         if (alive && response.type === 'project') {
+          if (refreshExample) {
+            startupUrl.searchParams.delete('refresh-example');
+            history.replaceState(history.state, '', startupUrl);
+          }
           setProject(response.project);
           setCanUndo(!!response.canUndo);
           setCanRedo(!!response.canRedo);

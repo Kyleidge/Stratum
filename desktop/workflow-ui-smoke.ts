@@ -127,10 +127,10 @@ export async function workflowUiSmoke() {
   }
   try {
     await until(
-      () => button('Open example recording') || button('Derive signal'),
+      () => button('Open example workflow') || button('Derive signal'),
       'workspace startup',
     );
-    if (button('Open example recording')) await click('Open example recording');
+    if (button('Open example workflow')) await click('Open example workflow');
     await until(() => button('Derive signal'), 'initial signal');
     assert(
       document
@@ -138,6 +138,57 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('Original signal'),
       'Startup must expose an original signal.',
     );
+    assert(
+      !document.body.innerText.includes('Saved region ranges'),
+      'The new example contains legacy-only ranges.',
+    );
+    const exampleGuide =
+      document.querySelector<HTMLDetailsElement>('.workflow-example')!;
+    exampleGuide.querySelector('summary')!.click();
+    await delay();
+    await click('Compare run averages');
+    assert(
+      document.querySelectorAll('.workflow-output-name').length === 3,
+      'Example should expose three run averages.',
+    );
+    await click('Explore a segmented segment');
+    assert(
+      document.querySelectorAll('.workflow-output-name').length === 2,
+      'Nested segmentation should expose two signals.',
+    );
+    await click('Plot power');
+    await until(
+      () => document.querySelector('h1')?.textContent === 'Brake power',
+      'example power',
+    );
+    exampleGuide.querySelector('summary')!.click();
+    await delay();
+    // Return to the first original for the independent operation lifecycle checks.
+    await click('Workspace');
+    await click('Refresh this example', await dialog());
+    await until(
+      () => document.querySelector('[role="alertdialog"]'),
+      'refresh confirmation',
+    );
+    await click('Keep current example');
+    await until(
+      () => !document.querySelector('[role="alertdialog"]'),
+      'cancel example refresh',
+    );
+    await click('Refresh this example', await dialog());
+    await click('Refresh example');
+    await settled();
+    assert(
+      document.querySelector('.workflow-inventory')?.textContent ===
+        '2 originals7 derived5 values',
+      'Refreshing did not restore the complete example.',
+    );
+    await click('Signals & values');
+    document
+      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
+      .click();
+    await delay();
+    await click('History tree');
     await click('Derive signal');
     await click('Create 1 derived signal', await dialog());
     await settled();
@@ -263,7 +314,7 @@ export async function workflowUiSmoke() {
       'A late batch member cannot be selected.',
     );
     await exportFile();
-    await exportFile({ scope: 'All outputs from #007 · 40 outputs' });
+    await exportFile({ scope: 'All outputs from #013 · 40 outputs' });
     await exportFile({ report: true });
     await click('Show lineage in tree');
     assert(
@@ -309,7 +360,7 @@ export async function workflowUiSmoke() {
       'input[aria-label="Search workflow"]',
     );
     assert(search, 'Signal index search missing.');
-    setValue(search, 'Engine speed');
+    setValue(search, 'Motor speed');
     await delay();
     assert(
       document.querySelector('.workflow-catalog-item'),
@@ -533,7 +584,7 @@ export async function workflowUiSmoke() {
       ?.click();
     await delay();
     await click('Signals & values');
-    setValue(search, 'Engine speed');
+    setValue(search, 'Motor speed');
     await delay();
     document
       .querySelector<HTMLButtonElement>('.workflow-catalog-item')!

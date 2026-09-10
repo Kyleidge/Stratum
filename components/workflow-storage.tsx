@@ -24,17 +24,22 @@ export default function WorkflowStorage({
   request,
   restore,
   cancel,
+  example,
+  exampleName,
 }: {
   disabled: boolean;
   recordings: number;
   request: (message: EngineRequest) => Promise<EngineResponse>;
   restore: (file: File) => Promise<void>;
   cancel: () => void;
+  example: (refresh?: boolean) => Promise<void>;
+  exampleName?: string;
 }) {
   const [open, setOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [chosen, setChosen] = useState<File>();
+  const [refreshing, setRefreshing] = useState(false);
   const file = useRef<HTMLInputElement>(null),
     cancelled = useRef(false);
   async function backup() {
@@ -61,6 +66,23 @@ export default function WorkflowStorage({
       setBusy(false);
     }
   }
+  async function loadExample(refresh = false) {
+    setBusy(true);
+    setError('');
+    try {
+      await example(refresh);
+      setRefreshing(false);
+      setOpen(false);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'Could not load the example.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <button
@@ -81,7 +103,7 @@ export default function WorkflowStorage({
         }}
       >
         <DialogContent className="workflow-dialog" showCloseButton={!busy}>
-          <DialogTitle>Workspace backup and recovery</DialogTitle>
+          <DialogTitle>Workspace</DialogTitle>
           <DialogDescription>
             {recordings} recordings are saved on this device. A backup includes
             original samples, recipes, history, names and calculated results. It
@@ -107,6 +129,27 @@ export default function WorkflowStorage({
             Version 1 supports backups up to 128 MiB. Result CSV files are not
             workspace backups.
           </p>
+          <div className="workflow-storage-actions">
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void loadExample()}
+            >
+              Open example workflow
+            </button>
+            {exampleName && (
+              <button
+                className="workflow-link"
+                disabled={busy}
+                onClick={() => {
+                  setError('');
+                  setRefreshing(true);
+                }}
+              >
+                Refresh this example
+              </button>
+            )}
+          </div>
           <button
             className="workflow-link"
             disabled={busy}
@@ -140,6 +183,34 @@ export default function WorkflowStorage({
           />
         </DialogContent>
       </Dialog>
+      <AlertDialog
+        open={refreshing}
+        onOpenChange={(value) => {
+          if (!busy) setRefreshing(value);
+        }}
+      >
+        <AlertDialogContent className="workflow-dialog">
+          <AlertDialogTitle>Refresh this example?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Replace {exampleName} and its operations with the seven-step motor
+            test workflow. Imported recordings are kept. Your current example
+            remains available through Undo.
+          </AlertDialogDescription>
+          {error && <p role="alert">{error}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>
+              Keep current example
+            </AlertDialogCancel>
+            <button
+              className="primary-button"
+              disabled={busy}
+              onClick={() => void loadExample(true)}
+            >
+              Refresh example
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={!!chosen}
         onOpenChange={(value) => {

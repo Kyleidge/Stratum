@@ -203,7 +203,7 @@ async function createWindow() {
   }
   try {
     await window.loadURL(
-      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : ''}`,
+      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
     );
   } catch (error) {
     // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.

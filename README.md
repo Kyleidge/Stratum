@@ -3,7 +3,7 @@
 A desktop workbench for workflows built from immutable time-series signals.
 Derive signals, segment them into reusable signal chunks, and calculate scalar
 values. Each operation keeps exact links to its inputs and outputs in chronological
-history. The included synthetic dyno recording is ready for exploring a workflow.
+history. The included motor-test example demonstrates the complete signal workflow.
 
 See [the workflow proposal](docs/workflow-proposal.md) for the design and migration
 rules. The earlier region workspace is retained for compatibility.
@@ -50,6 +50,32 @@ Original samples are never edited.
 
 Minimum, maximum, time average, and sample average create stored scalar values.
 Time average weights by valid elapsed time and excludes missing intervals.
+
+### Included motor-test workflow
+
+Choose **Open example workflow** from the empty workspace or **Workspace**.
+The synthetic recording contains three speed sweeps over 180 seconds, sampled
+at 10 Hz. Its seven chronological steps use the same operations as your own data:
+
+1. Original motor speed and torque, kept immutable.
+2. Smooth torque with a five-sample moving average.
+3. Calculate brake power from smoothed torque and original speed.
+4. Split power into three individual run signals: 10–50, 65–105 and 120–160 s.
+5. Calculate one time-average power value per run.
+6. Segment Run 2 again into two 20-second signals.
+7. Calculate peak power in each of those two signals.
+
+The example has two original signals, seven derived signals and five values.
+Its shortcuts open the power plot, run-average table and nested segment outputs.
+Use **Export / report** on any of these results for CSV data or a printable report.
+Every result keeps direct links to its inputs. Edit, rename, delete and Undo work
+on the example just as they do on imported recordings.
+
+Opening the example again preserves edits. Select an example recording and choose
+**Workspace → Refresh this example** to replace its analysis with the current
+example. Refresh is one undoable change and preserves imported recordings.
+For a one-time desktop refresh at launch, run `pnpm desktop --refresh-example`;
+the startup request is consumed after success, so reloading preserves later edits.
 
 ### Earlier region workspace
 

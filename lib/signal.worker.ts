@@ -60,13 +60,14 @@ globalThis.onmessage = (
             await engine.travel(r.type);
             break;
           case 'demo-workflow':
-            await engine.demo(false);
+            await engine.workflowExample(r.refresh, r.sourceId);
             break;
           case 'init-workflow':
             await engine.open();
             if (typeof navigator !== 'undefined' && navigator.locks)
               await engine.recoverImports();
             await engine.initializeWorkflow();
+            if (r.refreshExample) await engine.workflowExample(true);
             break;
           case 'calculate-values':
             await engine.calculateValues(r.inputIds, r.operation);

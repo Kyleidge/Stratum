@@ -42,6 +42,13 @@ There are no server API routes or cloud signal uploads.
   `workflow-management.tsx` exposes impact confirmation, edit, duplicate and names.
   Undo/Redo retains 20 project snapshots across restarts. Housekeeping migrations
   must preserve the journal; do not journal them as user actions.
+- `lib/workflow-example.ts`: deterministic motor-test data and a seven-step
+  original → smoothing → power → run segments → values → nested segments → values
+  example built with normal engine commands. `workflowExample` publishes it as
+  one undoable action. Refresh only replaces the selected synthetic source, keeps
+  imported recordings, and retains old source columns for Undo. Staged imports
+  stay journaled until metadata publication. Legacy example methods remain for
+  compatibility tests; the active workflow UI uses `demo-workflow`.
 - `lib/workspace-archive.ts` validates versioned NDJSON workspace backups before
   publication. Restore stages original columns under fresh source IDs and commits
   metadata atomically, preserving the prior workspace for Undo. Archives are

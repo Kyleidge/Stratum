@@ -12,6 +12,159 @@ import type {
 } from '../lib/signal-types';
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 import { affectedOperations } from '../lib/workflow-lifecycle';
+import { WORKFLOW_EXAMPLE } from '../lib/workflow-example';
+
+void test('motor example creates chronological, executable signal lineage and five real values', async () => {
+  const engine = new SignalEngine(undefined, crypto.randomUUID());
+  await engine.open();
+  try {
+    const source = await engine.workflowExample();
+    const project = engine.project;
+    assert.equal(source.exampleKey, WORKFLOW_EXAMPLE);
+    assert.equal(source.rows, 1801);
+    assert.equal(project.nodes.length, 9);
+    assert.equal(project.values!.length, 5);
+    assert.deepEqual(
+      project.workflowSteps!.map((step) => step.kind),
+      ['import', 'derive', 'derive', 'segment', 'value', 'segment', 'value'],
+    );
+    assert.equal(project.regionSets?.length ?? 0, 0);
+    const index = new WorkflowIndex(project);
+    const find = (name: string) =>
+      project.nodes.find((node) => index.label(node.id) === name)!;
+    const smooth = find('Smoothed torque');
+    const power = find('Brake power');
+    assert.deepEqual(power.parents, [smooth.id, source.channels[0]]);
+    const original = await samples(engine, source.channels[1]);
+    const torque = await samples(engine, smooth.id);
+    const speed = await samples(engine, source.channels[0]);
+    const powerSamples = await samples(engine, power.id);
+    for (const [i, point] of powerSamples.entries())
+      assert.ok(
+        Math.abs(
+          point[1] - (torque[i][1] * speed[i][1] * 2 * Math.PI) / 60000,
+        ) < 1e-9,
+      );
+    const run2 = find('Run 2 · Power');
+    const first = find('Run 2 · First half · Power');
+    assert.deepEqual(first.parents, [run2.id]);
+    assert.deepEqual(engine.bounds(first.id), [65, 85]);
+    for (const value of project.values!) {
+      const points = await samples(engine, value.inputId);
+      const expected =
+        value.operation === 'maximum'
+          ? Math.max(...points.map((point) => point[1]))
+          : points
+              .slice(1)
+              .reduce(
+                (sum, point, i) =>
+                  sum +
+                  ((point[1] + points[i][1]) / 2) * (point[0] - points[i][0]),
+                0,
+              ) /
+            (points.at(-1)![0] - points[0][0]);
+      assert.ok(Math.abs(value.value! - expected) < 1e-9);
+      const lineage = index.lineage([value.id]);
+      assert.equal(lineage.originals.length, 2);
+      assert.ok(
+        lineage.steps.every(
+          (step, i) => i === 0 || step.sequence > lineage.steps[i - 1].sequence,
+        ),
+      );
+    }
+    assert.deepEqual(await samples(engine, source.channels[1]), original);
+    assert.equal((await engine.workflowExample()).id, source.id);
+    assert.equal(
+      engine.project,
+      project,
+      'Reopening should preserve edits and IDs.',
+    );
+    const backup = await engine.backupWorkspace();
+    await engine.restoreWorkspace(new File([backup], 'example.stratus'));
+    assert.equal(engine.project.sources[0].exampleKey, WORKFLOW_EXAMPLE);
+    assert.equal(engine.project.values!.length, 5);
+  } finally {
+    engine.close();
+  }
+});
+
+void test('refresh replaces only the chosen synthetic recording and supports Undo after restart', async () => {
+  const { engine, source, database } = await fixture();
+  const importedSamples = await samples(engine, source.channels[0]);
+  await engine.regionExample('ramps');
+  const old = engine.project.sources.find((item) => item.synthetic)!;
+  const before = structuredClone(engine.project);
+  const fresh = await engine.workflowExample(true, old.id);
+  assert.equal(engine.project.sources.length, 2);
+  assert.ok(!engine.project.sources.some((item) => item.id === old.id));
+  assert.equal(engine.project.regionSets?.length ?? 0, 0);
+  assert.deepEqual(await samples(engine, source.channels[0]), importedSamples);
+  assert.deepEqual(
+    engine.project.workflowSteps!.filter((step) => step.sourceId === source.id),
+    before.workflowSteps!.filter((step) => step.sourceId === source.id),
+  );
+  engine.close();
+  const reopened = new SignalEngine(undefined, database);
+  try {
+    await reopened.open();
+    await reopened.recoverImports();
+    await reopened.travel('undo');
+    assert.deepEqual(reopened.project, before);
+    assert.equal((await samples(reopened, old.channels[0])).length, old.rows);
+    await reopened.travel('redo');
+    assert.equal(reopened.project.sources[0].id, fresh.id);
+    assert.equal((await samples(reopened, fresh.channels[0])).length, 1801);
+    await assert.rejects(
+      reopened.workflowExample(true, source.id),
+      /Only a built-in example/,
+    );
+  } finally {
+    reopened.close();
+  }
+});
+
+void test('failed example construction leaves the workspace and Undo journal unchanged', async () => {
+  const { engine, source, database } = await fixture();
+  const before = structuredClone(engine.project);
+  const originalRename = engine.rename.bind(engine);
+  engine.rename = () => Promise.reject(new Error('Injected example failure'));
+  await assert.rejects(engine.workflowExample(), /Injected example failure/);
+  assert.deepEqual(engine.project, before);
+  engine.rename = originalRename;
+  engine.close();
+  const reopened = new SignalEngine(undefined, database);
+  try {
+    await reopened.open();
+    await reopened.recoverImports();
+    assert.deepEqual(reopened.project, before);
+    assert.equal((await samples(reopened, source.channels[0])).length, 6);
+    await reopened.travel('undo');
+    assert.equal(reopened.project.sources.length, 0);
+    const fresh = await reopened.workflowExample();
+    assert.equal(fresh.exampleKey, WORKFLOW_EXAMPLE);
+  } finally {
+    reopened.close();
+  }
+});
+
+void test('cancelling example calculations never publishes partially built history', async () => {
+  const database = crypto.randomUUID();
+  const engine = new SignalEngine((message) => {
+    if (message.startsWith('Calculating')) engine.cancelled = true;
+  }, database);
+  await engine.open();
+  try {
+    await assert.rejects(engine.workflowExample(), /cancelled/);
+    assert.equal(engine.project.sources.length, 0);
+    assert.equal(engine.canUndo, false);
+    engine.cancelled = false;
+    await engine.recoverImports();
+    await engine.initializeWorkflow();
+    assert.equal(engine.project.workflowSteps!.length, 0);
+  } finally {
+    engine.close();
+  }
+});
 
 void test('trigger segments retain trigger provenance and mixed-input batches never absorb siblings', async () => {
   const { engine, source } = await fixture(
