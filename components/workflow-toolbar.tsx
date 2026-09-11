@@ -1,22 +1,19 @@
 'use client';
 
+import { useState, type DragEvent } from 'react';
 import {
   ArrowLeft,
   ArrowUpLeft,
-  CheckCheck,
-  Copy,
+  ChevronRight,
   Download,
-  FolderPen,
   GitBranch,
   History,
   ListChecks,
   ListTree,
-  Table2,
-  Pencil,
+  MoreHorizontal,
   ScanLine,
   Scissors,
-  Trash2,
-  Type,
+  Table2,
   Waves,
   Hash,
 } from 'lucide-react';
@@ -26,7 +23,16 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { WorkflowIndex } from '@/lib/workflow-history';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
 import {
   readWorkflowDrag,
   targetSignals,
@@ -54,25 +60,37 @@ export type ToolbarAction =
   | 'delete'
   | 'export'
   | 'owner';
-const actions = [
-  { id: 'derive', label: 'Derive signal', Icon: Waves },
-  { id: 'segment', label: 'Segment', Icon: Scissors },
-  { id: 'value', label: 'Calculate value', Icon: Hash },
-  { id: 'align', label: 'Compare & align', Icon: ScanLine },
+const creationActions = [
+  {
+    id: 'derive',
+    label: 'Derive signal',
+    short: 'Derive',
+    Icon: Waves,
+    hint: 'Create a signal with math, filters or calculus.',
+  },
+  {
+    id: 'segment',
+    label: 'Segment',
+    short: 'Segment',
+    Icon: Scissors,
+    hint: 'Split signals by ranges, windows or triggers.',
+  },
+  {
+    id: 'value',
+    label: 'Calculate value',
+    short: 'Value',
+    Icon: Hash,
+    hint: 'Calculate an average, minimum or maximum.',
+  },
+] as const;
+const inspectionActions = [
   { id: 'samples', label: 'View samples', Icon: Table2 },
-  { id: 'export', label: 'Export / report', Icon: Download },
-  { id: 'checked', label: 'Review checked inputs', Icon: ListChecks },
-  { id: 'use-viewed', label: 'Use only this signal', Icon: CheckCheck },
-  { id: 'back', label: 'Back to previous selection', Icon: ArrowLeft },
   { id: 'inputs', label: 'Inputs and originals', Icon: ArrowUpLeft },
-  { id: 'lineage', label: 'Show lineage in tree', Icon: GitBranch },
   { id: 'used-by', label: 'Used by later operations', Icon: History },
+  { id: 'lineage', label: 'Show lineage in tree', Icon: GitBranch },
   { id: 'owner', label: 'Open producing operation', Icon: ListTree },
-  { id: 'edit', label: 'Edit settings', Icon: Pencil },
-  { id: 'duplicate', label: 'Duplicate operation', Icon: Copy },
-  { id: 'rename', label: 'Rename output', Icon: Type },
-  { id: 'rename-recording', label: 'Rename recording', Icon: FolderPen },
-  { id: 'delete', label: 'Delete operation', Icon: Trash2 },
+  { id: 'export', label: 'Export / report', Icon: Download },
+  { id: 'back', label: 'Back to previous selection', Icon: ArrowLeft },
 ] as const;
 
 export function acceptsToolbarTarget(
@@ -105,6 +123,7 @@ export default function WorkflowToolbar({
   dragged,
   index,
   inputCount,
+  checked,
   hasPast,
   busy,
   onAction,
@@ -114,99 +133,238 @@ export default function WorkflowToolbar({
   dragged: WorkflowTarget | null;
   index: WorkflowIndex;
   inputCount: number;
+  checked: boolean;
   hasPast: boolean;
   busy: boolean;
   onAction: (action: ToolbarAction, dropped?: WorkflowTarget) => void;
   onDragEnd: () => void;
 }) {
-  const step =
-    selection.kind === 'step'
-      ? index.steps.get(selection.id)
-      : index.owner.get(selection.id);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [menuTarget, setMenuTarget] = useState<WorkflowTarget>();
+  const [hoverTarget, setHoverTarget] = useState<WorkflowTarget>();
+  const subject = menuTarget ?? selection;
+  const subjectStep =
+    subject.kind === 'step' ? index.steps.get(subject.id) : undefined;
+  const subjectLabel =
+    subject.kind === 'step'
+      ? subjectStep
+        ? stepName(subjectStep)
+        : 'Selection'
+      : index.label(subject.id) || 'Selection';
+  const accepts = (id: ToolbarAction) =>
+    !busy && !!dragged && acceptsToolbarTarget(id, dragged, index);
+  const enabled = (id: ToolbarAction) =>
+    !busy &&
+    (id === 'back'
+      ? hasPast
+      : id === 'checked'
+        ? checked ||
+          inputCount > 0 ||
+          targetSignals(index, selection).length > 0
+        : ['derive', 'segment', 'value', 'align'].includes(id)
+          ? inputCount > 0
+          : acceptsToolbarTarget(id, subject, index));
+  function invoke(id: ToolbarAction, target = menuTarget) {
+    setMoreOpen(false);
+    setHoverTarget(undefined);
+    setMenuTarget(undefined);
+    onAction(id, target);
+  }
+  function dropProps(id: ToolbarAction) {
+    return {
+      'data-action': id,
+      'data-drop': dragged ? (accepts(id) ? 'accept' : 'reject') : undefined,
+      onDragOver(event: DragEvent<HTMLElement>) {
+        if (
+          accepts(id) &&
+          event.dataTransfer.types.includes(WORKFLOW_DRAG_TYPE)
+        ) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }
+      },
+      onDrop(event: DragEvent<HTMLElement>) {
+        const target = readWorkflowDrag(
+          event.dataTransfer.getData(WORKFLOW_DRAG_TYPE),
+          index,
+        );
+        if (!busy && target && acceptsToolbarTarget(id, target, index)) {
+          event.preventDefault();
+          event.stopPropagation();
+          invoke(id, target);
+        }
+        onDragEnd();
+      },
+    };
+  }
   return (
-    <TooltipProvider delay={350}>
-      <div className="workflow-action-toolbar" aria-label="Workflow actions">
-        {actions.map(({ id, label: defaultLabel, Icon }) => {
-          const label =
-            id === 'rename' && selection.kind === 'step'
-              ? 'Rename operation'
-              : id === 'delete' && step?.kind === 'import'
-                ? 'Remove recording'
-                : id === 'use-viewed' && selection.kind === 'step'
-                  ? 'Use this operation’s signals'
-                  : id === 'use-viewed' && index.values.has(selection.id)
-                    ? 'Use this value’s input'
-                    : defaultLabel;
-          const acceptsDrop =
-            dragged && acceptsToolbarTarget(id, dragged, index);
-          const enabled =
-            !busy &&
-            (id === 'back'
-              ? hasPast
-              : id === 'checked'
-                ? inputCount > 0
-                : ['derive', 'segment', 'value', 'align'].includes(id)
-                  ? inputCount > 0 || acceptsToolbarTarget(id, selection, index)
-                  : acceptsToolbarTarget(id, selection, index));
-          return (
+    <TooltipProvider delay={400}>
+      <section className="workflow-action-toolbar" aria-label="Signal tools">
+        <div className="workflow-create-actions">
+          {creationActions.map(({ id, label, short, Icon, hint }) => (
             <Tooltip key={id}>
               <TooltipTrigger
                 render={
                   <button
                     type="button"
-                    className="workflow-action-icon"
+                    className="workflow-create-action"
                     aria-label={label}
-                    aria-disabled={!enabled && !acceptsDrop}
+                    aria-disabled={!enabled(id) && !accepts(id)}
                     disabled={busy}
-                    data-action={id}
-                    data-drop={
-                      dragged ? (acceptsDrop ? 'accept' : 'reject') : undefined
-                    }
+                    {...dropProps(id)}
                     onClick={() => {
-                      if (enabled) onAction(id);
-                    }}
-                    onDragOver={(event) => {
-                      if (
-                        !busy &&
-                        acceptsDrop &&
-                        event.dataTransfer.types.includes(WORKFLOW_DRAG_TYPE)
-                      ) {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = 'copy';
-                      }
-                    }}
-                    onDrop={(event) => {
-                      const target = readWorkflowDrag(
-                        event.dataTransfer.getData(WORKFLOW_DRAG_TYPE),
-                        index,
-                      );
-                      if (
-                        !busy &&
-                        target &&
-                        acceptsToolbarTarget(id, target, index)
-                      ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onAction(id, target);
-                      }
-                      onDragEnd();
+                      if (enabled(id)) invoke(id);
                     }}
                   />
                 }
               >
-                <Icon size={16} />
-                <span className="sr-only">{label}</span>
+                <Icon size={19} />
+                <span>{short}</span>
               </TooltipTrigger>
               <TooltipContent side="bottom">
-                {label}
-                {['derive', 'segment', 'value', 'align'].includes(id)
-                  ? ' · drop a signal, segment or value input'
-                  : ''}
+                <span>
+                  {hint}
+                  <br />
+                  Drop a signal or batch to choose its inputs.
+                </span>
               </TooltipContent>
             </Tooltip>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+        <div className="workflow-tool-utilities">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="workflow-input-scope"
+                  aria-label="Review checked inputs"
+                  data-checked={checked}
+                  aria-disabled={!enabled('checked') && !accepts('checked')}
+                  disabled={busy}
+                  {...dropProps('checked')}
+                  onClick={() => {
+                    if (enabled('checked')) invoke('checked');
+                  }}
+                />
+              }
+            >
+              <ListChecks size={15} />
+              <span>
+                {inputCount
+                  ? `${inputCount} ${checked ? 'checked' : inputCount === 1 ? 'input' : 'inputs'}`
+                  : 'Choose inputs'}
+              </span>
+              <ChevronRight size={12} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {checked
+                ? 'Review the checked signals used by creation tools.'
+                : 'Review the inputs for the current selection.'}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="workflow-utility-action"
+                  aria-label="Compare & align"
+                  aria-disabled={!enabled('align') && !accepts('align')}
+                  disabled={busy}
+                  {...dropProps('align')}
+                  onClick={() => {
+                    if (enabled('align')) invoke('align');
+                  }}
+                />
+              }
+            >
+              <ScanLine size={15} />
+              <span>Compare</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Compare and align signal time bases. Accepts signal and batch
+              drops.
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenu
+            open={moreOpen || (!!dragged && hoverTarget === dragged)}
+            modal={false}
+            onOpenChange={(open) => {
+              setMoreOpen(open);
+              if (!open) {
+                setMenuTarget(undefined);
+                setHoverTarget(undefined);
+              }
+            }}
+          >
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="workflow-more-action"
+                  aria-label="Inspect and export"
+                  title="Inspect and export"
+                  disabled={busy}
+                  data-action="more"
+                  data-drop={dragged && !busy ? 'accept' : undefined}
+                  onDragOver={(event) => {
+                    if (
+                      !busy &&
+                      dragged &&
+                      event.dataTransfer.types.includes(WORKFLOW_DRAG_TYPE)
+                    ) {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'copy';
+                      setHoverTarget(dragged);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    const target = readWorkflowDrag(
+                      event.dataTransfer.getData(WORKFLOW_DRAG_TYPE),
+                      index,
+                    );
+                    if (!busy && target) {
+                      event.preventDefault();
+                      setMenuTarget(target);
+                      setHoverTarget(undefined);
+                      setMoreOpen(true);
+                    }
+                    onDragEnd();
+                  }}
+                />
+              }
+            >
+              <MoreHorizontal size={19} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="workflow-tools-menu" align="end">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel
+                  className="workflow-menu-subject"
+                  title={subjectLabel}
+                >
+                  {subjectLabel}
+                </DropdownMenuLabel>
+                {inspectionActions.map(({ id, label, Icon }) => (
+                  <DropdownMenuItem
+                    key={id}
+                    disabled={!enabled(id) && !accepts(id)}
+                    {...dropProps(id)}
+                    onClick={() => invoke(id)}
+                  >
+                    <Icon />
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <p className="workflow-menu-hint">
+                Right-click a History item to edit, rename, duplicate or delete.
+              </p>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </section>
     </TooltipProvider>
   );
 }

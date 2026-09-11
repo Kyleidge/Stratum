@@ -25,11 +25,51 @@ export async function workflowUiSmoke() {
   const button = (text: string, root: Document | HTMLElement = document) =>
     [...root.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) =>
-        button.textContent?.trim() === text &&
+        (button.textContent?.trim() === text ||
+          button.getAttribute('aria-label') === text) &&
         !button.disabled &&
         button.getAttribute('aria-disabled') !== 'true',
     );
+  async function menuAction(text: string) {
+    if (
+      !document.querySelector('[data-slot="dropdown-menu-content"][data-open]')
+    ) {
+      button('Inspect and export')!.click();
+      await delay();
+    }
+    const item = await until(
+      () =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-slot="dropdown-menu-content"][data-open] [role="menuitem"]',
+          ),
+        ].find(
+          (item) =>
+            item.textContent?.trim() === text &&
+            !item.hasAttribute('data-disabled'),
+        ),
+      `menu action ${text}`,
+    );
+    item.click();
+    await delay();
+  }
   async function click(text: string, root: Document | HTMLElement = document) {
+    if (
+      root === document &&
+      [
+        'Export / report',
+        'Inputs and originals',
+        'Show lineage in tree',
+        'Used by later operations',
+        'Open producing operation',
+        'Back to previous selection',
+        'View samples',
+      ].includes(text) &&
+      !button(text)
+    ) {
+      await menuAction(text);
+      return;
+    }
     (await until(() => button(text, root), `button ${text}`)).click();
     await delay();
   }
@@ -481,8 +521,52 @@ export async function workflowUiSmoke() {
     );
     assert(
       document.querySelectorAll('.workflow-action-toolbar button').length ===
-        18,
-      'History tools are missing.',
+        6 && document.querySelectorAll('.workflow-create-action').length === 3,
+      'Toolbar did not consolidate into three creation actions and three utilities.',
+    );
+    assert(
+      !document.querySelector(
+        '.workflow-action-toolbar [data-action="delete"]',
+      ) &&
+        !document.querySelector(
+          '.workflow-action-toolbar [data-action="rename"]',
+        ),
+      'Occasional management actions still crowd the toolbar.',
+    );
+    const moreTrigger = button('Inspect and export')!;
+    moreTrigger.focus();
+    moreTrigger.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    const keyboardMenu = await until(
+      () =>
+        document.querySelector<HTMLElement>(
+          '[data-slot="dropdown-menu-content"][data-open]',
+        ) ?? undefined,
+      'keyboard inspection menu',
+    );
+    assert(
+      keyboardMenu.textContent?.includes('View samples') &&
+        keyboardMenu.textContent?.includes('Export / report'),
+      'Inspection and export actions are not discoverable.',
+    );
+    keyboardMenu.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await until(
+      () =>
+        !document.querySelector(
+          '[data-slot="dropdown-menu-content"][data-open]',
+        ),
+      'close inspection menu with Escape',
     );
     const beforeDrag = selectedHistoryRow().title;
     const cancelledDrag = new DataTransfer();
@@ -507,16 +591,43 @@ export async function workflowUiSmoke() {
     );
     assert(
       document
+        .querySelector('[data-action="more"]')
+        ?.getAttribute('data-drop') === 'accept',
+      'Inspection menu did not advertise drop support.',
+    );
+    moreTrigger.dispatchEvent(
+      new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: cancelledDrag,
+      }),
+    );
+    await until(
+      () =>
+        document.querySelector(
+          '[data-slot="dropdown-menu-content"][data-open]',
+        ),
+      'inspection menu opens during a drag',
+    );
+    assert(
+      document
         .querySelector('[data-action="back"]')
         ?.getAttribute('data-drop') === 'reject',
-      'Invalid targets were not distinguished.',
+      'Navigation accepts an invalid input drop.',
     );
     torqueRow.dispatchEvent(
       new DragEvent('dragend', { bubbles: true, dataTransfer: cancelledDrag }),
     );
+    await until(
+      () =>
+        !document.querySelector(
+          '[data-slot="dropdown-menu-content"][data-open]',
+        ),
+      'cancelled drag closes its inspection menu',
+    );
     await delay();
     assert(
-      !document.querySelector('.workflow-action-icon[data-drop]'),
+      !document.querySelector('.workflow-action-toolbar [data-drop]'),
       'Cancelled drag left target highlights.',
     );
     await click('New plot');
@@ -695,6 +806,53 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('3 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
+    await contextAction(selectedHistoryRow(), 'View samples');
+    const contextSamples = await dialog();
+    await until(
+      () => contextSamples.querySelectorAll('tbody tr').length > 0,
+      'context menu samples',
+    );
+    await click('Close', contextSamples);
+    assert(
+      document
+        .querySelector('.workflow-input-scope')
+        ?.textContent?.includes('3 checked'),
+      'Context inspection changed checked processing inputs.',
+    );
+    await click('Review checked inputs');
+    const scopeModal = await dialog();
+    assert(
+      scopeModal.querySelectorAll('.workflow-input-review li').length === 3,
+      'Input review does not match the toolbar count.',
+    );
+    await click('Follow selection', scopeModal);
+    assert(
+      document
+        .querySelector('.workflow-input-scope')
+        ?.textContent?.includes('1 input'),
+      'Follow selection did not return to the viewed member.',
+    );
+    // Explicitly empty input scope disables creation rather than falling back silently.
+    await click('Review checked inputs');
+    const emptyScope = await dialog();
+    emptyScope
+      .querySelector<HTMLButtonElement>('[aria-label^="Remove "]')!
+      .click();
+    await delay();
+    await click('Close', emptyScope);
+    assert(
+      document
+        .querySelector('[data-action="derive"]')
+        ?.getAttribute('aria-disabled') === 'true',
+      'An empty scope silently enabled processing.',
+    );
+    await click('Review checked inputs');
+    await click('Follow selection', await dialog());
+    assert(
+      button('Derive signal'),
+      'Empty input scope cannot return to the current selection.',
+    );
+    await contextAction(selectedHistoryRow(), 'Use as processing inputs');
     // A segment member expands only its producing operation on the plot.
     await dragItem(selectedHistoryRow(), button('New plot')!);
     await until(
@@ -723,7 +881,7 @@ export async function workflowUiSmoke() {
       ].every((path) => path.getAttribute('d')?.startsWith('M70.00,')),
       'Segments did not share the zero origin.',
     );
-    // A processing tool receives this member, even while three inputs were checked.
+    // A processing tool receives this member, without adding its sibling segments.
     await dragItem(
       selectedHistoryRow(),
       document.querySelector<HTMLElement>('[data-action="value"]')!,
@@ -735,7 +893,7 @@ export async function workflowUiSmoke() {
     );
     await click('Close', memberModal);
     await closePlot();
-    await click('Use only this signal');
+    await contextAction(selectedHistoryRow(), 'Use as processing inputs');
     await segment('15, 20');
     assert(
       document
@@ -794,8 +952,9 @@ export async function workflowUiSmoke() {
     await closePlot();
     await dragItem(
       selectedHistoryRow(),
-      document.querySelector<HTMLElement>('[data-action="samples"]')!,
+      document.querySelector<HTMLElement>('[data-action="more"]')!,
     );
+    await menuAction('View samples');
     const samplesModal = await dialog();
     await until(
       () => samplesModal.querySelectorAll('tbody tr').length > 0,
@@ -1075,7 +1234,7 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="alertdialog"]'),
       'cancel deletion',
     );
-    await click('Delete operation');
+    await contextAction(selectedHistoryRow(), 'Delete operation', true);
     impact = await until(
       () =>
         document.querySelector<HTMLElement>('[role="alertdialog"]') ??
@@ -1400,7 +1559,7 @@ export async function workflowUiSmoke() {
     root.unmount();
     host.remove();
     console.info(
-      'STRATUS_SMOKE_OK: Workflow UI passed signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
+      'STRATUS_SMOKE_OK: Workflow UI passed the compact labeled toolbar, keyboard inspection menu, checked-input review, context actions, signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
     );
   } catch (error) {
     console.error(

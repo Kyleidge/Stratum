@@ -55,9 +55,13 @@ across recordings. Otherwise overlays require matching units and explicit time r
 use stacked axes, with independent time axes clearly labeled when clocks differ.
 Zoom, pan, and Fit adjust the bounded plot preview; summaries describe all samples.
 Exact samples and exports still come from evaluated engine data, never the preview.
-Inspection, lineage, checked-input review, processing and management live in the
-icon toolbar above History. The footer shows selection, processing scope, totals
-and progress; signal details no longer occupy space below the plot.
+The toolbar above History has labelled Derive, Segment and Value actions, with
+Compare, an input-count control and an inspection/export menu underneath. Edit,
+duplicate, rename and delete live in each History item's context menu. Inspection
+preserves checked scope; an explicitly empty scope disables creation. The input
+review offers Follow selection to return to automatic inputs. The footer shows
+selection, processing scope, totals and progress; signal details no longer occupy
+space below the plot.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
 The history tree has two levels: an operation and its immediate outputs. The

@@ -5,6 +5,10 @@ import {
   ChevronRight,
   CornerDownRight,
   Copy,
+  Download,
+  ListChecks,
+  ArrowUpLeft,
+  Table2,
   Hash,
   LockKeyhole,
   Pencil,
@@ -24,7 +28,7 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import type { WorkflowManagementAction } from './workflow-management';
-import { startWorkflowDrag } from '@/lib/workflow-drag';
+import { startWorkflowDrag, targetSignals } from '@/lib/workflow-drag';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
 const ROW_HEIGHT = 48;
@@ -39,6 +43,7 @@ export default function WorkflowHistory({
   onAction,
   contributingOutputs,
   onDragSelection,
+  onInspect,
 }: {
   steps: WorkflowStep[];
   index: WorkflowIndex;
@@ -49,6 +54,10 @@ export default function WorkflowHistory({
   onAction: (
     selection: WorkflowSelection,
     action: WorkflowManagementAction,
+  ) => void;
+  onInspect?: (
+    target: WorkflowSelection,
+    action: 'samples' | 'inputs' | 'export' | 'use-viewed',
   ) => void;
   contributingOutputs?: ReadonlySet<string>;
   onDragSelection?: (selection: WorkflowSelection | null) => void;
@@ -377,6 +386,38 @@ export default function WorkflowHistory({
               <ContextMenu key={row.key}>
                 <ContextMenuTrigger render={item} />
                 <ContextMenuContent aria-label={`Actions for ${row.label}`}>
+                  {onInspect && (
+                    <>
+                      <ContextMenuItem
+                        disabled={
+                          busy || targetSignals(index, target).length !== 1
+                        }
+                        onClick={() => onInspect(target, 'samples')}
+                      >
+                        <Table2 /> View samples
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        disabled={busy}
+                        onClick={() => onInspect(target, 'inputs')}
+                      >
+                        <ArrowUpLeft /> Inputs and originals
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        disabled={busy || !targetSignals(index, target).length}
+                        onClick={() => onInspect(target, 'use-viewed')}
+                      >
+                        <ListChecks /> Use as processing inputs
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        disabled={busy || !step.outputIds.length}
+                        onClick={() => onInspect(target, 'export')}
+                      >
+                        <Download /> Export / report
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                    </>
+                  )}
+
                   {!['import', 'regions'].includes(step.kind) && (
                     <ContextMenuItem
                       disabled={busy}

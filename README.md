@@ -55,13 +55,22 @@ tabs and up to 10,000 traces per tab, rejecting larger drops without partial add
 Plots reference live outputs, so edits refresh them and Undo can restore a removed
 trace. Layouts are separate from workspace backups and workflow Undo/Redo.
 
-The icon toolbar above History contains processing, samples, export, checked-input
-review, navigation, lineage, edit, duplicate, rename and delete controls. Hover or
-focus an icon to see its name. Accepting tools highlight during a drag. A drop
-selects the item in History and opens the relevant editor with its exact inputs;
-processing drops replace previously checked inputs. Creating or editing data still
-requires applying the editor, and deletion shows its normal impact confirmation.
-Starting or cancelling a drag does not change the selection.
+The toolbar above History keeps **Derive**, **Segment** and **Value** in view,
+with **Compare** underneath. The input-count control opens the processing scope;
+it distinguishes the current selection from checked inputs. **Follow selection**
+releases a checked batch so inputs follow the item you inspect again. Removing
+every checked input disables creation until you choose new inputs.
+
+The **⋯** menu contains samples, export, lineage and navigation. Drag over it to
+reveal accepting menu items, or drop an item on it and choose an action. Right-click
+a History item for edit, duplicate, rename and delete, plus inspection, export and
+input selection. Keyboard users can open the context menu with **Shift+F10**.
+
+Accepting tools highlight during a drag. A processing drop selects the item in
+History and opens the editor with its exact inputs, replacing any checked batch.
+Inspection preserves checked inputs. Creating or editing data still requires
+applying the editor, and deletion shows its normal impact confirmation. Starting
+or cancelling a drag does not change the selection.
 
 Select a step to inspect its complete **Step outputs** table; use checkboxes for
 batch selection. Browsing normally preserves checked inputs. **Inputs and

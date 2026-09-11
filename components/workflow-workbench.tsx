@@ -144,6 +144,8 @@ export default function WorkflowWorkbench() {
   const inputIds = (inputs ?? (activeNode ? [activeNode.id] : [])).filter(
     (id) => index.nodes.has(id),
   );
+  const processingIds =
+    inputs === null ? targetSignals(index, selection) : inputIds;
   const [past, setPast] = useState<WorkflowSelection[]>([]);
   const [view, updateView] = useState('result');
   function setView(next: string) {
@@ -510,11 +512,7 @@ export default function WorkflowWorkbench() {
   function toolbarAction(action: ToolbarAction, dropped?: WorkflowTarget) {
     if (engine.busy) return;
     const target = dropped ?? selection;
-    const signals = dropped
-      ? targetSignals(index, target)
-      : inputIds.length
-        ? inputIds
-        : targetSignals(index, target);
+    const signals = dropped ? targetSignals(index, target) : processingIds;
     const targetStep =
       target.kind === 'step'
         ? index.steps.get(target.id)
@@ -523,7 +521,7 @@ export default function WorkflowWorkbench() {
       index.values.has(id),
     );
     const note =
-      (dropped || !inputIds.length) &&
+      (dropped || inputs === null) &&
       valueInputs.length &&
       ['derive', 'segment', 'value', 'align'].includes(action)
         ? `Using the input signal${signals.length === 1 ? '' : 's'} of ${valueInputs.length === 1 ? index.label(valueInputs[0]) : `${valueInputs.length} values`}.`
@@ -535,7 +533,17 @@ export default function WorkflowWorkbench() {
       setLineageRoot(null);
       setSidebar('history');
       select(dropped);
-      setInputs(signals);
+      if (
+        [
+          'derive',
+          'segment',
+          'value',
+          'align',
+          'use-viewed',
+          'checked',
+        ].includes(action)
+      )
+        setInputs(signals);
       setDragged(null);
       if (note) setNotice(note);
     }
@@ -749,7 +757,8 @@ export default function WorkflowWorkbench() {
             selection={selection}
             dragged={dragged}
             index={index}
-            inputCount={inputIds.length}
+            inputCount={processingIds.length}
+            checked={inputs !== null}
             hasPast={past.length > 0}
             busy={engine.busy || !engine.ready}
             onAction={toolbarAction}
@@ -800,6 +809,7 @@ export default function WorkflowWorkbench() {
               selection={selection}
               busy={engine.busy}
               onAction={manageSelection}
+              onInspect={(target, action) => toolbarAction(action, target)}
               contributingOutputs={lineageRoot ? lineage.outputIds : undefined}
               onSelect={(next) => {
                 select(next);
@@ -1324,7 +1334,7 @@ export default function WorkflowWorkbench() {
           <button onClick={engine.cancel}>Cancel operation</button>
         ) : (
           <span>
-            {inputIds.length} {inputs === null ? 'in view' : 'checked'} ·{' '}
+            {processingIds.length} {inputs === null ? 'in view' : 'checked'} ·{' '}
             {project.nodes.length} signals · {(project.values ?? []).length}{' '}
             values · Saved locally
           </span>
@@ -1517,9 +1527,9 @@ export default function WorkflowWorkbench() {
           {detailPanel === 'checked' && (
             <>
               <WorkflowList
-                items={inputIds}
+                items={processingIds}
                 initialOpen
-                summary={`${inputIds.length} input signals`}
+                summary={`${processingIds.length} input signals`}
               >
                 {(visible) => (
                   <ul className="workflow-input-review">
@@ -1538,7 +1548,9 @@ export default function WorkflowWorkbench() {
                           className="workflow-icon-button"
                           aria-label={`Remove ${index.label(id)} from checked inputs`}
                           onClick={() =>
-                            setInputs(inputIds.filter((item) => item !== id))
+                            setInputs(
+                              processingIds.filter((item) => item !== id),
+                            )
                           }
                         >
                           <X size={14} />
@@ -1548,20 +1560,32 @@ export default function WorkflowWorkbench() {
                   </ul>
                 )}
               </WorkflowList>
-              <button
-                className="secondary-button"
-                disabled={!sampleIds.length}
-                onClick={() => {
-                  setInputs(sampleIds);
-                  setDetailPanel(undefined);
-                }}
-              >
-                {selection.kind === 'step'
-                  ? 'Use this operation’s signals'
-                  : activeValue
-                    ? 'Use this value’s input'
-                    : 'Use only this signal'}
-              </button>
+              <div className="workflow-scope-actions">
+                <button
+                  className="secondary-button"
+                  disabled={!sampleIds.length}
+                  onClick={() => {
+                    setInputs(sampleIds);
+                    setDetailPanel(undefined);
+                  }}
+                >
+                  {selection.kind === 'step'
+                    ? 'Use this operation’s signals'
+                    : activeValue
+                      ? 'Use this value’s input'
+                      : 'Use only this signal'}
+                </button>
+                <button
+                  className="workflow-link"
+                  disabled={inputs === null}
+                  onClick={() => {
+                    setInputs(null);
+                    setDetailPanel(undefined);
+                  }}
+                >
+                  Follow selection
+                </button>
+              </div>
             </>
           )}
         </DialogContent>
@@ -1823,15 +1847,16 @@ export default function WorkflowWorkbench() {
               large batches. Arrow keys navigate the tree, Enter selects.
             </li>
             <li>
-              <strong>Find the origin.</strong> The icons above History open
-              inputs, full lineage, and later operations. Hover or focus an icon
-              for its name. The signal index lists every output without nesting.
+              <strong>Find the origin.</strong> The ⋯ menu above History opens
+              samples, inputs, lineage, and later operations. Right-click a
+              History item to edit, rename, duplicate or delete it.
             </li>
             <li>
               <strong>Inspect and compare inputs.</strong> Open a name to view
               its plot or value. In Step outputs, check signals to process
-              together. Checked inputs stay selected while you explore; Use only
-              this signal replaces the batch with the signal in view.
+              together. The input-count control reviews your scope. Checked
+              inputs stay selected while you explore; Follow selection returns
+              to using the item in view.
             </li>
             <li>
               <strong>Build a plot.</strong> Drag a signal onto the canvas or a
