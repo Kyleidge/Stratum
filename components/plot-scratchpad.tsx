@@ -994,7 +994,7 @@ export default function PlotScratchpad({
         </p>
       )}
       <Dialog open={renaming} onOpenChange={setRenaming}>
-        <DialogContent className="workflow-dialog scratchpad-rename">
+        <DialogContent className="workflow-dialog workflow-rename">
           <DialogTitle>Rename plot</DialogTitle>
           <DialogDescription>
             Give this comparison a name you will recognise.

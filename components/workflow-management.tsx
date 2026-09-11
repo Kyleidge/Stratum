@@ -114,6 +114,14 @@ export function WorkflowManagementDialogs({
   const deleting = action === 'delete';
   const renaming =
     action === 'rename-recording' ? step.sourceId : (outputId ?? step.id);
+  const renameSubject =
+    action === 'rename-recording'
+      ? 'recording'
+      : outputId
+        ? project.nodes.some((node) => node.id === outputId)
+          ? 'signal'
+          : 'value'
+        : 'operation';
   const [name, setName] = useState(() =>
     action === 'rename-recording'
       ? (project.sources.find((source) => source.id === step.sourceId)?.name ??
@@ -183,11 +191,10 @@ export function WorkflowManagementDialogs({
           if (!busy && !open) onClose();
         }}
       >
-        <DialogContent className="workflow-dialog">
-          <DialogTitle>Rename</DialogTitle>
+        <DialogContent className="workflow-dialog workflow-rename">
+          <DialogTitle>Rename {renameSubject}</DialogTitle>
           <DialogDescription>
-            Change the display name. Samples and dependency links stay
-            unchanged.
+            Give this {renameSubject} a name you will recognise.
           </DialogDescription>
           <form
             onSubmit={(event) => {
@@ -198,16 +205,13 @@ export function WorkflowManagementDialogs({
                   .catch((caught: Error) => setError(caught.message));
             }}
           >
-            <label className="region-field">
-              <span>Name</span>
-              <input
-                aria-label="Display name"
-                value={name}
-                maxLength={160}
-                onChange={(event) => setName(event.target.value)}
-                disabled={busy}
-              />
-            </label>
+            <input
+              aria-label="Display name"
+              value={name}
+              maxLength={160}
+              onChange={(event) => setName(event.target.value)}
+              disabled={busy}
+            />
             {error && <p role="alert">{error}</p>}
             <button
               className="primary-button"

@@ -649,14 +649,14 @@
   display: block;
   margin-top: 5px;
 }
-.scratchpad-rename {
+.workflow-rename {
   max-width: 430px;
 }
-.scratchpad-rename form {
+.workflow-rename form {
   display: grid;
   gap: 20px;
 }
-.scratchpad-rename input {
+.workflow-rename input {
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: 5px;
