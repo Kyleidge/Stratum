@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import WorkflowExport from '../components/workflow-export';
 import WorkflowList from '../components/workflow-list';
 import type { EngineResponse, Project } from '../lib/signal-types';
+import { PLOT_STORAGE_KEY, readPlotSheets } from '../lib/plot-scratchpad';
 
 export async function workflowUiSmoke() {
   const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
@@ -31,7 +32,9 @@ export async function workflowUiSmoke() {
   }
   async function dialog() {
     return until(
-      () => document.querySelector<HTMLElement>('[role="dialog"]') ?? undefined,
+      () =>
+        document.querySelector<HTMLElement>('[role="dialog"][data-open]') ??
+        undefined,
       'dialog',
     );
   }
@@ -171,10 +174,13 @@ export async function workflowUiSmoke() {
     await delay();
   }
   async function outputsTab() {
-    const tab = [
-      ...document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
-    ].find((element) => element.textContent?.startsWith('Step outputs'));
-    if (!tab) throw new Error('Output collection tab missing.');
+    const tab = await until(
+      () =>
+        [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+          (element) => element.textContent?.trim().includes('Step outputs'),
+        ),
+      'Step outputs tab',
+    );
     tab.click();
     await delay();
   }
@@ -262,6 +268,150 @@ export async function workflowUiSmoke() {
     );
     if (button('Open example workflow')) await click('Open example workflow');
     await until(() => button('Derive signal'), 'initial signal');
+    await until(
+      () => document.querySelector('.scratchpad-canvas .signal-chart svg'),
+      'active plot',
+    );
+    await click('Keep plot');
+    const plotTab = () =>
+      document.querySelector('[aria-label="Plot tabs"] [aria-selected="true"]');
+    assert(
+      plotTab()?.textContent?.includes('Motor speed'),
+      'Keep plot did not open a named tab.',
+    );
+    const signalRow = (name: string) =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '.workflow-tree-row[data-kind="output"]',
+        ),
+      ].find((row) => row.title === name);
+    (await until(() => signalRow('Torque'), 'torque row')).click();
+    await delay();
+    assert(
+      plotTab()?.textContent?.includes('Motor speed'),
+      'Inspecting another signal replaced a saved plot.',
+    );
+    await click('Add to this plot');
+    await until(
+      () => document.querySelectorAll('.scratchpad-stack svg').length === 2,
+      'separate axes for mixed units',
+    );
+    assert(
+      button('Overlay') === undefined,
+      'Mixed units were allowed on one value axis.',
+    );
+    await click(
+      'Motor speed',
+      document.querySelector<HTMLElement>('.scratchpad-plot-toolbar')!,
+    );
+    const rename = await dialog();
+    setValue(
+      rename.querySelector<HTMLInputElement>('input[aria-label="Plot name"]')!,
+      'Motor comparison',
+    );
+    await delay();
+    await click('Save name', rename);
+    await until(
+      () => plotTab()?.textContent?.includes('Motor comparison'),
+      'renamed plot tab',
+    );
+    const hide = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Hide trace Torque"]',
+    )!;
+    hide.click();
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+          .length === 1,
+      'hidden trace',
+    );
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Show trace Torque"]')!
+      .click();
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+          .length === 2,
+      'restored trace',
+    );
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!
+      .click();
+    await until(
+      () =>
+        document
+          .querySelector('.scratchpad-axis-footer')
+          ?.textContent?.includes('200%'),
+      'plot zoom',
+    );
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Pan plot right"]')!
+      .click();
+    await delay();
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Fit entire plot"]')!
+      .click();
+    await delay();
+    assert(
+      document
+        .querySelector('.scratchpad-axis-footer')
+        ?.textContent?.includes('100%'),
+      'Fit did not reset the time window.',
+    );
+    const stored = readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
+    assert(
+      stored.length === 1 &&
+        stored[0].name === 'Motor comparison' &&
+        stored[0].traces.length === 2,
+      'Plot layout was not saved locally.',
+    );
+    document
+      .querySelector<HTMLButtonElement>(
+        '[aria-label="Close plot Motor comparison"]',
+      )!
+      .click();
+    await delay();
+    assert(
+      document.querySelector('.scratchpad-plot-title strong')?.textContent ===
+        'Torque',
+      'Active did not follow the latest selection.',
+    );
+    await click('Reopen');
+    assert(
+      plotTab()?.textContent?.includes('Motor comparison'),
+      'Closed plot could not be reopened.',
+    );
+    await click('Add signals');
+    const signalPicker = await dialog();
+    setValue(
+      signalPicker.querySelector<HTMLInputElement>(
+        '[aria-label="Search plot signals"]',
+      )!,
+      'Smoothed torque',
+    );
+    await delay();
+    assert(
+      signalPicker.querySelectorAll('.scratchpad-choices label').length === 1,
+      'Plot signal search did not filter choices.',
+    );
+    signalPicker.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click();
+    await delay();
+    await click('Apply signals', signalPicker);
+    await until(
+      () => document.querySelectorAll('.scratchpad-trace').length === 3,
+      'picker trace added',
+    );
+    document
+      .querySelector<HTMLButtonElement>(
+        '[aria-label="Close plot Motor comparison"]',
+      )!
+      .click();
+    await delay();
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Dismiss closed plot"]')!
+      .click();
+    (await until(() => signalRow('Motor speed'), 'speed row')).click();
+    await delay();
     assert(
       document
         .querySelector('.workflow-heading-top')
@@ -288,7 +438,9 @@ export async function workflowUiSmoke() {
     );
     await click('Plot derived signal');
     await until(
-      () => document.querySelector('h1')?.textContent === 'Torque × speed',
+      () =>
+        document.querySelector('.workflow-detail-heading h1')?.textContent ===
+        'Torque × speed',
       'example product',
     );
     exampleGuide.querySelector('summary')!.click();
@@ -338,7 +490,8 @@ export async function workflowUiSmoke() {
     await click('Create 1 derived signal', mathModal);
     await settled();
     assert(
-      document.querySelector('h1')?.textContent === 'Motor speed × Motor speed',
+      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+        'Motor speed × Motor speed',
       'The palette did not create the selected two-input operation.',
     );
     const mathOutput = selectedHistoryRow();
@@ -388,7 +541,8 @@ export async function workflowUiSmoke() {
     await click('Save changes and recalculate', mathEdit);
     await settled();
     assert(
-      document.querySelector('h1')?.textContent === 'Motor speed − Motor speed',
+      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+        'Motor speed − Motor speed',
       'Changing the math operation did not update its output.',
     );
     await historyAction('Undo');
@@ -423,7 +577,9 @@ export async function workflowUiSmoke() {
     await click('Use only this signal');
     await segment('15, 20');
     assert(
-      document.querySelector('h1')?.textContent?.includes('15–20 s'),
+      document
+        .querySelector('.workflow-detail-heading h1')
+        ?.textContent?.includes('15–20 s'),
       'Nested segment interval was not exposed.',
     );
     await exportFile();
@@ -621,7 +777,8 @@ export async function workflowUiSmoke() {
     await click('Save name', managementModal);
     await settled();
     assert(
-      document.querySelector('h1')?.textContent === 'Reviewed speed',
+      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+        'Reviewed speed',
       'Rename lost the selected output.',
     );
     await click('Calculate value');
@@ -654,7 +811,8 @@ export async function workflowUiSmoke() {
     await click('Save changes and recalculate', managementModal);
     await settled();
     assert(
-      document.querySelector('h1')?.textContent === 'Reviewed speed',
+      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+        'Reviewed speed',
       'Editing lost the output alias.',
     );
     await contextAction(selectedHistoryRow(), 'Delete operation');
@@ -684,7 +842,8 @@ export async function workflowUiSmoke() {
     await until(
       () =>
         !document.querySelector('[role="alertdialog"]') &&
-        document.querySelector('h1')?.textContent !== 'Reviewed speed',
+        document.querySelector('.workflow-detail-heading h1')?.textContent !==
+          'Reviewed speed',
       'delete committed',
     );
     async function historyAction(label: string) {
@@ -750,7 +909,7 @@ export async function workflowUiSmoke() {
     assert(
       Number.isFinite(initialValue) &&
         Math.abs(revisedValue / initialValue - 1.5) < 0.002,
-      `Editing did not refresh the dependent value in the UI: ${initialValue} → ${revisedValue}, ${document.querySelector('h1')?.textContent}.`,
+      `Editing did not refresh the dependent value in the UI: ${initialValue} → ${revisedValue}, ${document.querySelector('.workflow-detail-heading h1')?.textContent}.`,
     );
     await click('Workspace');
     managementModal = await dialog();
@@ -1001,7 +1160,7 @@ export async function workflowUiSmoke() {
     );
   } catch (error) {
     console.error(
-      `STRATUS_SMOKE_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+      `STRATUS_SMOKE_FAILED: ${error instanceof Error ? error.stack : String(error)}`,
     );
   }
 }

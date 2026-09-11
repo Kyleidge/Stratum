@@ -25,6 +25,26 @@ flowchart LR
 
 ## History is the primary navigation
 
+The center is a plot scratchpad. **Active** follows the inspected signal (or a
+value's input); **Keep plot** copies that signal into a named comparison tab.
+**New plot** starts an empty tab. Named tabs stay selected while browsing History,
+and **Add to this plot** adds the inspected signal without changing checked
+processing inputs. The searchable **Add signals** dialog can also use checked
+inputs. Step outputs remain a separate tab with the existing export scopes.
+
+Each tab holds up to eight traces; the scratchpad holds up to twelve named tabs.
+Trace visibility, colors, names, layout, and grid settings persist in device-local
+browser storage, separately from workflow Undo/Redo and workspace backups. These
+are live references to signal IDs, not sample snapshots. Editing an operation
+refreshes its plots. Removed signals remain marked unavailable so Undo can restore
+them. Closing a tab offers Reopen for the most recently closed plot.
+
+Overlays require matching units and explicit time references. Other comparisons
+use stacked axes, with independent time axes clearly labeled when clocks differ.
+Zoom, pan, and Fit adjust the bounded plot preview; summaries describe all samples.
+Exact samples and exports still come from evaluated engine data, never the preview.
+Only the selected tab renders charts, and signal choices are paged in groups of 30.
+
 The history tree has two levels: an operation and its immediate outputs. The
 operation sequence remains chronological, oldest first. Dependency depth does
 not increase indentation. Stable step references identify where a signal was

@@ -13,6 +13,51 @@ import type {
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 import { affectedOperations } from '../lib/workflow-lifecycle';
 import { WORKFLOW_EXAMPLE } from '../lib/workflow-example';
+import { readPlotSheets, MAX_PLOT_TRACES } from '../lib/plot-scratchpad';
+
+void test('scratchpad layouts tolerate corrupt storage and retain missing signal references for Undo', () => {
+  assert.deepEqual(readPlotSheets('{broken'), []);
+  assert.deepEqual(readPlotSheets('{"traces":[]}'), []);
+  const sheets = readPlotSheets(
+    JSON.stringify([
+      { id: 'outputs', name: 'Invalid reserved tab', traces: [] },
+      {
+        id: 'plot:one',
+        name: '  Comparison  ',
+        layout: 'stacked',
+        grid: false,
+        traces: [
+          null,
+          { id: 'removed-signal', visible: false, color: '#7ebcff' },
+          { id: 'removed-signal' },
+          { id: 'another', color: 'url(bad)' },
+        ],
+      },
+      { id: 'plot:one', name: 'Duplicate tab', traces: [] },
+    ]),
+  );
+  assert.equal(sheets.length, 1);
+  assert.equal(sheets[0].name, 'Comparison');
+  assert.equal(sheets[0].layout, 'stacked');
+  assert.equal(sheets[0].grid, false);
+  assert.deepEqual(sheets[0].traces[0], {
+    id: 'removed-signal',
+    visible: false,
+    color: '#7ebcff',
+  });
+  assert.equal(sheets[0].traces.length, 2);
+  assert.match(sheets[0].traces[1].color, /^#[0-9a-f]{6}$/i);
+  const large = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:large',
+        name: 'Large',
+        traces: Array.from({ length: 5000 }, (_, i) => ({ id: `signal-${i}` })),
+      },
+    ]),
+  );
+  assert.equal(large[0].traces.length, MAX_PLOT_TRACES);
+});
 
 void test('motor example creates chronological, executable signal lineage and five real values', async () => {
   const engine = new SignalEngine(undefined, crypto.randomUUID());

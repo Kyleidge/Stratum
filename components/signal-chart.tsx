@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
 
 export function formatValue(value: number, digits = 1): string {
@@ -26,6 +26,10 @@ export default function SignalChart({
   onSegment,
   compact = false,
   fluid = false,
+  height = 151,
+  heading = true,
+  grid = true,
+  includeZero = true,
 }: {
   traces: Trace[];
   segments: Segment[];
@@ -33,7 +37,12 @@ export default function SignalChart({
   onSegment: (id: string) => void;
   compact?: boolean;
   fluid?: boolean;
+  height?: number;
+  heading?: boolean;
+  grid?: boolean;
+  includeZero?: boolean;
 }) {
+  const clipId = useId();
   const [cursor, setCursor] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(900);
@@ -55,11 +64,16 @@ export default function SignalChart({
   const finite = traces
     .flatMap((t) => [t.plot.summary.min, t.plot.summary.max])
     .filter(Number.isFinite);
-  const min = finite.length ? Math.min(0, ...finite) : 0;
-  const max = finite.length ? Math.max(...finite) * 1.08 || 1 : 1;
+  const low = finite.length ? Math.min(...finite) : 0;
+  const high = finite.length ? Math.max(...finite) : 1;
+  const padding = (high - low || Math.abs(high) || 1) * 0.08;
+  const min = includeZero ? Math.min(0, low - padding) : low - padding;
+  const max = includeZero ? Math.max(0, high + padding) : high + padding;
+  const bottom = height - 31;
+  const plotHeight = bottom - 15;
   const x = (t: number) =>
     left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
-  const y = (v: number) => 120 - ((v - min) / (max - min || 1)) * 105;
+  const y = (v: number) => bottom - ((v - min) / (max - min || 1)) * plotHeight;
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
   const nearest =
@@ -75,38 +89,41 @@ export default function SignalChart({
       : null;
   return (
     <section className={`signal-chart ${compact ? 'compact-chart' : ''}`}>
-      <div className="chart-heading">
-        <span>
-          <i
-            className="signal-dot"
-            style={{ background: primary?.node.color }}
-          />
-          {primary?.label || primary?.node.name || 'Loading signal'}{' '}
-          <small>{primary?.node.unit}</small>
-        </span>
-        <div>
-          {traces.length > 1 ? (
-            traces.map((t) => (
-              <span className="trace-legend" key={t.node.id}>
-                <i style={{ background: t.color || t.node.color }} />
-                {t.label}
-              </span>
-            ))
-          ) : (
-            <>
-              <small>
-                MIN <b>{formatValue(primary?.plot.summary.min ?? NaN)}</b>
-              </small>
-              <small>
-                MAX <b>{formatValue(primary?.plot.summary.max ?? NaN)}</b>
-              </small>
-            </>
-          )}
+      {heading && (
+        <div className="chart-heading">
+          <span>
+            <i
+              className="signal-dot"
+              style={{ background: primary?.node.color }}
+            />
+            {primary?.label || primary?.node.name || 'Loading signal'}{' '}
+            <small>{primary?.node.unit}</small>
+          </span>
+          <div>
+            {traces.length > 1 ? (
+              traces.map((t) => (
+                <span className="trace-legend" key={t.node.id}>
+                  <i style={{ background: t.color || t.node.color }} />
+                  {t.label}
+                </span>
+              ))
+            ) : (
+              <>
+                <small>
+                  MIN <b>{formatValue(primary?.plot.summary.min ?? NaN)}</b>
+                </small>
+                <small>
+                  MAX <b>{formatValue(primary?.plot.summary.max ?? NaN)}</b>
+                </small>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <svg
         ref={svg}
-        viewBox={`0 0 ${chartWidth} 151`}
+        viewBox={`0 0 ${chartWidth} ${height}`}
+        style={height !== 151 ? { height } : undefined}
         preserveAspectRatio={fluid ? 'xMidYMid meet' : 'none'}
         aria-label={`${primary?.label || primary?.node.name || 'Signal'} over time`}
         onPointerMove={(event) => {
@@ -126,36 +143,40 @@ export default function SignalChart({
         onPointerLeave={() => setCursor(null)}
       >
         <defs>
-          <clipPath id={`clip-${primary?.node.id}`}>
-            <rect x={left} y="8" width={span} height="115" />
+          <clipPath id={clipId}>
+            <rect x={left} y="8" width={span} height={bottom - 5} />
           </clipPath>
         </defs>
         {[0, 1, 2, 3].map((i) => (
           <g key={i}>
-            <line
-              x1={left}
-              x2={right}
-              y1={15 + i * 35}
-              y2={15 + i * 35}
-              className="chart-grid"
-            />
-            <text x={left - 12} y={19 + i * 35} textAnchor="end">
+            {grid && (
+              <line
+                x1={left}
+                x2={right}
+                y1={15 + (i * plotHeight) / 3}
+                y2={15 + (i * plotHeight) / 3}
+                className="chart-grid"
+              />
+            )}
+            <text x={left - 12} y={19 + (i * plotHeight) / 3} textAnchor="end">
               {formatValue(max - (i / 3) * (max - min), max > 100 ? 0 : 1)}
             </text>
           </g>
         ))}
         {Array.from({ length: ticks }, (_, i) => (
           <g key={i}>
-            <line
-              x1={left + (i * span) / (ticks - 1)}
-              x2={left + (i * span) / (ticks - 1)}
-              y1="9"
-              y2="123"
-              className="chart-grid vertical"
-            />
+            {grid && (
+              <line
+                x1={left + (i * span) / (ticks - 1)}
+                x2={left + (i * span) / (ticks - 1)}
+                y1="9"
+                y2={bottom + 3}
+                className="chart-grid vertical"
+              />
+            )}
             <text
               x={left + (i * span) / (ticks - 1)}
-              y="142"
+              y={height - 9}
               textAnchor="middle"
             >
               {formatValue(
@@ -165,7 +186,7 @@ export default function SignalChart({
             </text>
           </g>
         ))}
-        <g clipPath={`url(#clip-${primary?.node.id})`}>
+        <g clipPath={`url(#${clipId})`}>
           {segments.map((s, i) => (
             <g
               key={s.id}
@@ -176,7 +197,7 @@ export default function SignalChart({
                 x={x(s.start)}
                 y="8"
                 width={Math.max(0, x(s.end) - x(s.start))}
-                height="115"
+                height={bottom - 5}
                 fill={['#62d7ae', '#a795ec', '#e2ae79'][i % 3]}
                 opacity="0.055"
               />
@@ -184,7 +205,7 @@ export default function SignalChart({
                 x1={x(s.start)}
                 x2={x(s.start)}
                 y1="8"
-                y2="123"
+                y2={bottom + 3}
                 stroke={['#62d7ae', '#a795ec', '#e2ae79'][i % 3]}
                 strokeDasharray="3 4"
                 opacity="0.4"
@@ -241,7 +262,7 @@ export default function SignalChart({
               x1={x(currentTime)}
               x2={x(currentTime)}
               y1="8"
-              y2="123"
+              y2={bottom + 3}
               stroke="#d6dfe2"
               opacity=".45"
               strokeDasharray="3 3"
@@ -263,7 +284,7 @@ export default function SignalChart({
             </text>
           </g>
         )}
-        <text x={chartWidth - 5} y="142" textAnchor="end">
+        <text x={chartWidth - 5} y={height - 9} textAnchor="end">
           s
         </text>
       </svg>

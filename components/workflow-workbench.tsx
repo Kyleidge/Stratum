@@ -7,7 +7,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Download,
   GitBranch,
   Hash,
   HelpCircle,
@@ -26,7 +25,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
@@ -61,14 +60,13 @@ import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
 import type {
   EngineRequest,
   Operation,
-  Plot,
-  Point,
   Project,
   SegmentationOperation,
 } from '@/lib/signal-types';
 import { segmentationOperation } from '@/lib/segmentation-operation';
 import WorkflowHistory, { type WorkflowSelection } from './workflow-history';
-import SignalChart, { formatValue } from './signal-chart';
+import { formatValue } from './signal-chart';
+import PlotScratchpad from './plot-scratchpad';
 import SegmentationEditor from './segmentation-editor';
 import { RegionSelect, RegionNumber, finite } from './region-controls';
 import WorkflowExport from './workflow-export';
@@ -143,7 +141,10 @@ export default function WorkflowWorkbench() {
     (id) => index.nodes.has(id),
   );
   const [past, setPast] = useState<WorkflowSelection[]>([]);
-  const [view, setView] = useState('result');
+  const [view, updateView] = useState('result');
+  function setView(next: string) {
+    updateView((current) => (current.startsWith('plot:') ? current : next));
+  }
   const [exportOpen, setExportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState(''),
@@ -235,62 +236,8 @@ export default function WorkflowWorkbench() {
     catalogPage,
     Math.max(0, Math.ceil(catalog.length / PAGE_SIZE) - 1),
   );
-  const [plotState, setPlotState] = useState<{
-    id: string;
-    plot?: Plot;
-    error?: string;
-  }>();
   const plotId = activeNode?.id ?? activeValue?.inputId ?? '';
   const request = engine.request;
-  useEffect(() => {
-    if (!engine.ready || !plotId) return;
-    let alive = true;
-    void request({ type: 'view', ids: [plotId], inspection: true })
-      .then((response) => {
-        if (alive && response.type === 'plots')
-          setPlotState({ id: plotId, plot: response.plots[0] });
-      })
-      .catch((error: Error) => {
-        if (alive) setPlotState({ id: plotId, error: error.message });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [request, engine.ready, plotId, project]);
-  const plot = plotState?.id === plotId ? plotState.plot : undefined;
-  const [showSamples, setShowSamples] = useState(false),
-    [samplePage, setSamplePage] = useState(0);
-  const [samples, setSamples] = useState<{
-    id: string;
-    page: number;
-    rows: Point[];
-    more: boolean;
-  }>();
-  useEffect(() => {
-    if (!showSamples || !plotId) return;
-    let alive = true;
-    void request({
-      type: 'rows',
-      id: plotId,
-      offset: samplePage * 100,
-      inspection: true,
-    })
-      .then((response) => {
-        if (alive && response.type === 'rows')
-          setSamples({
-            id: plotId,
-            page: samplePage,
-            rows: response.rows,
-            more: response.hasMore,
-          });
-      })
-      .catch((error: Error) => {
-        if (alive) setPlotState({ id: plotId, error: error.message });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [showSamples, plotId, samplePage, request, project]);
 
   function select(next: WorkflowSelection) {
     if (next.id !== selection.id || next.kind !== selection.kind)
@@ -301,7 +248,6 @@ export default function WorkflowWorkbench() {
     setNotice('');
     setTableQuery('');
     setPage(0);
-    setSamplePage(0);
     const owner =
       next.kind === 'output'
         ? index.owner.get(next.id)
@@ -337,7 +283,6 @@ export default function WorkflowWorkbench() {
     setTableQuery('');
     setPage(0);
     setLineageRoot(null);
-    setSamplePage(0);
   }
   async function openExample(refresh = false) {
     const next = await engine.mutate(
@@ -952,6 +897,330 @@ export default function WorkflowWorkbench() {
                   </div>
                 </details>
               )}
+              <PlotScratchpad
+                project={project}
+                graph={graph}
+                index={index}
+                activeId={plotId}
+                checkedIds={inputs === null ? [] : inputIds}
+                view={view}
+                onView={updateView}
+                onInspect={follow}
+                request={request}
+                outputCount={stepOutputs.length}
+                onExport={() => setExportOpen(true)}
+                busy={engine.busy}
+                valueCard={
+                  <>
+                    {' '}
+                    {activeValue && (
+                      <section
+                        className="workflow-value-card"
+                        aria-label="Calculated value"
+                      >
+                        <div>
+                          <span>
+                            {
+                              VALUE_FUNCTIONS.find(
+                                (spec) =>
+                                  spec.operation === activeValue.operation,
+                              )?.name
+                            }
+                          </span>
+                          <strong>
+                            {activeValue.value === null
+                              ? 'Unavailable'
+                              : number(activeValue.value)}{' '}
+                            <small>{activeValue.unit}</small>
+                          </strong>
+                        </div>
+                        <p>
+                          {activeValue.value === null
+                            ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
+                            : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · first occurs at ${number(activeValue.timestamp)} s` : ''}`}
+                        </p>
+                        <p>
+                          {
+                            VALUE_FUNCTIONS.find(
+                              (spec) =>
+                                spec.operation === activeValue.operation,
+                            )?.description
+                          }
+                        </p>
+                      </section>
+                    )}
+                  </>
+                }
+                outputs={
+                  <>
+                    {' '}
+                    {step && (
+                      <section className="workflow-output-panel">
+                        <div className="workflow-panel-heading">
+                          <div>
+                            <strong>
+                              {stepOutputs.length}{' '}
+                              {allValues ? 'values' : 'signals'} ·{' '}
+                              {reference(step)} {stepName(step)}
+                            </strong>
+                            <small>
+                              {step.kind === 'regions'
+                                ? 'Saved ranges are preserved. Create signal segments to continue.'
+                                : allValues
+                                  ? 'Open a value to inspect it, or export the whole step.'
+                                  : 'Click a name to inspect. Check signals to use together.'}
+                            </small>
+                          </div>
+                          <div className="workflow-panel-actions">
+                            {step.kind !== 'import' && (
+                              <button
+                                className="secondary-button"
+                                disabled={engine.busy}
+                                onClick={() => repeat()}
+                              >
+                                {step.kind === 'regions'
+                                  ? 'Create signal segments'
+                                  : 'Repeat with new settings'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {step.kind === 'regions' ? (
+                          <div className="workflow-saved-ranges">
+                            {project.regionSets
+                              ?.find((set) => set.id === step.regionSetId)
+                              ?.regions.slice(0, 30)
+                              .map((region) => (
+                                <span key={region.id}>
+                                  {region.name}: {number(region.start)}–
+                                  {number(region.end)} s
+                                </span>
+                              ))}
+                          </div>
+                        ) : (
+                          <>
+                            <div className="workflow-table-tools">
+                              <label className="workflow-search">
+                                <Search size={14} />
+                                <input
+                                  aria-label="Search this operation's outputs"
+                                  placeholder="Find an output in this step…"
+                                  value={tableQuery}
+                                  onChange={(event) => {
+                                    setTableQuery(event.target.value);
+                                    setPage(0);
+                                  }}
+                                />
+                              </label>
+                              {tableQuery && (
+                                <button
+                                  className="workflow-link"
+                                  onClick={() => {
+                                    setTableQuery('');
+                                    setPage(0);
+                                  }}
+                                >
+                                  Show all outputs in this step
+                                </button>
+                              )}
+                              {!allValues && (
+                                <>
+                                  <button
+                                    className="workflow-link"
+                                    onClick={() =>
+                                      setInputs(
+                                        filteredOutputs.filter((id) =>
+                                          index.nodes.has(id),
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    Select all {filteredOutputs.length}
+                                    {tableQuery ? ' matching' : ''} signals
+                                  </button>
+                                  <button
+                                    className="workflow-link"
+                                    disabled={!inputIds.length}
+                                    onClick={() => setInputs([])}
+                                  >
+                                    Clear selection
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <Table className="workflow-output-table">
+                              <TableHeader>
+                                <TableRow>
+                                  {!allValues && (
+                                    <TableHead className="workflow-check-cell">
+                                      Use
+                                    </TableHead>
+                                  )}
+                                  <TableHead>
+                                    {allValues ? 'Value' : 'Signal'}
+                                  </TableHead>
+                                  <TableHead>Type</TableHead>
+                                  <TableHead>Input</TableHead>
+                                  <TableHead>
+                                    {allValues ? 'Result' : 'Time interval (s)'}
+                                  </TableHead>
+                                  <TableHead>Unit</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {outputPage.map((id) => {
+                                  const node = index.nodes.get(id),
+                                    value = index.values.get(id);
+                                  const parent =
+                                    node?.parents[0] ?? value?.inputId;
+                                  const bounds =
+                                    node && graph.ranges.get(node.id);
+                                  return (
+                                    <TableRow
+                                      key={id}
+                                      data-state={
+                                        selection.kind === 'output' &&
+                                        selection.id === id
+                                          ? 'selected'
+                                          : undefined
+                                      }
+                                    >
+                                      {!allValues && (
+                                        <TableCell>
+                                          <Checkbox
+                                            aria-label={`Use ${index.label(id)} as input`}
+                                            checked={inputIds.includes(id)}
+                                            onCheckedChange={(checked) =>
+                                              setInputs(
+                                                checked
+                                                  ? [
+                                                      ...new Set([
+                                                        ...inputIds,
+                                                        id,
+                                                      ]),
+                                                    ]
+                                                  : inputIds.filter(
+                                                      (input) => input !== id,
+                                                    ),
+                                              )
+                                            }
+                                          />
+                                        </TableCell>
+                                      )}
+                                      <TableCell>
+                                        <button
+                                          className="workflow-output-name"
+                                          title={index.label(id)}
+                                          onClick={() =>
+                                            select({ kind: 'output', id })
+                                          }
+                                        >
+                                          {index.label(id)}
+                                        </button>
+                                      </TableCell>
+                                      <TableCell>
+                                        <span
+                                          className="workflow-type"
+                                          data-type={
+                                            value
+                                              ? 'value'
+                                              : node?.operation === 'raw'
+                                                ? 'original'
+                                                : 'derived'
+                                          }
+                                        >
+                                          {index.kind(id)}
+                                        </span>
+                                      </TableCell>
+                                      <TableCell>
+                                        {parent ? (
+                                          <button
+                                            className="workflow-input-ref"
+                                            title={index.label(parent)}
+                                            onClick={() => follow(parent)}
+                                          >
+                                            {reference(index.owner.get(parent))}{' '}
+                                            {index.label(parent)}
+                                          </button>
+                                        ) : (
+                                          <span className="workflow-muted">
+                                            Original recording
+                                          </span>
+                                        )}
+                                      </TableCell>
+                                      <TableCell className="workflow-number">
+                                        {value
+                                          ? value.value === null
+                                            ? 'Unavailable'
+                                            : number(value.value)
+                                          : bounds
+                                            ? `${number(bounds[0])}–${number(bounds[1])}`
+                                            : '—'}
+                                      </TableCell>
+                                      <TableCell>
+                                        {node?.unit ?? value?.unit}
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                            {!filteredOutputs.length && (
+                              <p className="workflow-empty">
+                                No matching outputs in this step.
+                              </p>
+                            )}
+                            <Pager
+                              page={safePage}
+                              count={filteredOutputs.length}
+                              size={PAGE_SIZE}
+                              onPage={setPage}
+                            />
+                          </>
+                        )}
+                        {step.parameters && (
+                          <details className="workflow-settings">
+                            <summary>Saved settings</summary>
+                            <dl>
+                              {Object.entries(step.parameters).map(
+                                ([key, value]) => (
+                                  <div key={key}>
+                                    <dt>
+                                      {key === 'value'
+                                        ? SIGNAL_FUNCTIONS.find(
+                                            (spec) =>
+                                              spec.operation === step.operation,
+                                          )?.parameter || 'Parameter'
+                                        : key}
+                                    </dt>
+                                    <dd>{value}</dd>
+                                  </div>
+                                ),
+                              )}
+                            </dl>
+                          </details>
+                        )}
+                        {step.definition && (
+                          <details className="workflow-settings">
+                            <summary>Saved segmentation settings</summary>
+                            <pre>
+                              {JSON.stringify(
+                                step.definition,
+                                (key, value: unknown) =>
+                                  key === 'signalId' &&
+                                  typeof value === 'string'
+                                    ? `${reference(index.owner.get(value))} ${index.label(value)}`
+                                    : value,
+                                2,
+                              )}
+                            </pre>
+                          </details>
+                        )}
+                      </section>
+                    )}
+                  </>
+                }
+              />
               <div className="workflow-detail-heading">
                 <div className="workflow-heading-top">
                   <button
@@ -1284,438 +1553,7 @@ export default function WorkflowWorkbench() {
                   </button>
                 </div>
               )}
-              <Tabs
-                className="workflow-inspector"
-                value={plotId ? view : 'outputs'}
-                onValueChange={setView}
-              >
-                <div className="workflow-view-toolbar">
-                  <TabsList variant="line" aria-label="Inspect result">
-                    <TabsTrigger value="result" disabled={!plotId}>
-                      {activeValue ? 'Value & input' : 'Plot & samples'}
-                    </TabsTrigger>
-                    <TabsTrigger value="outputs">
-                      Step outputs <span>{stepOutputs.length}</span>
-                    </TabsTrigger>
-                  </TabsList>
-                  <button
-                    className="secondary-button"
-                    disabled={engine.busy || !stepOutputs.length}
-                    onClick={() => setExportOpen(true)}
-                  >
-                    <Download size={16} /> Export / report
-                  </button>
-                </div>
-                <TabsContent value="result">
-                  {activeValue && (
-                    <section
-                      className="workflow-value-card"
-                      aria-label="Calculated value"
-                    >
-                      <div>
-                        <span>
-                          {
-                            VALUE_FUNCTIONS.find(
-                              (spec) =>
-                                spec.operation === activeValue.operation,
-                            )?.name
-                          }
-                        </span>
-                        <strong>
-                          {activeValue.value === null
-                            ? 'Unavailable'
-                            : number(activeValue.value)}{' '}
-                          <small>{activeValue.unit}</small>
-                        </strong>
-                      </div>
-                      <p>
-                        {activeValue.value === null
-                          ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
-                          : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · first occurs at ${number(activeValue.timestamp)} s` : ''}`}
-                      </p>
-                      <p>
-                        {
-                          VALUE_FUNCTIONS.find(
-                            (spec) => spec.operation === activeValue.operation,
-                          )?.description
-                        }
-                      </p>
-                    </section>
-                  )}
-                  {plotId && (
-                    <section
-                      className="workflow-chart-panel"
-                      aria-label={
-                        activeValue ? 'Value input signal' : 'Selected signal'
-                      }
-                    >
-                      {activeValue && (
-                        <div className="workflow-panel-heading">
-                          <strong>Input signal</strong>
-                          <button
-                            className="workflow-link"
-                            onClick={() => follow(activeValue.inputId)}
-                          >
-                            Open input <ArrowRight size={14} />
-                          </button>
-                        </div>
-                      )}
-                      {plot ? (
-                        <SignalChart
-                          traces={[
-                            {
-                              node: index.nodes.get(plotId)!,
-                              plot,
-                              label: index.label(plotId),
-                            },
-                          ]}
-                          segments={[]}
-                          range={graph.ranges.get(plotId)!}
-                          onSegment={() => {}}
-                          fluid
-                        />
-                      ) : (
-                        <p className="workflow-empty">
-                          {plotState?.id === plotId && plotState.error
-                            ? plotState.error
-                            : 'Loading signal…'}
-                        </p>
-                      )}
-                      {plot && (
-                        <div className="workflow-chart-stats">
-                          <span>
-                            {plot.summary.count.toLocaleString()} finite samples
-                          </span>
-                          <span>Min {number(plot.summary.min)}</span>
-                          <span>Max {number(plot.summary.max)}</span>
-                          <span>
-                            Sample average {number(plot.summary.mean)}
-                          </span>
-                          <button
-                            className="workflow-link"
-                            onClick={() => setShowSamples((value) => !value)}
-                          >
-                            {showSamples ? 'Hide' : 'View'} samples
-                          </button>
-                        </div>
-                      )}
-                      {showSamples && (
-                        <div className="workflow-samples">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Time (s)</TableHead>
-                                <TableHead>
-                                  Value ({index.nodes.get(plotId)?.unit})
-                                </TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {samples?.id === plotId &&
-                                samples.page === samplePage &&
-                                samples.rows.map((point, i) => (
-                                  <TableRow key={i}>
-                                    <TableCell>{number(point[0])}</TableCell>
-                                    <TableCell>{number(point[1])}</TableCell>
-                                  </TableRow>
-                                ))}
-                            </TableBody>
-                          </Table>
-                          <div className="workflow-pager">
-                            <button
-                              aria-label="Previous samples"
-                              disabled={!samplePage}
-                              onClick={() => setSamplePage((page) => page - 1)}
-                            >
-                              <ChevronLeft size={16} />
-                            </button>
-                            <span>
-                              Samples {samplePage * 100 + 1}–
-                              {samplePage * 100 + (samples?.rows.length ?? 0)}
-                            </span>
-                            <button
-                              aria-label="Next samples"
-                              disabled={
-                                samples?.id !== plotId ||
-                                samples.page !== samplePage ||
-                                !samples.more
-                              }
-                              onClick={() => setSamplePage((page) => page + 1)}
-                            >
-                              <ChevronRight size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-                  )}
-                </TabsContent>
-                <TabsContent value="outputs">
-                  {step && (
-                    <section className="workflow-output-panel">
-                      <div className="workflow-panel-heading">
-                        <div>
-                          <strong>
-                            {stepOutputs.length}{' '}
-                            {allValues ? 'values' : 'signals'} ·{' '}
-                            {reference(step)} {stepName(step)}
-                          </strong>
-                          <small>
-                            {step.kind === 'regions'
-                              ? 'Saved ranges are preserved. Create signal segments to continue.'
-                              : allValues
-                                ? 'Open a value to inspect it, or export the whole step.'
-                                : 'Click a name to inspect. Check signals to use together.'}
-                          </small>
-                        </div>
-                        <div className="workflow-panel-actions">
-                          {step.kind !== 'import' && (
-                            <button
-                              className="secondary-button"
-                              disabled={engine.busy}
-                              onClick={() => repeat()}
-                            >
-                              {step.kind === 'regions'
-                                ? 'Create signal segments'
-                                : 'Repeat with new settings'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {step.kind === 'regions' ? (
-                        <div className="workflow-saved-ranges">
-                          {project.regionSets
-                            ?.find((set) => set.id === step.regionSetId)
-                            ?.regions.slice(0, 30)
-                            .map((region) => (
-                              <span key={region.id}>
-                                {region.name}: {number(region.start)}–
-                                {number(region.end)} s
-                              </span>
-                            ))}
-                        </div>
-                      ) : (
-                        <>
-                          <div className="workflow-table-tools">
-                            <label className="workflow-search">
-                              <Search size={14} />
-                              <input
-                                aria-label="Search this operation's outputs"
-                                placeholder="Find an output in this step…"
-                                value={tableQuery}
-                                onChange={(event) => {
-                                  setTableQuery(event.target.value);
-                                  setPage(0);
-                                }}
-                              />
-                            </label>
-                            {tableQuery && (
-                              <button
-                                className="workflow-link"
-                                onClick={() => {
-                                  setTableQuery('');
-                                  setPage(0);
-                                }}
-                              >
-                                Show all outputs in this step
-                              </button>
-                            )}
-                            {!allValues && (
-                              <>
-                                <button
-                                  className="workflow-link"
-                                  onClick={() =>
-                                    setInputs(
-                                      filteredOutputs.filter((id) =>
-                                        index.nodes.has(id),
-                                      ),
-                                    )
-                                  }
-                                >
-                                  Select all {filteredOutputs.length}
-                                  {tableQuery ? ' matching' : ''} signals
-                                </button>
-                                <button
-                                  className="workflow-link"
-                                  disabled={!inputIds.length}
-                                  onClick={() => setInputs([])}
-                                >
-                                  Clear selection
-                                </button>
-                              </>
-                            )}
-                          </div>
-                          <Table className="workflow-output-table">
-                            <TableHeader>
-                              <TableRow>
-                                {!allValues && (
-                                  <TableHead className="workflow-check-cell">
-                                    Use
-                                  </TableHead>
-                                )}
-                                <TableHead>
-                                  {allValues ? 'Value' : 'Signal'}
-                                </TableHead>
-                                <TableHead>Type</TableHead>
-                                <TableHead>Input</TableHead>
-                                <TableHead>
-                                  {allValues ? 'Result' : 'Time interval (s)'}
-                                </TableHead>
-                                <TableHead>Unit</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {outputPage.map((id) => {
-                                const node = index.nodes.get(id),
-                                  value = index.values.get(id);
-                                const parent =
-                                  node?.parents[0] ?? value?.inputId;
-                                const bounds =
-                                  node && graph.ranges.get(node.id);
-                                return (
-                                  <TableRow
-                                    key={id}
-                                    data-state={
-                                      selection.kind === 'output' &&
-                                      selection.id === id
-                                        ? 'selected'
-                                        : undefined
-                                    }
-                                  >
-                                    {!allValues && (
-                                      <TableCell>
-                                        <Checkbox
-                                          aria-label={`Use ${index.label(id)} as input`}
-                                          checked={inputIds.includes(id)}
-                                          onCheckedChange={(checked) =>
-                                            setInputs(
-                                              checked
-                                                ? [
-                                                    ...new Set([
-                                                      ...inputIds,
-                                                      id,
-                                                    ]),
-                                                  ]
-                                                : inputIds.filter(
-                                                    (input) => input !== id,
-                                                  ),
-                                            )
-                                          }
-                                        />
-                                      </TableCell>
-                                    )}
-                                    <TableCell>
-                                      <button
-                                        className="workflow-output-name"
-                                        title={index.label(id)}
-                                        onClick={() =>
-                                          select({ kind: 'output', id })
-                                        }
-                                      >
-                                        {index.label(id)}
-                                      </button>
-                                    </TableCell>
-                                    <TableCell>
-                                      <span
-                                        className="workflow-type"
-                                        data-type={
-                                          value
-                                            ? 'value'
-                                            : node?.operation === 'raw'
-                                              ? 'original'
-                                              : 'derived'
-                                        }
-                                      >
-                                        {index.kind(id)}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell>
-                                      {parent ? (
-                                        <button
-                                          className="workflow-input-ref"
-                                          title={index.label(parent)}
-                                          onClick={() => follow(parent)}
-                                        >
-                                          {reference(index.owner.get(parent))}{' '}
-                                          {index.label(parent)}
-                                        </button>
-                                      ) : (
-                                        <span className="workflow-muted">
-                                          Original recording
-                                        </span>
-                                      )}
-                                    </TableCell>
-                                    <TableCell className="workflow-number">
-                                      {value
-                                        ? value.value === null
-                                          ? 'Unavailable'
-                                          : number(value.value)
-                                        : bounds
-                                          ? `${number(bounds[0])}–${number(bounds[1])}`
-                                          : '—'}
-                                    </TableCell>
-                                    <TableCell>
-                                      {node?.unit ?? value?.unit}
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                          {!filteredOutputs.length && (
-                            <p className="workflow-empty">
-                              No matching outputs in this step.
-                            </p>
-                          )}
-                          <Pager
-                            page={safePage}
-                            count={filteredOutputs.length}
-                            size={PAGE_SIZE}
-                            onPage={setPage}
-                          />
-                        </>
-                      )}
-                      {step.parameters && (
-                        <details className="workflow-settings">
-                          <summary>Saved settings</summary>
-                          <dl>
-                            {Object.entries(step.parameters).map(
-                              ([key, value]) => (
-                                <div key={key}>
-                                  <dt>
-                                    {key === 'value'
-                                      ? SIGNAL_FUNCTIONS.find(
-                                          (spec) =>
-                                            spec.operation === step.operation,
-                                        )?.parameter || 'Parameter'
-                                      : key}
-                                  </dt>
-                                  <dd>{value}</dd>
-                                </div>
-                              ),
-                            )}
-                          </dl>
-                        </details>
-                      )}
-                      {step.definition && (
-                        <details className="workflow-settings">
-                          <summary>Saved segmentation settings</summary>
-                          <pre>
-                            {JSON.stringify(
-                              step.definition,
-                              (key, value: unknown) =>
-                                key === 'signalId' && typeof value === 'string'
-                                  ? `${reference(index.owner.get(value))} ${index.label(value)}`
-                                  : value,
-                              2,
-                            )}
-                          </pre>
-                        </details>
-                      )}
-                    </section>
-                  )}
-                </TabsContent>
-              </Tabs>
+
               {!!usedBy.length && (
                 <section className="workflow-used-by">
                   <WorkflowList

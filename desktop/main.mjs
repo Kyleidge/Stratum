@@ -175,7 +175,7 @@ async function createWindow() {
           );
           assert.ok(
             await window.webContents.executeJavaScript(`
-            document.querySelector('.workflow-chart-panel').getBoundingClientRect().bottom < innerHeight
+            document.querySelector('.scratchpad-canvas').getBoundingClientRect().bottom < innerHeight
           `),
             'The compact viewport must expose the complete plot and summary',
           );

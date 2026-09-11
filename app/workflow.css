@@ -1,3 +1,497 @@
+.plot-scratchpad {
+  --plot-surface: color-mix(in srgb, var(--card) 55%, var(--background));
+  margin-bottom: 24px;
+  min-width: 0;
+}
+.scratchpad-heading,
+.scratchpad-heading > div,
+.scratchpad-plot-toolbar,
+.scratchpad-chart-tools,
+.scratchpad-zoom,
+.scratchpad-mode,
+.scratchpad-axis-label,
+.scratchpad-axis-footer,
+.scratchpad-sample-actions,
+.scratchpad-selection,
+.scratchpad-picker-actions,
+.scratchpad-closed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.scratchpad-heading {
+  margin: 8px 0 20px;
+}
+.scratchpad-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+.scratchpad-heading > div > svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.scratchpad-heading > span,
+.scratchpad-plot-title small,
+.scratchpad-axis-label,
+.scratchpad-axis-footer,
+.scratchpad-trace small,
+.scratchpad-trace-heading,
+.scratchpad-stats small,
+.scratchpad-choices small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.scratchpad-tabs {
+  gap: 0;
+}
+.scratchpad-tabbar {
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.scratchpad-tabbar [role='tablist'] {
+  height: 48px;
+  min-width: 100%;
+  justify-content: flex-start;
+  padding: 0;
+  gap: 4px;
+}
+.scratchpad-tabbar [role='tab'] {
+  flex: 0 0 auto;
+  height: 48px;
+  padding: 0 16px;
+  border-radius: 7px 7px 0 0;
+  color: var(--muted-foreground);
+  border: 1px solid transparent;
+  border-bottom: 0;
+}
+.scratchpad-tabbar [role='tab'][data-active] {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+.scratchpad-tabbar [role='tab']::after {
+  display: none;
+}
+.scratchpad-tabbar [role='tab'][data-active]::before {
+  content: '';
+  position: absolute;
+  height: 2px;
+  background: var(--primary);
+  top: 0;
+  left: 14px;
+  right: 14px;
+}
+.scratchpad-tab-name {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scratchpad-live {
+  color: var(--primary);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  margin-left: 5px;
+}
+.scratchpad-tab-count {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.scratchpad-tabs > [role='tabpanel'] {
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.scratchpad-plot-toolbar {
+  padding: 20px 22px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.scratchpad-plot-title {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.scratchpad-plot-title > strong,
+.scratchpad-name {
+  display: block;
+  font-size: 18px;
+  font-weight: 550;
+  letter-spacing: -0.3px;
+  overflow-wrap: anywhere;
+}
+.workflow-app .scratchpad-name {
+  font-size: 18px;
+  font-weight: 550;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+.scratchpad-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.scratchpad-plot-title small {
+  display: block;
+  margin-top: 5px;
+}
+.scratchpad-canvas {
+  background: var(--plot-surface);
+  border-block: 1px solid var(--border);
+}
+.scratchpad-chart-tools {
+  justify-content: space-between;
+  padding: 12px 20px;
+  flex-wrap: wrap;
+}
+.scratchpad-mode {
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  gap: 2px;
+}
+.scratchpad-mode button,
+.scratchpad-zoom button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.scratchpad-mode button[aria-pressed='true'] {
+  color: var(--foreground);
+  background: var(--muted);
+}
+.scratchpad-zoom {
+  gap: 2px;
+}
+.scratchpad-zoom button:hover,
+.scratchpad-zoom button[aria-pressed='true'] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.scratchpad-zoom > span {
+  height: 18px;
+  width: 1px;
+  background: var(--border);
+  margin: 0 5px;
+}
+.scratchpad-canvas .signal-chart {
+  border: 0;
+  padding: 0 12px;
+}
+.scratchpad-canvas .signal-chart svg {
+  min-height: 0;
+}
+.scratchpad-canvas .signal-chart svg text {
+  font-size: 12px;
+  fill: var(--muted-foreground);
+}
+.scratchpad-canvas .signal-chart svg .cursor-value {
+  fill: var(--foreground);
+  font-size: 11px;
+}
+.scratchpad-canvas .chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.scratchpad-canvas .chart-grid.vertical {
+  stroke-dasharray: 2 5;
+  opacity: 0.8;
+}
+.scratchpad-axis-label {
+  justify-content: space-between;
+  padding: 10px 30px 10px 78px;
+}
+.scratchpad-axis-label strong {
+  font-size: 14px;
+  color: var(--foreground);
+  font-weight: 500;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.scratchpad-axis-label i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.scratchpad-axis-footer {
+  justify-content: space-between;
+  padding: 14px 22px;
+  flex-wrap: wrap;
+}
+.scratchpad-stack + .scratchpad-stack {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.scratchpad-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 330px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.scratchpad-empty > svg {
+  color: var(--primary);
+  opacity: 0.75;
+  stroke-width: 1;
+}
+.scratchpad-empty h2 {
+  font-size: 22px;
+  letter-spacing: -0.5px;
+  font-weight: 500;
+  margin: 0;
+}
+.scratchpad-empty p {
+  max-width: 390px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 0;
+}
+.scratchpad-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 20px 0;
+}
+.scratchpad-stats > div {
+  padding: 0 22px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.scratchpad-stats > div:last-child {
+  border-right: 0;
+}
+.scratchpad-stats small {
+  display: block;
+  letter-spacing: 0.045em;
+}
+.scratchpad-stats strong {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 450;
+  overflow-wrap: anywhere;
+}
+.scratchpad-sample-actions {
+  justify-content: space-between;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+}
+.scratchpad-output-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px;
+}
+.scratchpad-tabs .workflow-output-panel {
+  border: 0;
+  margin: 0;
+}
+.scratchpad-tabs .workflow-value-card {
+  margin: 0 22px 18px;
+}
+.scratchpad-selection {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 10px 22px;
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.scratchpad-selection > span {
+  flex: 1 1 200px;
+  color: var(--muted-foreground);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.scratchpad-selection strong {
+  font-weight: 500;
+  color: var(--foreground);
+  margin-left: 8px;
+}
+.scratchpad-traces {
+  padding: 0 20px 8px;
+}
+.scratchpad-trace-heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 15px 0 8px;
+}
+.scratchpad-trace {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.scratchpad-trace[data-hidden='true'] .scratchpad-trace-name {
+  opacity: 0.5;
+}
+.scratchpad-trace input[type='color'] {
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.scratchpad-trace-name {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.scratchpad-trace-name strong {
+  font-weight: 500;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scratchpad-trace-name small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scratchpad-trace-range {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.scratchpad-closed {
+  padding: 12px 4px;
+  font-size: 13px;
+}
+.scratchpad-closed > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.scratchpad-storage-error {
+  color: var(--primary);
+  font-size: 14px;
+  padding: 12px;
+}
+.scratchpad-picker {
+  max-width: 660px;
+}
+.scratchpad-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px 12px;
+}
+.scratchpad-search input {
+  flex: 1;
+  width: 100%;
+  background: transparent;
+  border: 0;
+}
+.scratchpad-picker-actions {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.scratchpad-choices {
+  max-height: 360px;
+  overflow: auto;
+  border-block: 1px solid var(--border);
+}
+.scratchpad-choices > label {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 6px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.scratchpad-choices > label:hover {
+  background: var(--muted);
+}
+.scratchpad-choices > label > span {
+  min-width: 0;
+}
+.scratchpad-choices strong {
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.scratchpad-choices small {
+  display: block;
+  margin-top: 5px;
+}
+.scratchpad-rename {
+  max-width: 430px;
+}
+.scratchpad-rename form {
+  display: grid;
+  gap: 20px;
+}
+.scratchpad-rename input {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 12px;
+}
+.plot-scratchpad + .workflow-detail-heading {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+@media (max-width: 1100px) {
+  .scratchpad-heading > span {
+    display: none;
+  }
+  .scratchpad-stats strong {
+    font-size: 16px;
+  }
+  .scratchpad-stats > div {
+    padding-inline: 14px;
+  }
+}
+@media (max-width: 600px) {
+  .scratchpad-heading {
+    flex-wrap: wrap;
+  }
+  .scratchpad-heading > div {
+    flex-basis: 180px;
+  }
+  .scratchpad-plot-toolbar {
+    padding: 16px;
+  }
+  .scratchpad-chart-tools {
+    padding: 12px;
+  }
+  .scratchpad-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px 0;
+  }
+  .scratchpad-stats > div:nth-child(2) {
+    border: 0;
+  }
+  .scratchpad-axis-label {
+    padding-left: 24px;
+    flex-wrap: wrap;
+  }
+  .scratchpad-trace-range {
+    display: none;
+  }
+}
 .workflow-app {
   height: 100dvh;
   min-height: 540px;
