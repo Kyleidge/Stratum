@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
@@ -13,7 +14,13 @@ import type {
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 import { affectedOperations } from '../lib/workflow-lifecycle';
 import { WORKFLOW_EXAMPLE } from '../lib/workflow-example';
-import { readPlotSheets, MAX_PLOT_TRACES } from '../lib/plot-scratchpad';
+import { readPlotSheets } from '../lib/plot-scratchpad';
+import {
+  readWorkflowDrag,
+  targetSignals,
+  targetPlotOutputs,
+  targetOutputs,
+} from '../lib/workflow-drag';
 
 void test('scratchpad layouts tolerate corrupt storage and retain missing signal references for Undo', () => {
   assert.deepEqual(readPlotSheets('{broken'), []);
@@ -26,6 +33,7 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
         name: '  Comparison  ',
         layout: 'stacked',
         grid: false,
+        zeroTime: true,
         traces: [
           null,
           { id: 'removed-signal', visible: false, color: '#7ebcff' },
@@ -40,6 +48,7 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
   assert.equal(sheets[0].name, 'Comparison');
   assert.equal(sheets[0].layout, 'stacked');
   assert.equal(sheets[0].grid, false);
+  assert.equal(sheets[0].zeroTime, true);
   assert.deepEqual(sheets[0].traces[0], {
     id: 'removed-signal',
     visible: false,
@@ -56,7 +65,97 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
       },
     ]),
   );
-  assert.equal(large[0].traces.length, MAX_PLOT_TRACES);
+  assert.equal(large[0].traces.length, 5000);
+  assert.equal(large[0].zeroTime, false);
+});
+
+void test('example CSV recordings import with their documented grids, units and missing samples', async () => {
+  const engine = new SignalEngine(undefined, crypto.randomUUID());
+  await engine.open();
+  try {
+    for (const [name, rows, channels, start, end] of [
+      ['motor-runs', 1801, 3, 0, 180],
+      ['motor-logger-b', 1801, 3, 2.5, 182.5],
+      ['vibration', 4001, 2, 0, 20],
+      ['thermal-step', 241, 3, 0, 240],
+    ] as const) {
+      const csv = await readFile(
+        new URL(`../examples/${name}.csv`, import.meta.url),
+      );
+      const source = await engine.importCsv(new File([csv], `${name}.csv`));
+      assert.equal(source.rows, rows);
+      assert.equal(source.channels.length, channels);
+      const data = await samples(engine, source.channels[0]);
+      assert.equal(data[0][0], start);
+      assert.equal(data.at(-1)![0], end);
+      if (name === 'motor-runs') {
+        const trigger = await samples(engine, source.channels[2]);
+        assert.equal(trigger.filter(([, value]) => value === 5).length, 1200);
+      } else if (name === 'vibration') {
+        const measured = await samples(engine, source.channels[1]);
+        assert.equal(
+          measured.filter(([, value]) => !Number.isFinite(value)).length,
+          100,
+        );
+        assert.ok(measured[2400][1] > 3);
+        assert.equal(
+          engine.project.nodes.find((node) => node.id === source.channels[1])!
+            .unit,
+          'g',
+        );
+      }
+    }
+  } finally {
+    engine.close();
+  }
+});
+
+void test('workflow drops preserve member inputs, exact segment families and scalar identity', async () => {
+  const engine = new SignalEngine(undefined, crypto.randomUUID());
+  await engine.open();
+  try {
+    await engine.workflowExample();
+    const index = new WorkflowIndex(engine.project);
+    const segmentSteps = engine.project.workflowSteps!.filter(
+      (step) => step.kind === 'segment',
+    );
+    const [runs, nested] = segmentSteps;
+    const run = { kind: 'output' as const, id: runs.outputIds[1] };
+    assert.deepEqual(targetSignals(index, run), [run.id]);
+    assert.deepEqual(targetPlotOutputs(index, run), runs.outputIds);
+    assert.deepEqual(
+      targetPlotOutputs(index, { kind: 'output', id: nested.outputIds[0] }),
+      nested.outputIds,
+    );
+    assert.ok(!targetPlotOutputs(index, run).includes(nested.outputIds[0]));
+    const valueStep = engine.project.workflowSteps!.find(
+      (step) => step.kind === 'value',
+    )!;
+    const valueId = valueStep.outputIds[0];
+    const value = { kind: 'output' as const, id: valueId };
+    assert.deepEqual(targetOutputs(index, value), [valueId]);
+    assert.deepEqual(targetPlotOutputs(index, value), [valueId]);
+    assert.deepEqual(targetSignals(index, value), [
+      index.values.get(valueId)!.inputId,
+    ]);
+    assert.deepEqual(
+      targetSignals(index, { kind: 'step', id: valueStep.id }),
+      valueStep.outputIds.map((id) => index.values.get(id)!.inputId),
+    );
+    assert.deepEqual(readWorkflowDrag(JSON.stringify(run), index), run);
+    assert.deepEqual(targetOutputs(index, { kind: 'output', id: '' }), []);
+    for (const raw of [
+      '{bad',
+      'null',
+      '[]',
+      JSON.stringify({ kind: 'output', id: 'foreign' }),
+      JSON.stringify({ kind: 'more', id: run.id }),
+    ]) {
+      assert.equal(readWorkflowDrag(raw, index), undefined);
+    }
+  } finally {
+    engine.close();
+  }
 });
 
 void test('motor example creates chronological, executable signal lineage and five real values', async () => {

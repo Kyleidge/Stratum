@@ -24,7 +24,10 @@ export async function workflowUiSmoke() {
   }
   const button = (text: string, root: Document | HTMLElement = document) =>
     [...root.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.trim() === text && !button.disabled,
+      (button) =>
+        button.textContent?.trim() === text &&
+        !button.disabled &&
+        button.getAttribute('aria-disabled') !== 'true',
     );
   async function click(text: string, root: Document | HTMLElement = document) {
     (await until(() => button(text, root), `button ${text}`)).click();
@@ -223,6 +226,45 @@ export async function workflowUiSmoke() {
     assert(row, 'Selected history item is missing.');
     return row;
   }
+  async function dragItem(row: HTMLElement, target: HTMLElement) {
+    const dataTransfer = new DataTransfer();
+    row.dispatchEvent(
+      new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }),
+    );
+    assert(
+      dataTransfer.types.includes('application/x-stratus-workflow'),
+      'History drag has no structured payload.',
+    );
+    await delay();
+    target.dispatchEvent(
+      new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }),
+    );
+    target.dispatchEvent(
+      new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }),
+    );
+    row.dispatchEvent(
+      new DragEvent('dragend', { bubbles: true, dataTransfer }),
+    );
+    await delay();
+  }
+  async function closePlot() {
+    document
+      .querySelector<HTMLButtonElement>('[aria-label^="Close plot "]')!
+      .click();
+    await delay();
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Dismiss closed plot"]')
+      ?.click();
+    await delay();
+  }
   async function contextAction(
     row: HTMLElement,
     label: string,
@@ -291,7 +333,10 @@ export async function workflowUiSmoke() {
       plotTab()?.textContent?.includes('Motor speed'),
       'Inspecting another signal replaced a saved plot.',
     );
-    await click('Add to this plot');
+    await dragItem(
+      signalRow('Torque')!,
+      document.querySelector<HTMLElement>('.scratchpad-canvas')!,
+    );
     await until(
       () => document.querySelectorAll('.scratchpad-stack svg').length === 2,
       'separate axes for mixed units',
@@ -414,7 +459,7 @@ export async function workflowUiSmoke() {
     await delay();
     assert(
       document
-        .querySelector('.workflow-heading-top')
+        .querySelector('.workflow-status')
         ?.textContent?.includes('Original signal'),
       'Startup must expose an original signal.',
     );
@@ -422,29 +467,106 @@ export async function workflowUiSmoke() {
       !document.body.innerText.includes('Saved region ranges'),
       'The new example contains legacy-only ranges.',
     );
-    const exampleGuide =
-      document.querySelector<HTMLDetailsElement>('.workflow-example')!;
-    exampleGuide.querySelector('summary')!.click();
+    assert(
+      !document.querySelector('.workflow-example'),
+      'Example banner is still visible.',
+    );
+    assert(
+      !document.querySelector('.workflow-detail-heading'),
+      'Selected signal details remain below the plot.',
+    );
+    assert(
+      !document.querySelector('.workflow-header [aria-label="Recording"]'),
+      'Recording selector remains in the header.',
+    );
+    assert(
+      document.querySelectorAll('.workflow-action-toolbar button').length ===
+        18,
+      'History tools are missing.',
+    );
+    const beforeDrag = selectedHistoryRow().title;
+    const cancelledDrag = new DataTransfer();
+    const torqueRow = signalRow('Torque')!;
+    torqueRow.dispatchEvent(
+      new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: cancelledDrag,
+      }),
+    );
     await delay();
-    await click('Compare run averages');
     assert(
-      document.querySelectorAll('.workflow-output-name').length === 3,
-      'Example should expose three run averages.',
+      selectedHistoryRow().title === beforeDrag,
+      'Starting a drag changed the inspected signal.',
     );
-    await click('Explore a segmented segment');
     assert(
-      document.querySelectorAll('.workflow-output-name').length === 2,
-      'Nested segmentation should expose two signals.',
+      document
+        .querySelector('[data-action="derive"]')
+        ?.getAttribute('data-drop') === 'accept',
+      'Accepting tools were not highlighted.',
     );
-    await click('Plot derived signal');
+    assert(
+      document
+        .querySelector('[data-action="back"]')
+        ?.getAttribute('data-drop') === 'reject',
+      'Invalid targets were not distinguished.',
+    );
+    torqueRow.dispatchEvent(
+      new DragEvent('dragend', { bubbles: true, dataTransfer: cancelledDrag }),
+    );
+    await delay();
+    assert(
+      !document.querySelector('.workflow-action-icon[data-drop]'),
+      'Cancelled drag left target highlights.',
+    );
+    await click('New plot');
+    const destination = document.querySelector<HTMLElement>(
+      '[aria-label="Plot tabs"] [aria-selected="true"]',
+    )!;
+    await click('New plot');
+    await dragItem(signalRow('Torque')!, destination);
     await until(
-      () =>
-        document.querySelector('.workflow-detail-heading h1')?.textContent ===
-        'Torque × speed',
-      'example product',
+      () => document.querySelectorAll('.scratchpad-trace').length === 1,
+      'drop onto inactive named tab',
     );
-    exampleGuide.querySelector('summary')!.click();
+    assert(
+      document.querySelector(
+        '[aria-label="Plot tabs"] [aria-selected="true"]',
+      ) === destination,
+      'Drop did not activate its destination tab.',
+    );
+    const raw = localStorage.getItem(PLOT_STORAGE_KEY);
+    await dragItem(
+      signalRow('Torque')!,
+      document.querySelector<HTMLElement>('.scratchpad-canvas')!,
+    );
+    assert(
+      localStorage.getItem(PLOT_STORAGE_KEY) === raw,
+      'Repeated drops duplicated a trace.',
+    );
+    const invalid = new DataTransfer();
+    invalid.setData(
+      'application/x-stratus-workflow',
+      JSON.stringify({ kind: 'output', id: 'foreign' }),
+    );
+    document.querySelector('[data-action="derive"]')!.dispatchEvent(
+      new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: invalid,
+      }),
+    );
     await delay();
+    assert(
+      !document.querySelector('[role="dialog"][data-open]'),
+      'Unknown drag target opened an editor.',
+    );
+    await closePlot();
+    document
+      .querySelector<HTMLElement>('[aria-label="Plot tabs"] [title="Plot 2"]')!
+      .click();
+    await delay();
+    await closePlot();
     // Return to the first original for the independent operation lifecycle checks.
     await click('Workspace');
     await click('Refresh this example', await dialog());
@@ -490,7 +612,7 @@ export async function workflowUiSmoke() {
     await click('Create 1 derived signal', mathModal);
     await settled();
     assert(
-      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+      document.querySelector('.workflow-status-selection')?.textContent ===
         'Motor speed × Motor speed',
       'The palette did not create the selected two-input operation.',
     );
@@ -541,7 +663,7 @@ export async function workflowUiSmoke() {
     await click('Save changes and recalculate', mathEdit);
     await settled();
     assert(
-      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+      document.querySelector('.workflow-status-selection')?.textContent ===
         'Motor speed − Motor speed',
       'Changing the math operation did not update its output.',
     );
@@ -558,9 +680,7 @@ export async function workflowUiSmoke() {
     await click('Create 1 derived signal', await dialog());
     await settled();
     assert(
-      document
-        .querySelector('.workflow-heading-top')
-        ?.textContent?.includes('Derived signal'),
+      selectedHistoryRow().textContent?.includes('Derived signal'),
       'Derived output was not selected.',
     );
     await segment('12, 51\n70, 109\n128, 167');
@@ -570,15 +690,56 @@ export async function workflowUiSmoke() {
     );
     await openFirstOutput();
     assert(
-      document.querySelector('.workflow-next strong')?.textContent ===
-        '3 signals checked',
+      document
+        .querySelector('.workflow-status')
+        ?.textContent?.includes('3 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
+    // A segment member expands only its producing operation on the plot.
+    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await until(
+      () => document.querySelectorAll('.scratchpad-trace').length === 3,
+      'three segment traces',
+    );
+    const zeroButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Align trace starts at zero"]',
+    )!;
+    assert(zeroButton, 'Elapsed-time control missing.');
+    zeroButton.click();
+    await until(
+      () =>
+        readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY)).at(-1)?.zeroTime,
+      'saved elapsed-time alignment',
+    );
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [clip-path] path[d]')
+          .length === 3,
+      'complete segment overlay',
+    );
+    assert(
+      [
+        ...document.querySelectorAll('.scratchpad-canvas [clip-path] path[d]'),
+      ].every((path) => path.getAttribute('d')?.startsWith('M70.00,')),
+      'Segments did not share the zero origin.',
+    );
+    // A processing tool receives this member, even while three inputs were checked.
+    await dragItem(
+      selectedHistoryRow(),
+      document.querySelector<HTMLElement>('[data-action="value"]')!,
+    );
+    const memberModal = await dialog();
+    assert(
+      button('Create 1 value', memberModal),
+      'Segment drop kept stale checked siblings.',
+    );
+    await click('Close', memberModal);
+    await closePlot();
     await click('Use only this signal');
     await segment('15, 20');
     assert(
       document
-        .querySelector('.workflow-detail-heading h1')
+        .querySelector('.workflow-status-selection')
         ?.textContent?.includes('15–20 s'),
       'Nested segment interval was not exposed.',
     );
@@ -593,15 +754,64 @@ export async function workflowUiSmoke() {
           ?.textContent?.includes('Unavailable'),
       'Time average did not produce a scalar.',
     );
+    await click('Derive signal');
+    const scalarInputModal = await dialog();
     assert(
-      !button('Derive signal') && !button('Segment'),
-      'Scalar values were offered as signal inputs.',
+      scalarInputModal
+        .querySelector('.workflow-drop-note')
+        ?.textContent?.includes('input signal'),
+      'Value processing did not explain its input signal.',
     );
+    await click('Close', scalarInputModal);
+    for (const action of ['derive', 'segment', 'value', 'align']) {
+      await dragItem(
+        selectedHistoryRow(),
+        document.querySelector<HTMLElement>(`[data-action="${action}"]`)!,
+      );
+      const dropModal = await dialog();
+      assert(
+        dropModal
+          .querySelector('.workflow-drop-note')
+          ?.textContent?.includes('input signal'),
+        `Value drop onto ${action} did not explain the input conversion.`,
+      );
+      await click('Close', dropModal);
+    }
+    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await until(
+      () =>
+        document.querySelector(
+          '.scratchpad-canvas path[stroke-dasharray="6 4"]',
+        ),
+      'scalar reference line',
+    );
+    assert(
+      document
+        .querySelector('.scratchpad-trace-name small')
+        ?.textContent?.includes('Scalar value'),
+      'Value plot used its parent in place of its value.',
+    );
+    await closePlot();
+    await dragItem(
+      selectedHistoryRow(),
+      document.querySelector<HTMLElement>('[data-action="samples"]')!,
+    );
+    const samplesModal = await dialog();
+    await until(
+      () => samplesModal.querySelectorAll('tbody tr').length > 0,
+      'value input samples from toolbar',
+    );
+    assert(
+      samplesModal.textContent?.includes('input to'),
+      'Value sample source is ambiguous.',
+    );
+    await click('Close', samplesModal);
     await click('Show lineage in tree');
     assert(
       document.querySelector('.workflow-filter'),
       'Lineage filter was not applied.',
     );
+    await click('Inputs and originals');
     const provenance = document.querySelector<HTMLButtonElement>(
       '.workflow-input-link button',
     );
@@ -632,14 +842,49 @@ export async function workflowUiSmoke() {
     // Exercise a large batch through the UI; a single operation owns every member.
     await segment(Array.from({ length: 40 }, () => '15, 16').join('\n'));
     assert(
-      document.querySelector('.workflow-next strong')?.textContent ===
-        '40 signals checked',
+      document
+        .querySelector('.workflow-status')
+        ?.textContent?.includes('40 checked'),
       'Batch processing selection lost members.',
     );
     assert(
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Output table is not bounded to one page.',
     );
+    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await until(
+      () =>
+        readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY)).at(-1)?.traces
+          .length === 40,
+      'complete large plot batch',
+    );
+    await until(
+      () => document.querySelector('.scratchpad-canvas svg'),
+      'large overlay',
+    );
+    assert(
+      document.querySelectorAll('.scratchpad-trace').length === 30,
+      'Trace controls are not paged.',
+    );
+    assert(
+      document.querySelectorAll('.scratchpad-canvas [clip-path] path').length <=
+        8,
+      'Large overlays flood the SVG with per-signal elements.',
+    );
+    await click('Stacked');
+    await until(
+      () => document.querySelectorAll('.scratchpad-stack svg').length === 8,
+      'bounded stacked plots',
+    );
+    await click('Next plots');
+    assert(
+      document
+        .querySelector('[aria-label="Stacked plot pages"]')
+        ?.textContent?.includes('9–16 of 40'),
+      'Stacked comparison pages cannot be reached.',
+    );
+    await closePlot();
+    await outputsTab();
     await click('Calculate value');
     const valueModal = await dialog();
     assert(
@@ -680,9 +925,7 @@ export async function workflowUiSmoke() {
     );
     await openFirstOutput();
     assert(
-      document
-        .querySelector('.workflow-heading-top')
-        ?.textContent?.includes('Value'),
+      selectedHistoryRow().textContent?.includes('Value'),
       'A late batch member cannot be selected.',
     );
     await exportFile();
@@ -744,7 +987,7 @@ export async function workflowUiSmoke() {
     await delay();
     assert(
       document
-        .querySelector('.workflow-heading-top')
+        .querySelector('.workflow-status')
         ?.textContent?.includes('Original signal'),
       'Original signal was lost after downstream processing.',
     );
@@ -777,7 +1020,7 @@ export async function workflowUiSmoke() {
     await click('Save name', managementModal);
     await settled();
     assert(
-      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+      document.querySelector('.workflow-status-selection')?.textContent ===
         'Reviewed speed',
       'Rename lost the selected output.',
     );
@@ -789,6 +1032,7 @@ export async function workflowUiSmoke() {
         .querySelector('.workflow-value-card strong')
         ?.textContent?.replaceAll(',', '') ?? 'NaN',
     );
+    await click('Inputs and originals');
     document
       .querySelector<HTMLButtonElement>('.workflow-input-link button')!
       .click();
@@ -811,7 +1055,7 @@ export async function workflowUiSmoke() {
     await click('Save changes and recalculate', managementModal);
     await settled();
     assert(
-      document.querySelector('.workflow-detail-heading h1')?.textContent ===
+      document.querySelector('.workflow-status-selection')?.textContent ===
         'Reviewed speed',
       'Editing lost the output alias.',
     );
@@ -842,7 +1086,7 @@ export async function workflowUiSmoke() {
     await until(
       () =>
         !document.querySelector('[role="alertdialog"]') &&
-        document.querySelector('.workflow-detail-heading h1')?.textContent !==
+        document.querySelector('.workflow-status-selection')?.textContent !==
           'Reviewed speed',
       'delete committed',
     );
@@ -909,7 +1153,7 @@ export async function workflowUiSmoke() {
     assert(
       Number.isFinite(initialValue) &&
         Math.abs(revisedValue / initialValue - 1.5) < 0.002,
-      `Editing did not refresh the dependent value in the UI: ${initialValue} → ${revisedValue}, ${document.querySelector('.workflow-detail-heading h1')?.textContent}.`,
+      `Editing did not refresh the dependent value in the UI: ${initialValue} → ${revisedValue}, ${document.querySelector('.workflow-status-selection')?.textContent}.`,
     );
     await click('Workspace');
     managementModal = await dialog();
@@ -1156,7 +1400,7 @@ export async function workflowUiSmoke() {
     root.unmount();
     host.remove();
     console.info(
-      'STRATUS_SMOKE_OK: Workflow UI passed editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
+      'STRATUS_SMOKE_OK: Workflow UI passed signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
     );
   } catch (error) {
     console.error(

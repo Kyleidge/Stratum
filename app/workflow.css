@@ -3,6 +3,133 @@
   margin-bottom: 24px;
   min-width: 0;
 }
+.workflow-action-toolbar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
+  margin: 10px 14px 14px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+}
+.workflow-action-icon {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--foreground);
+}
+.workflow-action-icon:hover,
+.workflow-action-icon:focus-visible {
+  background: var(--muted);
+}
+.workflow-action-icon[aria-disabled='true'] {
+  opacity: 0.35;
+}
+.workflow-action-icon[data-drop='accept'] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--background));
+  color: var(--primary);
+}
+.workflow-action-icon[data-drop='reject'] {
+  opacity: 0.25;
+}
+.workflow-sidebar > .region-field {
+  margin: 0 16px 4px;
+}
+.workflow-sidebar > .region-field > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.workflow-sidebar-heading {
+  padding-bottom: 10px;
+}
+.workflow-input-review {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+.workflow-input-review li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+.workflow-drop-note {
+  padding: 10px 12px;
+  border-left: 2px solid var(--primary);
+  background: var(--background);
+  color: var(--primary);
+  font-size: 14px;
+}
+.workflow-status-selection {
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-status output {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-status > span:last-child {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.workflow-status .workflow-notice {
+  flex: 1;
+}
+.workflow-status:has(.workflow-notice) > .workflow-status-selection {
+  display: inline;
+}
+.scratchpad-canvas[data-drop='true'],
+.scratchpad-tabbar [data-drop='true'] {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.scratchpad-zero {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  padding: 7px 10px;
+  color: var(--muted-foreground);
+}
+.scratchpad-zero[aria-pressed='true'] {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.scratchpad-traces > details > summary {
+  padding: 8px 0;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.scratchpad-canvas > .workflow-list-pages {
+  padding: 12px 22px;
+}
+.workflow-tree-row[draggable='true'] {
+  cursor: grab;
+}
+.workflow-tree-row[draggable='true']:active {
+  cursor: grabbing;
+}
+@media (max-width: 780px) {
+  .workflow-status > .workflow-status-selection {
+    display: inline;
+    max-width: 40%;
+  }
+}
 .scratchpad-heading,
 .scratchpad-heading > div,
 .scratchpad-plot-toolbar,

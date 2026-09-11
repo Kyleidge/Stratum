@@ -32,17 +32,32 @@ and **Add to this plot** adds the inspected signal without changing checked
 processing inputs. The searchable **Add signals** dialog can also use checked
 inputs. Step outputs remain a separate tab with the existing export scopes.
 
-Each tab holds up to eight traces; the scratchpad holds up to twelve named tabs.
-Trace visibility, colors, names, layout, and grid settings persist in device-local
+Dragging a segment onto a plot adds the exact outputs of its producing segment
+operation. Dragging it onto a processing tool selects only that member. Operation
+rows drag their complete output membership. Scalar values plot as dashed reference
+lines; signal-processing tools explicitly use their input signals instead.
+Toolbar drops select their subject and replace processing scope before opening an
+editor. Cancelled drags preserve selection; incompatible targets stay inactive.
+
+Each tab holds up to 10,000 traces; the scratchpad holds up to twelve named tabs.
+Oversized drops are rejected whole. Trace controls are paged in groups of 30 and
+stacked plots in groups of eight. Overlays combine independent SVG subpaths by
+style to retain the complete batch without a DOM element for each signal.
+Trace visibility, colors, names, layout, elapsed-time and grid settings persist in device-local
 browser storage, separately from workflow Undo/Redo and workspace backups. These
 are live references to signal IDs, not sample snapshots. Editing an operation
 refreshes its plots. Removed signals remain marked unavailable so Undo can restore
 them. Closing a tab offers Reopen for the most recently closed plot.
 
-Overlays require matching units and explicit time references. Other comparisons
+The optional Δt display subtracts each trace's own interval start. It changes no
+samples, time references or workflow history. It permits elapsed-time comparisons
+across recordings. Otherwise overlays require matching units and explicit time references. Other comparisons
 use stacked axes, with independent time axes clearly labeled when clocks differ.
 Zoom, pan, and Fit adjust the bounded plot preview; summaries describe all samples.
 Exact samples and exports still come from evaluated engine data, never the preview.
+Inspection, lineage, checked-input review, processing and management live in the
+icon toolbar above History. The footer shows selection, processing scope, totals
+and progress; signal details no longer occupy space below the plot.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
 The history tree has two levels: an operation and its immediate outputs. The

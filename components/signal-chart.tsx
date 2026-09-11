@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
 
 export function formatValue(value: number, digits = 1): string {
@@ -18,6 +18,7 @@ type Trace = {
   offset?: number;
   color?: string;
   label?: string;
+  referenceLine?: boolean;
 };
 export default function SignalChart({
   traces,
@@ -73,7 +74,55 @@ export default function SignalChart({
   const plotHeight = bottom - 15;
   const x = (t: number) =>
     left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
-  const y = (v: number) => bottom - ((v - min) / (max - min || 1)) * plotHeight;
+  // Merge independent subpaths by style for large overlays. Every trace and
+  // missing-data break remains present without one DOM element per signal.
+  const geometry = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        d: string[];
+        color: string;
+        reference: boolean;
+        dots: boolean;
+      }
+    >();
+    for (const trace of traces) {
+      const color = trace.color || trace.node.color;
+      const dots = trace.node.operation === 'min-max';
+      const reference = !!trace.referenceLine;
+      const key = `${color}:${dots}:${reference}`;
+      const group = groups.get(key) ?? { key, d: [], color, reference, dots };
+      let drawing = false;
+      const parts: string[] = [];
+      for (const [time, value] of trace.plot.points) {
+        if (!Number.isFinite(value)) {
+          drawing = false;
+          continue;
+        }
+        const px =
+          left +
+          ((time - (trace.offset ?? 0) - range[0]) /
+            (range[1] - range[0] || 1)) *
+            span;
+        const py = bottom - ((value - min) / (max - min || 1)) * plotHeight;
+        if (dots) {
+          parts.push(
+            `M${(px - 3.5).toFixed(2)},${py.toFixed(2)}a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0`,
+          );
+        } else {
+          parts.push(`${drawing ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`);
+          drawing = true;
+        }
+      }
+      group.d.push(parts.join(' '));
+      groups.set(key, group);
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      d: group.d.join(' '),
+    }));
+  }, [traces, left, span, range, bottom, min, max, plotHeight]);
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
   const nearest =
@@ -212,49 +261,18 @@ export default function SignalChart({
               />
             </g>
           ))}
-          {traces.map((trace) => {
-            if (trace.node.operation === 'min-max')
-              return (
-                <g key={trace.node.id}>
-                  {trace.plot.points
-                    .filter((point) => Number.isFinite(point[1]))
-                    .map(([t, v]) => (
-                      <circle
-                        key={t}
-                        cx={x(t - (trace.offset || 0))}
-                        cy={y(v)}
-                        r="3.5"
-                        fill={trace.color || trace.node.color}
-                      >
-                        <title>{`${v} ${trace.node.unit} at ${t} s`}</title>
-                      </circle>
-                    ))}
-                </g>
-              );
-            let drawing = false;
-            const d = trace.plot.points
-              .map(([t, v]) => {
-                if (!Number.isFinite(v)) {
-                  drawing = false;
-                  return '';
-                }
-                const part = `${drawing ? 'L' : 'M'}${x(t - (trace.offset || 0)).toFixed(2)},${y(v).toFixed(2)}`;
-                drawing = true;
-                return part;
-              })
-              .join(' ');
-            return (
-              <path
-                key={trace.node.id}
-                d={d}
-                fill="none"
-                stroke={trace.color || trace.node.color}
-                strokeWidth="1.45"
-                vectorEffect="non-scaling-stroke"
-                strokeLinejoin="round"
-              />
-            );
-          })}
+          {geometry.map(({ key, d, color, reference, dots }) => (
+            <path
+              key={key}
+              d={d}
+              fill={dots ? color : 'none'}
+              stroke={color}
+              strokeWidth="1.45"
+              strokeDasharray={reference ? '6 4' : undefined}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          ))}
         </g>
         {currentTime !== null && (
           <g>

@@ -1,7 +1,8 @@
 /** Device-local plot layouts. Signal data and workflow history stay in the engine. */
 export const PLOT_STORAGE_KEY = 'stratus.plot-scratchpad.v1';
 export const MAX_PLOT_TABS = 12;
-export const MAX_PLOT_TRACES = 8;
+// Bounded persisted metadata; complete normal segment batches remain intact.
+export const MAX_PLOT_TRACES = 10000;
 export const TRACE_COLORS = [
   '#91e5ba',
   '#7ebcff',
@@ -19,6 +20,7 @@ export type PlotSheet = {
   traces: PlotTrace[];
   layout: 'overlay' | 'stacked';
   grid: boolean;
+  zeroTime?: boolean;
 };
 
 export function readPlotSheets(raw: string | null): PlotSheet[] {
@@ -70,6 +72,7 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
               ? ('stacked' as const)
               : ('overlay' as const),
           grid: sheet.grid !== false,
+          zeroTime: sheet.zeroTime === true,
         },
       ];
     });

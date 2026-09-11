@@ -29,12 +29,48 @@ native bundle. Packages are unsigned development builds.
 
 ## Explore
 
-The active workspace uses **History tree** and **Signals & values** navigation.
-Select an original or derived signal, then choose **Derive signal**, **Segment**,
-or **Calculate value**. Segments are derived signals and can be segmented again.
-Select a step to inspect its complete output table; use its checkboxes for exact
-batch selection. Every output provides **From** links, full lineage, and links to
-later operations that use it. **Repeat with new settings** appends a new step.
+The center is a **plot scratchpad**. **Active** follows the inspected signal;
+**Keep plot** makes a named tab that stays open as you browse. **New plot** starts
+a blank comparison. Use **Add signals** for keyboard-accessible selection, or drag
+items from **History tree** or **Signals & values** onto the canvas, a named tab,
+or New plot. Dropping on Active creates a comparison containing its current signal.
+
+| Dragged item               | Onto a plot                                             | Onto a processing tool                                     |
+| -------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
+| Original or derived signal | Add that trace                                          | Select that signal                                         |
+| Segment                    | Add all segments from its producing operation           | Select that segment only                                   |
+| Operation                  | Add every plottable output                              | Select its signal outputs, or the inputs of its values     |
+| Scalar value               | Add a dashed reference line over its evaluated interval | Select its input signal, with an explanation in the editor |
+
+Turn on **Δt · Align starts at 0** to compare segments by elapsed time. This is
+a display setting; it does not change timestamps or create a workflow operation.
+Overlays require matching units and a shared clock, or elapsed-time display.
+Other comparisons use stacked axes. Use **Compare & align** to create reusable
+aligned signals with explicit time references.
+
+Named plots retain their traces, colors, visibility, grid and elapsed-time settings
+on this device. Trace controls show 30 at a time and stacked plots show eight at
+a time; overlays include the full batch. The scratchpad supports twelve named
+tabs and up to 10,000 traces per tab, rejecting larger drops without partial adds.
+Plots reference live outputs, so edits refresh them and Undo can restore a removed
+trace. Layouts are separate from workspace backups and workflow Undo/Redo.
+
+The icon toolbar above History contains processing, samples, export, checked-input
+review, navigation, lineage, edit, duplicate, rename and delete controls. Hover or
+focus an icon to see its name. Accepting tools highlight during a drag. A drop
+selects the item in History and opens the relevant editor with its exact inputs;
+processing drops replace previously checked inputs. Creating or editing data still
+requires applying the editor, and deletion shows its normal impact confirmation.
+Starting or cancelling a drag does not change the selection.
+
+Select a step to inspect its complete **Step outputs** table; use checkboxes for
+batch selection. Browsing normally preserves checked inputs. **Inputs and
+originals**, **Show lineage in tree**, and **Used by later operations** open the
+selected item's relationships from the toolbar. Segments remain ordinary derived
+signals and can be segmented again. **Repeat with new settings** appends a new step.
+The footer shows the inspected item, processing scope, workspace totals, local
+storage status and progress or notifications. The recording filter lives above
+the History toolbar.
 
 **Edit settings** revises the selected operation and recalculates dependent
 operations as one transaction. Step numbers and output identities are retained;
@@ -82,7 +118,8 @@ at 10 Hz. Its seven chronological steps use the same operations as your own data
 7. Calculate the maximum value in each of those two signals.
 
 The example has two original signals, seven derived signals and five values.
-Its shortcuts open the derived plot, run-average table and nested segment outputs.
+Open any of its seven steps in History to inspect its outputs, or drag a run
+segment onto New plot and align its siblings at zero.
 Use **Export / report** on any of these results for CSV data or a printable report.
 Every result keeps direct links to its inputs. Edit, rename, delete and Undo work
 on the example just as they do on imported recordings.
@@ -92,6 +129,18 @@ Opening the example again preserves edits. Select an example recording and choos
 example. Refresh is one undoable change and preserves imported recordings.
 For a one-time desktop refresh at launch, run `pnpm desktop --refresh-example`;
 the startup request is consumed after success, so reloading preserves later edits.
+
+### Importable example CSVs
+
+Four small synthetic recordings are included in [examples](examples/README.md):
+
+- [Motor runs](examples/motor-runs.csv): speed, torque and a trigger channel over three runs.
+- [Second motor logger](examples/motor-logger-b.csv): the same events on a clock offset by 2.5 s.
+- [Vibration](examples/vibration.csv): a reference wave, higher-frequency noise, a gap and a spike.
+- [Thermal step](examples/thermal-step.csv): a heater command and two delayed temperature responses.
+
+The [example guide](examples/README.md) gives import, segmentation, plotting and
+alignment exercises, including how the synthetic signals were constructed.
 
 ### Earlier region workspace
 
@@ -129,7 +178,7 @@ inclusive endpoints are retained; newly created regions include their start and
 exclude their end, except at an inclusive recording/parent endpoint.
 
 Import comma-separated UTF-8 files with time in seconds in the first column.
-Use units in square brackets to enable the power and fuel calculation step:
+Put units in square brackets in the column headers:
 
 ```csv
 Time [s],Engine speed [rpm],Torque [Nm],Fuel flow [kg/h]
@@ -178,6 +227,9 @@ family mapping, all new examples, and legacy migration. Legacy explorer
 regressions cover keeping
 one function item for partial or mixed input batches. The preview integration
 also runs every selectable example through the actual HTTP worker module.
+The workflow tests import all example CSVs and verify their grids and missing
+samples. The native UI check also exercises signal/segment/value drag-and-drop,
+exact toolbar input scopes, zero-time plots and complete paged comparisons.
 
 See [the usability and reliability review](docs/production-review.md) for the
 implemented recovery guarantees and remaining release limits, and

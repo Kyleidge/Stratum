@@ -43,6 +43,7 @@ const blankAnchor = (): AnchorForm => ({
 export default function TimeWorkbench({
   project,
   initialIds,
+  inputNote,
   saved,
   initialMode = 'overlay',
   editing,
@@ -54,6 +55,7 @@ export default function TimeWorkbench({
 }: {
   project: Project;
   initialIds: string[];
+  inputNote?: string;
   saved?: TimeSettings;
   initialMode?: Mode;
   editing?: boolean;
@@ -362,6 +364,7 @@ export default function TimeWorkbench({
             ? 'Saving rebuilds this operation and its dependent results. Undo restores the previous version.'
             : 'Choose signals from any source. Save alignment and resampling as reusable derived signals.'}
         </DialogDescription>
+        {inputNote && <p className="workflow-drop-note">{inputNote}</p>}
         <fieldset disabled={busy} className="time-controls">
           <RegionSelect
             label="Time operation"

@@ -24,6 +24,7 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import type { WorkflowManagementAction } from './workflow-management';
+import { startWorkflowDrag } from '@/lib/workflow-drag';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
 const ROW_HEIGHT = 48;
@@ -37,6 +38,7 @@ export default function WorkflowHistory({
   busy,
   onAction,
   contributingOutputs,
+  onDragSelection,
 }: {
   steps: WorkflowStep[];
   index: WorkflowIndex;
@@ -49,6 +51,7 @@ export default function WorkflowHistory({
     action: WorkflowManagementAction,
   ) => void;
   contributingOutputs?: ReadonlySet<string>;
+  onDragSelection?: (selection: WorkflowSelection | null) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const selectedOwner =
@@ -245,6 +248,19 @@ export default function WorkflowHistory({
                 data-kind={row.kind}
                 data-selected={row.key === selectedKey}
                 className="workflow-tree-row"
+                draggable={row.kind !== 'more' && !busy}
+                onDragStart={(event) => {
+                  if (
+                    row.kind === 'more' ||
+                    (event.target as HTMLElement).closest('button')
+                  ) {
+                    event.preventDefault();
+                    return;
+                  }
+                  startWorkflowDrag(event.dataTransfer, target, row.label);
+                  onDragSelection?.(target);
+                }}
+                onDragEnd={() => onDragSelection?.(null)}
                 title={row.label}
                 style={{
                   position: 'absolute',
