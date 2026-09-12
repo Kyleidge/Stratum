@@ -350,6 +350,7 @@ export async function workflowUiSmoke() {
     ].find((item) => item.textContent?.trim().startsWith(label));
     assert(item, `Missing history action: ${label}`);
     item.click();
+    await until(() => !menu.isConnected, 'closed history context menu');
     await delay();
   }
   try {
@@ -376,6 +377,24 @@ export async function workflowUiSmoke() {
           '.workflow-tree-row[data-kind="output"]',
         ),
       ].find((row) => row.title === name);
+    const selectionBeforePlot = selectedHistoryRow().title;
+    await contextAction(
+      (await until(() => signalRow('Torque'), 'torque context target'))!,
+      'Create plot',
+      true,
+    );
+    await until(() => button('Hide trace Torque'), 'context plot of Torque');
+    assert(
+      selectedHistoryRow().title === selectionBeforePlot &&
+        document.querySelectorAll('.scratchpad-trace').length === 1,
+      'Create plot must use the context target and preserve inspection.',
+    );
+    await closePlot();
+    document
+      .querySelector<HTMLElement>('.scratchpad-tab-name')!
+      .closest<HTMLButtonElement>('[role="tab"]')!
+      .click();
+    await delay();
     (await until(() => signalRow('Torque'), 'torque row')).click();
     await delay();
     assert(
@@ -1080,7 +1099,7 @@ export async function workflowUiSmoke() {
       );
       await click('Close', dropModal);
     }
-    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await contextAction(selectedHistoryRow(), 'Create plot');
     await until(
       () =>
         document.querySelector(
@@ -1155,12 +1174,18 @@ export async function workflowUiSmoke() {
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Output table is not bounded to one page.',
     );
-    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await contextAction(selectedHistoryRow(), 'Create plot');
     await until(
       () =>
         readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY)).at(-1)?.traces
           .length === 40,
       'complete large plot batch',
+    );
+    assert(
+      document
+        .querySelector('.workflow-input-scope')
+        ?.textContent?.includes('40 checked'),
+      'Create plot changed checked processing inputs.',
     );
     await until(
       () => document.querySelector('.scratchpad-canvas svg'),

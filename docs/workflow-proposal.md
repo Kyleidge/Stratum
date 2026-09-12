@@ -36,6 +36,10 @@ Dragging a segment onto a plot adds the exact outputs of its producing segment
 operation. Dragging it onto a processing tool selects only that member. Operation
 rows drag their complete output membership. Scalar values plot as dashed reference
 lines; signal-processing tools explicitly use their input signals instead.
+**Create plot** in a History item's context menu opens a new plot with the same
+output membership as dragging that item onto **New plot**, including whole
+operation batches and segment families. It keeps the inspected item, checked
+processing inputs, search and focused output tree unchanged.
 Toolbar drops select their subject and replace processing scope before opening an
 editor. Cancelled drags preserve selection; incompatible targets stay inactive.
 

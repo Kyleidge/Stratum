@@ -2,10 +2,12 @@
 
 import {
   useEffect,
+  useImperativeHandle,
   useMemo,
   useState,
   useRef,
   type ReactNode,
+  type Ref,
   type DragEvent,
 } from 'react';
 import {
@@ -105,7 +107,12 @@ import {
   type WorkflowTarget,
 } from '@/lib/workflow-drag';
 
+export type PlotScratchpadHandle = {
+  createPlot: (target: WorkflowTarget) => void;
+};
+
 type Props = {
+  ref?: Ref<PlotScratchpadHandle>;
   project: Project;
   graph: SignalGraph;
   index: WorkflowIndex;
@@ -132,6 +139,7 @@ const initialSheet: PlotSheet = {
 };
 
 export default function PlotScratchpad({
+  ref,
   project,
   graph,
   index,
@@ -820,6 +828,12 @@ export default function PlotScratchpad({
       `${additions.length} trace${additions.length === 1 ? '' : 's'} added${ids.length > 1 ? ` from ${ids.length} outputs` : ''}.`,
     );
   }
+  useImperativeHandle(ref, () => ({
+    createPlot(target) {
+      if (busy || !loaded) return;
+      addTarget(target, 'new');
+    },
+  }));
   function dropProps(tabId: string) {
     return {
       onDragOver: (event: DragEvent<HTMLElement>) => {

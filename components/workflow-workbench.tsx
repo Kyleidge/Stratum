@@ -63,7 +63,10 @@ import type {
 import { segmentationOperation } from '@/lib/segmentation-operation';
 import WorkflowHistory, { type WorkflowSelection } from './workflow-history';
 import { formatValue } from './signal-chart';
-import PlotScratchpad, { SignalSamples } from './plot-scratchpad';
+import PlotScratchpad, {
+  SignalSamples,
+  type PlotScratchpadHandle,
+} from './plot-scratchpad';
 import WorkflowProperties from './workflow-properties';
 import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
 import {
@@ -197,6 +200,7 @@ export default function WorkflowWorkbench() {
   const [catalogKind, setCatalogKind] = useState('all'),
     [catalogPage, setCatalogPage] = useState(0);
   const file = useRef<HTMLInputElement>(null);
+  const plots = useRef<PlotScratchpadHandle>(null);
   const [dragged, setDragged] = useState<WorkflowTarget | null>(null);
   const [detailPanel, setDetailPanel] = useState<
     'inputs' | 'used-by' | 'checked' | 'samples'
@@ -813,6 +817,7 @@ export default function WorkflowWorkbench() {
               busy={engine.busy}
               onAction={manageSelection}
               onInspect={(target, action) => toolbarAction(action, target)}
+              onCreatePlot={(target) => plots.current?.createPlot(target)}
               contributingOutputs={lineageRoot ? lineage.outputIds : undefined}
               onSelect={(next) => {
                 select(next);
@@ -961,6 +966,7 @@ export default function WorkflowWorkbench() {
             ) : (
               <>
                 <PlotScratchpad
+                  ref={plots}
                   project={project}
                   graph={graph}
                   index={index}

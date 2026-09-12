@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ChartNoAxesCombined,
   ChevronDown,
   ChevronRight,
   CornerDownRight,
@@ -29,7 +30,11 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import type { WorkflowManagementAction } from './workflow-management';
-import { startWorkflowDrag, targetSignals } from '@/lib/workflow-drag';
+import {
+  startWorkflowDrag,
+  targetPlotOutputs,
+  targetSignals,
+} from '@/lib/workflow-drag';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
 type OutputView = {
@@ -51,6 +56,7 @@ export default function WorkflowHistory({
   contributingOutputs,
   onDragSelection,
   onInspect,
+  onCreatePlot,
 }: {
   steps: WorkflowStep[];
   index: WorkflowIndex;
@@ -66,6 +72,7 @@ export default function WorkflowHistory({
     target: WorkflowSelection,
     action: 'samples' | 'inputs' | 'export' | 'use-viewed',
   ) => void;
+  onCreatePlot?: (target: WorkflowSelection) => void;
   contributingOutputs?: ReadonlySet<string>;
   onDragSelection?: (selection: WorkflowSelection | null) => void;
 }) {
@@ -501,6 +508,16 @@ export default function WorkflowHistory({
               <ContextMenu key={row.key}>
                 <ContextMenuTrigger render={item} />
                 <ContextMenuContent aria-label={`Actions for ${row.label}`}>
+                  {onCreatePlot && (
+                    <ContextMenuItem
+                      disabled={
+                        busy || !targetPlotOutputs(index, target).length
+                      }
+                      onClick={() => onCreatePlot(target)}
+                    >
+                      <ChartNoAxesCombined /> Create plot
+                    </ContextMenuItem>
+                  )}
                   {onInspect && (
                     <>
                       <ContextMenuItem
