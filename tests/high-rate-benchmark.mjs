@@ -18,6 +18,7 @@ import { cpus, release, tmpdir, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Optional diagnostic changes only the worker response served by this harness.
@@ -70,6 +71,11 @@ const repeats = Number(process.env.BENCH_REPEATS ?? 2);
 assert.ok(Number.isInteger(repeats) && repeats >= 1 && repeats <= 5);
 const report = {
   variant,
+  workerSha256: createHash('sha256').update(workerSource).digest('hex'),
+  uncommittedChanges: !!execFileSync('git', ['status', '--porcelain'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim(),
   date: new Date().toISOString(),
   revision: execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
@@ -280,6 +286,11 @@ async function benchmark(config) {
       plotsValid(r, 1, config.rows),
     );
     await timed(
+      'smooth-zoom',
+      { type: 'view', ids: [smoothId], range: [0.123, 0.133] },
+      (r) => plotsValid(r, 1, 1001),
+    );
+    await timed(
       'mean-all-channels',
       { type: 'calculate-values', inputIds: ids, operation: 'sample-average' },
       (r) => {
@@ -316,23 +327,33 @@ async function benchmark(config) {
       /over 10,000 signals|More than 1,000 segments/,
     );
     const cancelId = serial + 1;
-    const cancelled = send({ type: 'view', ids, range: [0.123, 0.133] }).then(
+    const cancelled = send({
+      type: 'view',
+      ids: [scaleId],
+      range: [0.123, 0.133],
+    }).then(
       () => 'completed',
       (error) => {
         check(/cancelled/i.test(error.message), error.message);
         return 'cancelled';
       },
     );
+    const queued = send({ type: 'view', ids: [id], range: [0, 0.01] });
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 1));
     const cancelStart = performance.now();
     worker.postMessage({ type: 'cancel', requestIds: [cancelId] });
     const outcome = await cancelled;
+    if (config.rows >= 1000000)
+      check(
+        outcome === 'cancelled',
+        'Long derived evaluation ignored cancellation',
+      );
     timings.push({
       name: 'cancel-ack',
       ms: performance.now() - cancelStart,
       outcome,
     });
-    await send({ type: 'view', ids: [id], range: [0, 0.01] });
+    plotsValid(await queued, 1, 1001);
     return {
       timings,
       plotPointCounts: first.plots.map((p) => p.points.length),

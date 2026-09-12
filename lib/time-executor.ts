@@ -2,6 +2,7 @@ import type { Point, SeriesChunk, SignalNode } from './signal-types';
 import type { SignalGraph } from './signal-graph';
 import { arithmeticValue } from './signal-arithmetic';
 import { COMPARISON_MATH } from './time-types';
+import { yieldEngine } from './engine-yield';
 
 export type SignalInstruction =
   | { kind: 'input'; index: number }
@@ -208,7 +209,7 @@ export async function* executeTime(
       if (output.length === 16384) {
         yield { kind: 'output', chunk: arrays(output) };
         output = [];
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await yieldEngine();
       }
     }
   }

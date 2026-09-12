@@ -4,6 +4,18 @@ import { timeNodes, workspaceTimeScope } from './time-model';
 import { TIME_OPERATIONS, timeInputs } from './time-types';
 import type { TimeSettings } from './time-types';
 import { executeSignal } from './signal-executor';
+import { yieldEngine } from './engine-yield';
+import { chunkWindow } from './signal-range';
+import {
+  finishIndex,
+  groupBlocks,
+  indexBytes,
+  indexLeaves,
+  indexSlices,
+  usableIndex,
+  PLOT_LEAF_SIZE,
+} from './plot-index';
+import type { PlotBlock, PlotIndex } from './plot-index';
 import { FUNCTIONS } from './signal-functions';
 import {
   ARITHMETIC_SYMBOLS,
@@ -68,6 +80,9 @@ import type {
 } from './signal-types';
 
 const CHUNK_SIZE = 16384;
+const INDEX_BUDGET = 8 * 1024 * 1024;
+const indexKey = (channel: number) => `plot-index-v1:${channel}`;
+const leavesKey = (channel: number) => `plot-leaves-v1:${channel}`;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
 const uid = () => crypto.randomUUID();
@@ -139,6 +154,11 @@ export class SignalEngine {
   private cache = new Map<string, Plot>();
   private columnCache = new Map<string, Float64Array>();
   private cacheBytes = 0;
+  private indexCache = new Map<
+    string,
+    { value: PlotIndex | PlotBlock[]; bytes: number }
+  >();
+  private indexCacheBytes = 0;
   private revision = 0;
   private undoStack: Project[] = [];
   private redoStack: Project[] = [];
@@ -154,6 +174,8 @@ export class SignalEngine {
     this.extremaTimes.clear();
     this.columnCache.clear();
     this.cacheBytes = 0;
+    this.indexCache.clear();
+    this.indexCacheBytes = 0;
     this.segmentPreviewCache = undefined;
     this.indexedProject = undefined;
     this.indexedGraph = undefined;
@@ -554,13 +576,62 @@ export class SignalEngine {
   }
   private async writeChunk(sourceId: string, index: number, chunk: Chunk) {
     this.check();
+    const leaves = chunk.values.map((values) =>
+      indexLeaves({ time: chunk.time, values }),
+    );
     const tx = this.db.transaction('chunks', 'readwrite');
     const done = complete(tx);
     tx.objectStore('chunks').add(chunk.time, [sourceId, index, 'time']);
     chunk.values.forEach((column, c) =>
       tx.objectStore('chunks').add(column, [sourceId, index, c]),
     );
+    leaves.forEach((blocks, c) =>
+      tx.objectStore('chunks').add(blocks, [sourceId, index, leavesKey(c)]),
+    );
     await done;
+    return leaves.map(groupBlocks);
+  }
+  private async readIndex<T extends PlotIndex | PlotBlock[]>(
+    key: IDBValidKey,
+  ): Promise<T | undefined> {
+    const cacheKey = JSON.stringify(key);
+    const cached = this.indexCache.get(cacheKey);
+    if (cached) {
+      this.indexCache.delete(cacheKey);
+      this.indexCache.set(cacheKey, cached);
+      return cached.value as T;
+    }
+    const value = (await result(
+      this.db.transaction('chunks').objectStore('chunks').get(key),
+    )) as T | undefined;
+    if (!value) return;
+    const bytes = indexBytes(value);
+    if (bytes <= INDEX_BUDGET) {
+      while (
+        this.indexCacheBytes + bytes > INDEX_BUDGET &&
+        this.indexCache.size
+      ) {
+        const first = this.indexCache.keys().next().value!;
+        this.indexCacheBytes -= this.indexCache.get(first)!.bytes;
+        this.indexCache.delete(first);
+      }
+      this.indexCache.set(cacheKey, { value, bytes });
+      this.indexCacheBytes += bytes;
+    }
+    return value;
+  }
+  private async writeIndex(key: IDBValidKey, value: PlotIndex | PlotBlock[]) {
+    this.check();
+    const tx = this.db.transaction('chunks', 'readwrite'),
+      done = complete(tx);
+    tx.objectStore('chunks').put(value, key);
+    await done;
+    const cacheKey = JSON.stringify(key);
+    const cached = this.indexCache.get(cacheKey);
+    if (cached) {
+      this.indexCacheBytes -= cached.bytes;
+      this.indexCache.delete(cacheKey);
+    }
   }
   private async column(
     sourceId: string,
@@ -668,13 +739,22 @@ export class SignalEngine {
     let start = 0;
     let end = -Infinity;
     const chunkRanges: [number, number][] = [];
+    let overview: PlotBlock[][] | undefined = [];
     const flush = async () => {
       if (!times.length) return;
       chunkRanges.push([times[0], times.at(-1)!]);
-      await this.writeChunk(id, chunks++, {
+      const groups = await this.writeChunk(id, chunks++, {
         time: Float64Array.from(times),
         values: columns.map((c) => Float64Array.from(c)),
       });
+      if (overview) {
+        groups.forEach((blocks, c) => (overview![c] ??= []).push(...blocks));
+        if (
+          overview.reduce((sum, blocks) => sum + indexBytes(blocks), 0) >
+          INDEX_BUDGET / 2
+        )
+          overview = undefined;
+      }
       times = [];
       columns = headers.slice(1).map(() => []);
     };
@@ -734,6 +814,12 @@ export class SignalEngine {
       await flush();
       if (rows < 2)
         throw new Error('A recording needs at least two data rows.');
+      if (overview)
+        for (const [c, blocks] of overview.entries())
+          await this.writeIndex(
+            [id, 0, indexKey(c)],
+            finishIndex(blocks, rows),
+          );
       const nodes = headers.slice(1).map((header, channel) => {
         const match = header.match(/^(.*?)\s*\[([^\]]+)\]$/);
         return this.node(
@@ -1511,17 +1597,12 @@ export class SignalEngine {
     const source = this.project.sources.find(
       (item) => item.id === node.sourceId,
     )!;
-    for (let i = 0; i < source.chunks; i++) {
+    const [first, end] = chunkWindow(source.chunkRanges, sourceRange);
+    for (let i = first; i < end; i++) {
       this.check();
-      const bounds = source.chunkRanges[i];
-      if (
-        sourceRange &&
-        (bounds[1] < sourceRange[0] || bounds[0] > sourceRange[1])
-      )
-        continue;
       const time = await this.column(source.id, i, 'time');
       const values = await this.column(source.id, i, node.channel!);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await yieldEngine();
       this.check();
       yield { time: time.slice(), values: values.slice() };
     }
@@ -2286,6 +2367,116 @@ export class SignalEngine {
     });
     return segments.filter((segment) => ids.includes(segment.id));
   }
+  private async neighbor(
+    id: string,
+    time: number,
+    side: 'before' | 'after',
+  ): Promise<Point | undefined> {
+    let previous: Point | undefined;
+    for await (const chunk of this.raw(id, [time, time]))
+      for (let i = 0; i < chunk.time.length; i++) {
+        const t = chunk.time[i];
+        if (side === 'before') {
+          if (t >= time) return previous;
+          previous = [t, chunk.values[i]];
+        } else if (t > time) return [t, chunk.values[i]];
+      }
+    return previous;
+  }
+  private async indexedRawPlot(
+    node: SignalNode,
+    bounds: [number, number],
+    context: boolean,
+  ): Promise<Plot | undefined> {
+    const source = this.project.sources.find(
+      (item) => item.id === node.sourceId,
+    )!;
+    const window = chunkWindow(source.chunkRanges, bounds);
+    // Exact reads are cheaper at sample-level zoom and for small recordings.
+    if (source.rows < PLOT_LEAF_SIZE * 700 || window[1] - window[0] <= 4)
+      return;
+    try {
+      const index = await this.readIndex<PlotIndex>([
+        source.id,
+        0,
+        indexKey(node.channel!),
+      ]);
+      if (!usableIndex(index, source.rows)) return;
+      const root = index.levels.at(-1)![0];
+      if (
+        root.first[0] !== source.start ||
+        root.last[0] !== source.end ||
+        !Number.isFinite(root.total) ||
+        !Number.isFinite(root.integral) ||
+        (root.count &&
+          Math.max(Math.abs(root.min[1]), Math.abs(root.max[1])) > 1e150)
+      )
+        return;
+      const envelope = new Envelope(...bounds);
+      let current = -1;
+      let time: Float64Array = new Float64Array();
+      let values: Float64Array = new Float64Array();
+      let ticks = 0;
+      for await (const slice of indexSlices(
+        index,
+        bounds,
+        async (chunk) => {
+          const leaves = await this.readIndex<PlotBlock[]>([
+            source.id,
+            chunk,
+            leavesKey(node.channel!),
+          ]);
+          if (
+            !leaves ||
+            leaves.length !==
+              Math.ceil(
+                Math.min(CHUNK_SIZE, source.rows - chunk * CHUNK_SIZE) /
+                  PLOT_LEAF_SIZE,
+              )
+          )
+            throw new Error('Rebuild the incomplete plot index.');
+          return leaves;
+        },
+        () => this.check(),
+      )) {
+        if (++ticks % 128 === 0) {
+          await yieldEngine();
+          this.check();
+        }
+        if ('block' in slice) envelope.addBlock(slice.block);
+        else {
+          if (current !== slice.chunk) {
+            time = await this.column(source.id, slice.chunk, 'time');
+            values = await this.column(source.id, slice.chunk, node.channel!);
+            current = slice.chunk;
+          }
+          for (let i = slice.start; i < slice.end; i++)
+            envelope.add(time[i], values[i]);
+        }
+      }
+      const plot = { id: node.id, ...envelope.finish() };
+      if (context && bounds[0] > source.start) {
+        const before = await this.neighbor(node.id, bounds[0], 'before');
+        if (before) plot.points.unshift(before);
+      }
+      if (context && bounds[1] < source.end) {
+        const after = await this.neighbor(node.id, bounds[1], 'after');
+        if (after) plot.points.push(after);
+      }
+      this.check();
+      return plot;
+    } catch {
+      // Indexes are disposable. Incomplete/old caches must never break raw data.
+      this.check();
+      return undefined;
+    }
+  }
+  private rememberPlot(key: string, plot: Plot) {
+    if (this.cache.size >= 64)
+      this.cache.delete(this.cache.keys().next().value!);
+    this.cache.set(key, plot);
+    return plot;
+  }
   async plot(
     id: string,
     range?: [number, number],
@@ -2295,9 +2486,42 @@ export class SignalEngine {
     const key = JSON.stringify([id, bounds, context]);
     const cached = this.cache.get(key);
     if (cached) return cached;
+    const node = this.find(id);
+    if (node.operation === 'raw' && !node.timeRecipe) {
+      const indexed = await this.indexedRawPlot(node, bounds, context);
+      if (indexed) return this.rememberPlot(key, indexed);
+    }
     const envelope = new Envelope(...bounds);
     let before: Point | undefined, after: Point | undefined;
-    for await (const chunk of this.evaluate(id))
+    const source =
+      node.operation === 'raw'
+        ? this.project.sources.find((item) => item.id === node.sourceId)
+        : undefined;
+    // Old workspaces/restores acquire an optional index during a full plot pass.
+    let rebuilding: PlotBlock[] | undefined =
+      source &&
+      source.rows >= PLOT_LEAF_SIZE * 700 &&
+      bounds[0] === source.start &&
+      bounds[1] === source.end
+        ? []
+        : undefined;
+    let rebuiltChunks = 0;
+    for await (const chunk of this.evaluate(id, undefined, bounds)) {
+      if (rebuilding) {
+        try {
+          const leaves = indexLeaves(chunk);
+          rebuilding.push(...groupBlocks(leaves));
+          if (indexBytes(rebuilding) > INDEX_BUDGET / 2) rebuilding = undefined;
+          else
+            await this.writeIndex(
+              [source!.id, rebuiltChunks++, leavesKey(node.channel!)],
+              leaves,
+            );
+        } catch {
+          this.check();
+          rebuilding = undefined;
+        }
+      }
       for (let i = 0; i < chunk.time.length; i++) {
         const time = chunk.time[i],
           value = chunk.values[i];
@@ -2305,12 +2529,21 @@ export class SignalEngine {
         if (context && time > bounds[1] && !after) after = [time, value];
         envelope.add(time, value);
       }
+    }
+    if (rebuilding && rebuiltChunks === source!.chunks)
+      try {
+        await this.writeIndex(
+          [source!.id, 0, indexKey(node.channel!)],
+          finishIndex(rebuilding, source!.rows),
+        );
+      } catch {
+        this.check();
+      }
     const plot = { id, ...envelope.finish() };
     // Boundary neighbors keep line segments visible between sample instants.
     // They never enter the viewport summary, and a missing neighbor breaks the line.
     if (before) plot.points.unshift(before);
     if (after) plot.points.push(after);
-    const node = this.find(id);
     if (node.operation === 'bsfc') {
       // Integrate only intervals valid in BOTH inputs to avoid bias from missing fuel samples.
       const powerInput = this.evaluate(node.parents[1]);
@@ -2348,10 +2581,7 @@ export class SignalEngine {
       plot.summary.weightedMean =
         energyTotal > 0 ? (fuelTotal * 1000) / energyTotal : NaN;
     }
-    if (this.cache.size >= 64)
-      this.cache.delete(this.cache.keys().next().value!);
-    this.cache.set(key, plot);
-    return plot;
+    return this.rememberPlot(key, plot);
   }
   async rows(
     id: string,

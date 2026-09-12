@@ -119,6 +119,18 @@ There are no server API routes or cloud signal uploads.
   defines four worked examples; the engine persists their recipe IDs for reuse.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
+- `lib/signal-range.ts`: binary-search chunk selection, with boundary neighbors,
+  and range propagation through stateless unary/crop/time-alignment paths.
+  Stateful filters, reductions, resampling and binary grids must retain complete
+  input history unless an equivalent state/checkpoint strategy is implemented.
+- `lib/plot-index.ts`: versioned, rebuildable raw-signal min/max hierarchies.
+  Index keys share source ownership with raw chunks but are excluded from backups.
+  Publish roots only after their leaves; index recovery never changes workflow
+  history. Summaries cover original samples; partial boundary blocks use exact
+  data. Drawing candidates are not measurement or export samples. The index read
+  cache is capped at 8 MiB; oversized index builds fall back to streaming reads.
+- `lib/engine-yield.ts`: cooperative worker yielding with `scheduler.yield()` and
+  a timer fallback. Preserve actual task boundaries so cancellation can arrive.
 - `components/segmentation-editor.tsx`: trigger/range/window editor and saved
   segmentation provenance. `components/time-range-picker.tsx` draws multiple
   intervals on a bounded signal plot, with movement, edge resizing and exact
@@ -230,9 +242,11 @@ to address those issues during repository setup.
 
 The tests require Node >=22.15 for `registerHooks`; Node 24 is recommended.
 Do not claim multi-gigabyte throughput from architectural design alone. Raw
-columns use 16,384-sample chunks and a 16 MiB read cache, but the first plot still
-scans its input, and browser storage quota applies. There is no on-disk envelope
-pyramid, plugin runtime, or native binary measurement-file importer yet.
+columns use 16,384-sample chunks and a 16 MiB read cache. New raw imports have
+persistent plot indexes; older/restored recordings build them on a full plot.
+Stateful derived evaluation still scans its required history, and browser storage
+quota applies. There is no plugin runtime or native binary measurement-file
+importer yet. See `docs/high-rate-performance.md` and `tests/high-rate.test.ts`.
 
 ## Development conventions
 

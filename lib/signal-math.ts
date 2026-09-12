@@ -1,4 +1,6 @@
 import type { Point, Summary } from './signal-types';
+import { blockPoints } from './plot-index';
+import type { PlotBlock } from './plot-index';
 
 // Stateful RFC 4180 parser; state survives arbitrary character boundaries.
 export class CsvParser {
@@ -123,6 +125,42 @@ export class Envelope {
     if (!Number.isFinite(s.start)) s.start = t;
     s.end = t;
     const point: Point = [t, value];
+    this.addPoint(point);
+    if (Number.isFinite(value)) {
+      s.count++;
+      this.total += value;
+      s.min = Math.min(s.min, value);
+      s.max = Math.max(s.max, value);
+      if (this.previous && Number.isFinite(this.previous[1]))
+        s.integral += ((value + this.previous[1]) / 2) * (t - this.previous[0]);
+    }
+    this.previous = point;
+  }
+  /** Summary covers original samples; candidate points only drive the drawing. */
+  addBlock(block: PlotBlock) {
+    const s = this.summary;
+    if (!Number.isFinite(s.start)) s.start = block.first[0];
+    s.end = block.last[0];
+    for (const point of blockPoints(block)) this.addPoint(point);
+    s.count += block.count;
+    this.total += block.total;
+    if (block.count) {
+      s.min = Math.min(s.min, block.min[1]);
+      s.max = Math.max(s.max, block.max[1]);
+    }
+    if (
+      this.previous &&
+      Number.isFinite(this.previous[1]) &&
+      Number.isFinite(block.first[1])
+    )
+      s.integral +=
+        ((this.previous[1] + block.first[1]) / 2) *
+        (block.first[0] - this.previous[0]);
+    s.integral += block.integral;
+    this.previous = block.last;
+  }
+  private addPoint(point: Point) {
+    const [t, value] = point;
     const index = Math.min(
       this.width - 1,
       Math.max(
@@ -148,15 +186,6 @@ export class Envelope {
         if (!Number.isFinite(b.max[1]) || value > b.max[1]) b.max = point;
       }
     }
-    if (Number.isFinite(value)) {
-      s.count++;
-      this.total += value;
-      s.min = Math.min(s.min, value);
-      s.max = Math.max(s.max, value);
-      if (this.previous && Number.isFinite(this.previous[1]))
-        s.integral += ((value + this.previous[1]) / 2) * (t - this.previous[0]);
-    }
-    this.previous = point;
   }
   finish(): { points: Point[]; summary: Summary } {
     const points = this.buckets.flatMap((b) =>

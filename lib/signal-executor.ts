@@ -5,6 +5,8 @@ import {
   isBinaryOperation,
 } from './signal-arithmetic';
 import { executeTime } from './time-executor';
+import { yieldEngine } from './engine-yield';
+import { parentWindow } from './signal-range';
 import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
 import type { SignalGraph } from './signal-graph';
 import type { Point, SeriesChunk, SignalNode } from './signal-types';
@@ -14,7 +16,7 @@ type Instruction =
   | { kind: 'output'; chunk: SeriesChunk };
 type Process = AsyncGenerator<Instruction, void, SeriesChunk | undefined>;
 const SIZE = 16384;
-const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const pause = yieldEngine;
 const arrays = (points: Point[]): SeriesChunk => ({
   time: Float64Array.from(points.map((point) => point[0])),
   values: Float64Array.from(points.map((point) => point[1])),
@@ -231,12 +233,14 @@ export async function* executeSignal(
   }
   type Frame = {
     node: SignalNode;
+    range?: [number, number];
     process: Process;
     inputs: Map<number, Frame>;
     response?: SeriesChunk;
   };
   const frame = (node: SignalNode, inputRange?: [number, number]): Frame => ({
     node,
+    range: inputRange,
     process: process(node, inputRange),
     inputs: new Map(),
   });
@@ -260,13 +264,9 @@ export async function* executeSignal(
         const index = result.value.index;
         let child = current.inputs.get(index);
         if (!child) {
-          // Only a crop directly above raw storage may prune reads. Stateful
-          // predecessors must see their full history before a later crop.
           child = frame(
             graph.find(current.node.parents[index]),
-            current.node.operation === 'crop'
-              ? [current.node.parameters.start, current.node.parameters.end]
-              : undefined,
+            parentWindow(current.node, graph, current.range),
           );
           current.inputs.set(index, child);
         }

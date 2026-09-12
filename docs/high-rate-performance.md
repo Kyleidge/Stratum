@@ -1,5 +1,11 @@
 # 100 kHz performance assessment
 
+The performance implementation is on `codex/high-rate-performance`. The original
+assessment below is retained as the baseline; see
+[the implementation results](high-rate-implementation.md) for the changes and
+updated measurements. UI components and the existing rate/export limits remain
+unchanged.
+
 Measured 12 September 2026 against application revision
 `79a46655158798cc0fd398f2bc5636b17ffc2c09`.
 
@@ -177,6 +183,11 @@ pnpm exec electron tests/high-rate-benchmark.mjs
 ```
 
 To reproduce the isolated scheduling experiment:
+
+This historical diagnostic targets the worker at revision `c3f49bb`, before the
+shared yielding helper was implemented. Its bundle assertion intentionally fails
+on newer code rather than silently testing the wrong replacement. The default
+benchmark command above works on the implementation branch.
 
 ```powershell
 $env:BENCH_CASES = '10x1,60x4'

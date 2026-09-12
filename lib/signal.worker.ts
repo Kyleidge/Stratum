@@ -166,7 +166,10 @@ globalThis.onmessage = (
               measurements.push(
                 await measurePlot(
                   item.id,
-                  engine.evaluate(item.id),
+                  engine.evaluate(item.id, undefined, [
+                    Math.min(item.a, item.b),
+                    Math.max(item.a, item.b),
+                  ]),
                   item.a,
                   item.b,
                   () => {
