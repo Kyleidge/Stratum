@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
 import type {
   PlotAnnotation,
@@ -38,6 +45,15 @@ type Trace = {
   width?: number;
   axisId?: string;
 };
+export type ChartGeometry = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+  x: (time: number) => number;
+};
 export type ChartInteraction = {
   mode: 'pan' | 'zoom' | 'cursor';
   axes?: PlotAxes;
@@ -68,6 +84,7 @@ export default function SignalChart({
   includeZero = true,
   fillHeight = false,
   interaction,
+  overlay,
 }: {
   traces: Trace[];
   segments: Segment[];
@@ -82,6 +99,7 @@ export default function SignalChart({
   /** Match a CSS-sized viewport without stretching labels or pointer geometry. */
   fillHeight?: boolean;
   interaction?: ChartInteraction;
+  overlay?: (geometry: ChartGeometry) => ReactNode;
 }) {
   const clipId = useId();
   const [cursor, setCursor] = useState<number | null>(null);
@@ -391,7 +409,7 @@ export default function SignalChart({
       {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- Role is application for interactive plots and img for retained static callers. */}
       <svg
         ref={svg}
-        role={interaction ? 'application' : 'img'}
+        role={interaction ? 'application' : overlay ? 'group' : 'img'}
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
         data-fill-height={fillHeight || undefined}
         style={{
@@ -752,35 +770,41 @@ export default function SignalChart({
             ),
           )}
         </g>
-        {currentTime !== null && !gesture && !interaction?.cursors && (
-          <g pointerEvents="none" data-plot-transient>
-            <line
-              x1={x(currentTime)}
-              x2={x(currentTime)}
-              y1="8"
-              y2={bottom + 3}
-              stroke="#d6dfe2"
-              opacity=".45"
-              strokeDasharray="3 3"
-            />
-            <rect
-              x={Math.min(right - 132, Math.max(left, x(currentTime) + 8))}
-              y="10"
-              width="128"
-              height="24"
-              rx="3"
-              fill="#2b343b"
-            />
-            <text
-              x={Math.min(right - 124, Math.max(left + 8, x(currentTime) + 16))}
-              y="26"
-              className="cursor-value"
-            >
-              {formatValue(currentTime, interaction ? 5 : 1)} s
-              {!interaction && ` · ${formatValue(nearest?.[1] ?? NaN)}`}
-            </text>
-          </g>
-        )}
+        {currentTime !== null &&
+          !gesture &&
+          !interaction?.cursors &&
+          !overlay && (
+            <g pointerEvents="none" data-plot-transient>
+              <line
+                x1={x(currentTime)}
+                x2={x(currentTime)}
+                y1="8"
+                y2={bottom + 3}
+                stroke="#d6dfe2"
+                opacity=".45"
+                strokeDasharray="3 3"
+              />
+              <rect
+                x={Math.min(right - 132, Math.max(left, x(currentTime) + 8))}
+                y="10"
+                width="128"
+                height="24"
+                rx="3"
+                fill="#2b343b"
+              />
+              <text
+                x={Math.min(
+                  right - 124,
+                  Math.max(left + 8, x(currentTime) + 16),
+                )}
+                y="26"
+                className="cursor-value"
+              >
+                {formatValue(currentTime, interaction ? 5 : 1)} s
+                {!interaction && ` · ${formatValue(nearest?.[1] ?? NaN)}`}
+              </text>
+            </g>
+          )}
         {gesture?.mode === 'zoom' && (
           <rect
             x={Math.min(x(gesture.start), x(gesture.end))}
@@ -915,6 +939,15 @@ export default function SignalChart({
               </g>
             );
           })}
+        {overlay?.({
+          left,
+          right,
+          top: 15,
+          bottom,
+          width: chartWidth,
+          height: chartHeight,
+          x,
+        })}
         <text
           data-time-axis
           className={interaction ? 'plot-time-axis plot-axis-title' : undefined}

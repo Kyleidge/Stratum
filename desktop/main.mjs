@@ -45,7 +45,7 @@ if (smoke)
       process.stderr.write('Desktop startup or integration test timed out.\n');
       app.exit(1);
     },
-    uiSmoke ? 120000 : 60000,
+    uiSmoke ? 180000 : 60000,
   );
 
 async function createWindow() {
@@ -230,6 +230,73 @@ async function createWindow() {
           await new Promise((resolve) => setTimeout(resolve, 300));
           writeFileSync(
             resolve(output, 'workflow-desktop-derived.png'),
+            (
+              await window.webContents.capturePage(undefined, {
+                stayHidden: true,
+              })
+            ).toPNG(),
+          );
+          window.setContentSize(1540, 940);
+          await window.webContents.executeJavaScript(`
+            [...document.querySelectorAll('[role="treeitem"][data-kind="output"]')]
+              .find(row => row.title === 'Motor speed')?.click()
+          `);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          await window.webContents.executeJavaScript(`
+            [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Segment' && !button.disabled).click()
+          `);
+          for (let i = 0; i < 100; i++) {
+            if (
+              await window.webContents.executeJavaScript(
+                `!!document.querySelector('.range-selection-surface')`,
+              )
+            )
+              break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          const points = await window.webContents.executeJavaScript(`
+            (() => {
+              const svg = document.querySelector('.range-plot-canvas .signal-chart svg');
+              const box = svg.getBoundingClientRect();
+              const left = Number(svg.dataset.plotLeft), right = Number(svg.dataset.plotRight);
+              return [0.12, 0.32, 0.53, 0.75].map(fraction => ({
+                x: Math.round(box.left + (left + fraction * (right - left)) / svg.viewBox.baseVal.width * box.width),
+                y: Math.round(box.top + box.height * 0.5)
+              }));
+            })()
+          `);
+          for (let i = 0; i < points.length; i += 2) {
+            window.webContents.sendInputEvent({
+              type: 'mouseDown',
+              button: 'left',
+              clickCount: 1,
+              ...points[i],
+            });
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            window.webContents.sendInputEvent({
+              type: 'mouseMove',
+              ...points[i + 1],
+            });
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            window.webContents.sendInputEvent({
+              type: 'mouseUp',
+              button: 'left',
+              clickCount: 1,
+              ...points[i + 1],
+            });
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          }
+          assert.equal(
+            await window.webContents.executeJavaScript(
+              `document.querySelector('[aria-label="Time range pairs"]').value.split('\\n').filter(Boolean).length`,
+            ),
+            2,
+            'Native pointer capture must create two ranges',
+          );
+          await window.webContents.capturePage(undefined, { stayHidden: true });
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          writeFileSync(
+            resolve(output, 'workflow-time-ranges.png'),
             (
               await window.webContents.capturePage(undefined, {
                 stayHidden: true,

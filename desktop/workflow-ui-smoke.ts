@@ -6,6 +6,7 @@ import WorkflowList from '../components/workflow-list';
 import type { EngineResponse, Project } from '../lib/signal-types';
 import { PLOT_STORAGE_KEY, readPlotSheets } from '../lib/plot-scratchpad';
 import { plotUiSmoke } from './plot-ui-smoke';
+import { timeRangeUiSmoke } from './time-range-ui-smoke';
 
 export async function workflowUiSmoke() {
   const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
@@ -110,6 +111,7 @@ export async function workflowUiSmoke() {
   async function segment(ranges: string) {
     await click('Segment');
     const modal = await dialog();
+    let pickedOnPlot = false;
     if (!checkedSegmentMethods) {
       assert(
         modal.querySelectorAll('[role="radio"]').length === 3,
@@ -193,11 +195,24 @@ export async function workflowUiSmoke() {
         'Switching methods lost manual ranges.',
       );
       checkedSegmentMethods = true;
+      await timeRangeUiSmoke(modal, ranges);
+      pickedOnPlot = true;
     }
     const textarea = modal.querySelector<HTMLTextAreaElement>('textarea');
     if (!textarea) throw new Error('Manual ranges were not the default.');
-    setValue(textarea, ranges);
+    if (!pickedOnPlot) setValue(textarea, ranges);
     await delay();
+    if (ranges.split('\n').length > 30) {
+      assert(
+        modal.querySelectorAll('.range-list tbody tr').length === 30,
+        'Exact range rows must stay paged for large batches.',
+      );
+      await click('Next ranges', modal);
+      assert(
+        modal.querySelector('[aria-label="Range 31 start"]'),
+        'The next range page must expose later members.',
+      );
+    }
     await click('Preview', modal);
     await until(
       () => modal.querySelector('.segment-preview strong') ?? undefined,

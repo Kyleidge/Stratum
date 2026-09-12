@@ -21,6 +21,12 @@ import {
   plotViewport,
 } from '../lib/plot-scratchpad';
 import { measurePlot } from '../lib/plot-measurement';
+import { SignalGraph } from '../lib/signal-graph';
+import {
+  dragTimeRange,
+  readTimeRanges,
+  segmentPlotDomain,
+} from '../lib/time-range-selection';
 import {
   groupPlotAxes,
   valueAxisSettings,
@@ -625,6 +631,86 @@ void test('CSV exports keep formula-like raw names as text and unavailable summa
     assert.ok(summary.includes('"\'=1+1"'));
     assert.ok(!summary.includes('NaN'));
     assert.ok(!summary.includes('Infinity'));
+  } finally {
+    engine.close();
+  }
+});
+
+void test('range gestures preserve duration at boundaries and reject malformed exact pairs', () => {
+  assert.deepEqual(dragTimeRange([0, 0], 'draw', 8, 2, [0, 10]), [2, 8]);
+  assert.deepEqual(dragTimeRange([0, 0], 'draw', 8, 15, [0, 10]), [8, 10]);
+  assert.deepEqual(dragTimeRange([2, 5], 'move', 3, -8, [0, 10]), [0, 3]);
+  assert.deepEqual(dragTimeRange([2, 5], 'move', 3, 20, [0, 10]), [7, 10]);
+  assert.deepEqual(dragTimeRange([2, 5], 'start', 2, 1, [0, 10]), [1, 5]);
+  assert.deepEqual(dragTimeRange([2, 5], 'end', 5, 9, [0, 10]), [2, 9]);
+  assert.ok(dragTimeRange([2, 5], 'start', 2, 9, [0, 10])[0] < 5);
+  assert.ok(dragTimeRange([2, 5], 'end', 5, -3, [0, 10])[1] > 2);
+  assert.deepEqual(readTimeRanges('1.123456789, 3\r\n2, 4\n1.123456789, 3'), [
+    [1.123456789, 3],
+    [2, 4],
+    [1.123456789, 3],
+  ]);
+  for (const text of [
+    '',
+    ', 1',
+    '0,',
+    '1, 1',
+    '3, 2',
+    '0, Infinity',
+    '0, 1, 2',
+  ])
+    assert.throws(() => readTimeRanges(text));
+  assert.throws(
+    () => readTimeRanges(Array.from({ length: 1001 }, () => '0, 1').join('\n')),
+    /1,000/,
+  );
+});
+
+void test('range picker plots use the segment clock for shifted nested signals and workspace outputs', async () => {
+  const { engine, source } = await fixture(
+    't,x [V]\n10,1\n11,2\n12,3\n13,4\n14,5',
+  );
+  try {
+    const [crop] = await engine.segment(
+      source.id,
+      { method: 'ranges', ranges: [[11, 14]], boundary: 'clip' },
+      [source.channels[0]],
+      true,
+      'signals',
+    );
+    const shifted = await engine.derive(crop.nodes[0], 'time-shift', 100);
+    let graph = new SignalGraph(engine.project);
+    const domain = segmentPlotDomain(graph, shifted.id);
+    assert.equal(domain.offset, 100);
+    assert.deepEqual(domain.range, [11, 14]);
+    const plot = await engine.plot(shifted.id, [
+      domain.range[0] + domain.offset,
+      domain.range[1] + domain.offset,
+    ]);
+    assert.deepEqual(
+      plot.points.map(([t]) => t - domain.offset),
+      [11, 12, 13, 14],
+    );
+    const [aligned] = await engine.applyTimeOperation({
+      kind: 'align',
+      reference: { id: 'range-test', name: 'Aligned time', kind: 'relative' },
+      target: 0,
+      groups: [{ inputIds: [shifted.id], anchor: { kind: 'start' } }],
+    });
+    graph = new SignalGraph(engine.project);
+    const workspace = segmentPlotDomain(graph, aligned.id);
+    assert.equal(workspace.offset, 0);
+    assert.deepEqual(workspace.range, [0, 3]);
+    assert.equal(workspace.label, 'Aligned time');
+    const [nested] = await engine.segment(
+      '',
+      { method: 'ranges', ranges: [[0, 1]], boundary: 'clip' },
+      [aligned.id],
+      true,
+      'signals',
+    );
+    assert.deepEqual([nested.start, nested.end], [0, 1]);
+    assert.equal((await samples(engine, nested.nodes[0]))[0][0], 0);
   } finally {
     engine.close();
   }

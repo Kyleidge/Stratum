@@ -68,6 +68,19 @@ selection, processing scope, totals and progress; signal details no longer occup
 space below the plot.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
+**Segment → Time ranges** shows an interactive plot of a chosen input signal.
+Drag repeatedly in **Draw ranges** to add independent intervals, including
+overlaps. **Adjust ranges** moves a shaded interval or resizes either edge;
+Escape cancels an unfinished gesture. The numbered range list provides exact
+start/end fields, duration and removal, with 30 rows per page. Arrow keys move
+the selected range (Shift for a larger step); Delete removes it. **Zoom to
+range**, pan and **Fit** change only the preview. Range pairs can also be pasted.
+New operations start with no ranges; Edit restores every saved range. The plot
+uses recording time for recording signals, reversing display offsets, and the
+current time reference for workspace outputs. Choosing a preview signal does
+not change the processing scope. Preview and Create retain the existing clip /
+discard policy, independent input processing and atomic operation history.
+
 Selection **Details** sits in a fixed-height, collapsible section below the
 history tree and the Signals & values index. It shows the selected item, units,
 time range and a direct link to its producing operation. **More details** opens

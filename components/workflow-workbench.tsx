@@ -1672,7 +1672,7 @@ export default function WorkflowWorkbench() {
       >
         <DialogContent
           key={editorVersion}
-          className="workflow-dialog"
+          className={`workflow-dialog${editor?.kind === 'segment' ? ' workflow-range-dialog' : ''}`}
           showCloseButton={!engine.busy}
         >
           <DialogTitle>
@@ -1724,6 +1724,7 @@ export default function WorkflowWorkbench() {
               {editor.kind === 'segment' ? (
                 <SegmentationEditor
                   workflowMode
+                  rangePlot={{ graph, request }}
                   applyLabel={
                     editor.editingStepId
                       ? 'Save changes and recalculate'

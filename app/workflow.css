@@ -1957,6 +1957,231 @@
   font-size: 12px;
   text-align: right;
 }
+.workflow-dialog.workflow-range-dialog {
+  width: min(1040px, calc(100vw - 24px));
+  max-width: 1040px !important;
+}
+.time-range-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: 12px;
+  min-width: 0;
+}
+.range-picker-chart,
+.range-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.range-picker-heading,
+.range-list-heading,
+.range-plot-toolbar,
+.range-zoom-tools,
+.range-plot-axis,
+.range-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.range-picker-heading > .region-field {
+  flex: 1;
+  min-width: 180px;
+  margin: 0;
+}
+.range-picker-count {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.range-plot {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--background);
+}
+.range-plot-toolbar {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.range-zoom-tools {
+  margin-left: auto;
+}
+.range-plot-toolbar button[aria-pressed='true'],
+.range-row-select[aria-pressed='true'] {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+}
+.workflow-segmentation-editor .range-plot-help {
+  padding: 6px 8px 0;
+}
+.range-plot-canvas {
+  min-width: 0;
+}
+.range-plot-canvas .signal-chart {
+  border: 0;
+}
+.range-plot-canvas svg {
+  touch-action: none;
+  user-select: none;
+}
+.range-plot-loading {
+  height: 260px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  color: var(--muted-foreground);
+}
+.range-plot-axis {
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.range-selection-surface {
+  outline: none;
+  cursor: crosshair;
+}
+.range-selection-surface:focus-visible > .range-draw-surface {
+  stroke: var(--primary);
+  stroke-dasharray: 3 3;
+}
+.range-selection-surface[aria-disabled='true'] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.range-selection-surface[data-mode='adjust'] {
+  cursor: default;
+}
+.range-selection-surface[data-mode='adjust'] .range-fill {
+  cursor: grab;
+}
+.range-selection-surface[data-mode='adjust'] .range-edge {
+  cursor: ew-resize;
+}
+.range-fill {
+  fill: var(--primary);
+  fill-opacity: 0.1;
+}
+.range-interval[data-selected='true'] .range-fill {
+  fill-opacity: 0.2;
+}
+.range-edge-line {
+  stroke: var(--primary);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.range-interval[data-selected='true'] .range-edge-line {
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+.range-grip {
+  fill: var(--primary);
+}
+.workflow-dialog .signal-chart svg .range-number {
+  fill: var(--primary);
+  font-weight: 600;
+}
+.range-readout-bg {
+  fill: var(--card);
+  stroke: var(--border);
+}
+.workflow-dialog .signal-chart svg .range-readout {
+  fill: var(--foreground);
+}
+.range-list-heading {
+  justify-content: space-between;
+}
+.range-list {
+  max-height: 285px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.range-list table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.range-list th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-weight: 500;
+  text-align: left;
+  z-index: 1;
+}
+.range-list th,
+.range-list td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.range-list th:first-child {
+  width: 44px;
+}
+.range-list th:last-child {
+  width: 32px;
+}
+.range-list th:nth-child(4) {
+  width: 80px;
+}
+.range-list tr[data-selected='true'] {
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+}
+.range-row-select {
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+}
+.range-list input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--background);
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.range-list input[aria-invalid='true'] {
+  border-color: var(--destructive);
+}
+.range-list input:focus-visible,
+.range-row-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.range-duration {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.range-pagination {
+  justify-content: flex-end;
+}
+.range-paste summary {
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.range-paste[open] summary {
+  margin-bottom: 8px;
+}
+@media (max-width: 780px) {
+  .time-range-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .range-list {
+    max-height: 160px;
+  }
+}
 .segment-trigger-grid,
 .segment-scope-grid {
   display: grid;

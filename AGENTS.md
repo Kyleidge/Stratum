@@ -119,8 +119,12 @@ There are no server API routes or cloud signal uploads.
   defines four worked examples; the engine persists their recipe IDs for reuse.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
-- `components/segmentation-editor.tsx`: trigger/range/window editor, read-only
-  interval preview, and saved segmentation provenance. Start and end triggers
+- `components/segmentation-editor.tsx`: trigger/range/window editor and saved
+  segmentation provenance. `components/time-range-picker.tsx` draws multiple
+  intervals on a bounded signal plot, with movement, edge resizing and exact
+  numeric fields. Plot coordinates must match the segmentation clock: undo local
+  display offsets, but keep workspace outputs on their current time axis.
+  Start and end triggers
   independently select raw/derived signals, edges, thresholds, and signed offsets.
 - `lib/signal-engine.ts`: append-only IndexedDB columns, CSV import, lazy derived
   evaluation, segmentation, and samples/summary exports. `signal-math.ts` holds numerical

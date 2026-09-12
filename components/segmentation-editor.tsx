@@ -10,6 +10,13 @@ import {
   BetweenHorizontalStart,
 } from 'lucide-react';
 import OperationCards from './operation-cards';
+import TimeRangePicker from './time-range-picker';
+import type { SignalGraph } from '@/lib/signal-graph';
+import {
+  readTimeRanges,
+  rangeFields,
+  validTimeRange,
+} from '@/lib/time-range-selection';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
@@ -27,6 +34,8 @@ import type {
   SegmentationOperation,
   SignalNode,
   Source,
+  EngineRequest,
+  EngineResponse,
 } from '@/lib/signal-types';
 import type { ExplorerEntry } from '@/lib/signal-explorer';
 
@@ -47,6 +56,10 @@ type Props = {
   workflowMode?: boolean;
   applyLabel?: string;
   defaultRange?: [number, number];
+  rangePlot?: {
+    graph: SignalGraph;
+    request: (message: EngineRequest) => Promise<EngineResponse>;
+  };
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -160,6 +173,7 @@ export default function SegmentationEditor({
   workflowMode = false,
   applyLabel,
   defaultRange,
+  rangePlot,
   onPreview,
   onCreate,
 }: Props) {
@@ -210,7 +224,9 @@ export default function SegmentationEditor({
   const [ranges, setRanges] = useState(
     saved?.method === 'ranges'
       ? saved.ranges.map((range) => range.join(', ')).join('\n')
-      : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
+      : rangePlot
+        ? ''
+        : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
   );
   const [windowStart, setWindowStart] = useState(
     String(savedWindows?.start ?? defaultRange?.[0] ?? source.start),
@@ -257,6 +273,12 @@ export default function SegmentationEditor({
     selectionKind,
   ]);
   const plan = preview?.key === key ? preview.plan : undefined;
+  const rangeRows = rangeFields(ranges);
+  const invalidRanges =
+    method === 'ranges' &&
+    (!rangeRows.length ||
+      rangeRows.length > 1000 ||
+      rangeRows.some((fields) => !validTimeRange(fields)));
   const signals = nodes
     .filter((node) => node.sourceId === source.id)
     .map((node) => ({
@@ -293,17 +315,7 @@ export default function SegmentationEditor({
     return {
       method,
       boundary,
-      ranges: ranges
-        .split('\n')
-        .filter((line) => line.trim())
-        .map((line) => {
-          const parts = line.split(',');
-          if (parts.length !== 2)
-            throw new Error(
-              'Enter one start, end pair per line. Times are in seconds.',
-            );
-          return [number(parts[0]), number(parts[1])];
-        }),
+      ranges: readTimeRanges(ranges),
     };
   }
   async function run(previewOnly: boolean) {
@@ -482,7 +494,7 @@ export default function SegmentationEditor({
               {methods.find((item) => item.value === method)!.label}
             </strong>
             <span className="segment-time-reference">
-              Recording time · seconds
+              {source.id === '' ? 'Workspace time' : 'Recording time'} · seconds
             </span>
           </div>
         )}
@@ -504,25 +516,41 @@ export default function SegmentationEditor({
             </p>
           </>
         )}
-        {method === 'ranges' && (
-          <>
-            <label className="field-label" htmlFor="segment-ranges">
-              {workflowMode
-                ? 'Start, end · one range per line'
-                : 'Start, end — seconds, one range per line'}
-            </label>
-            <Textarea
-              id="segment-ranges"
-              className="segment-ranges"
-              rows={4}
+        {method === 'ranges' &&
+          (rangePlot ? (
+            <TimeRangePicker
+              graph={rangePlot.graph}
+              request={rangePlot.request}
+              ids={
+                target === 'selection'
+                  ? selectedIds
+                  : target === 'file'
+                    ? source.channels
+                    : [target]
+              }
               value={ranges}
-              onChange={(event) => setRanges(event.target.value)}
+              onChange={setRanges}
+              busy={busy}
             />
-            <p className="input-hint">
-              Use recording time. Overlapping intervals are allowed.
-            </p>
-          </>
-        )}
+          ) : (
+            <>
+              <label className="field-label" htmlFor="segment-ranges">
+                {workflowMode
+                  ? 'Start, end · one range per line'
+                  : 'Start, end — seconds, one range per line'}
+              </label>
+              <Textarea
+                id="segment-ranges"
+                className="segment-ranges"
+                rows={4}
+                value={ranges}
+                onChange={(event) => setRanges(event.target.value)}
+              />
+              <p className="input-hint">
+                Use recording time. Overlapping intervals are allowed.
+              </p>
+            </>
+          ))}
         {method === 'windows' && (
           <>
             <div className="segment-field-pair">
@@ -657,6 +685,7 @@ export default function SegmentationEditor({
           className="secondary-button"
           type="button"
           onClick={() => void run(true)}
+          disabled={invalidRanges}
         >
           <Eye size={14} />
           Preview
@@ -665,6 +694,7 @@ export default function SegmentationEditor({
           className="primary-button"
           type="button"
           onClick={() => void run(false)}
+          disabled={invalidRanges}
         >
           <Scissors size={14} />
           {applyLabel ??
