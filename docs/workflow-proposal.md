@@ -92,8 +92,12 @@ earlier signal and starts a new branch. A binary operation has links to both
 inputs. Trigger-defined segments also expose the signals used for boundaries.
 
 The tree previews three outputs per operation, plus the selected output when it
-is elsewhere in a large batch. **View all outputs** opens a searchable, paged
-table with the complete membership. Only the visible history rows are mounted.
+is elsewhere in a large batch. **View all outputs** focuses the history sidebar
+on that operation and its complete output tree without changing the active view
+or processing inputs. Search and lineage filters still apply. **Back to history**
+(or Escape in the tree) restores the previous history scroll position, keyboard
+focus and collapsed rows. Only the visible history rows are mounted, including
+in the focused output tree.
 The **Signals & values** index provides a flat, searchable list of every output.
 **Compact history** collapses other output lists while keeping the selected
 output visible; **Show outputs** restores the previews across all steps.
@@ -178,7 +182,8 @@ desktop workspace is uploaded or replaced by validation.
 ### Inspection and delivery
 
 Individual outputs open **Plot & samples** or **Value & input**. Operation rows
-and **View all outputs** open **Step outputs** directly. The compact action bar
+open **Step outputs** directly; **View all outputs** opens the operation's full
+tree in the history sidebar with a return button. The compact action bar
 keeps checked input scope visible; long input lists and full lineage expand only
 when needed. Narrow layouts keep history behind a labeled toggle. Native charts
 adapt tick density to their width without distorting axis text. A named lineage

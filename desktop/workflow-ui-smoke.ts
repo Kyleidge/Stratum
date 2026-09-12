@@ -1187,6 +1187,80 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('9–16 of 40'),
       'Stacked comparison pages cannot be reached.',
     );
+    // Full membership stays in the sidebar and preserves the current inspection.
+    const historyTree = document.querySelector<HTMLElement>('[role="tree"]')!;
+    const allOutputs = () =>
+      historyTree.querySelector<HTMLElement>('[data-kind="more"]') ?? undefined;
+    const moreOutputs = await until(allOutputs, 'full output tree link');
+    assert(
+      moreOutputs.title === 'View all 40 outputs',
+      'The large operation must offer its complete membership.',
+    );
+    const previousScroll = historyTree.scrollTop;
+    const previousRows = historyTree.textContent;
+    const previousSelection = document.querySelector(
+      '.workflow-status-selection',
+    )?.textContent;
+    const previousPlot = plotTab()?.textContent;
+    const previousInputs = document.querySelector(
+      '.workflow-input-scope',
+    )?.textContent;
+    moreOutputs.click();
+    await delay();
+    assert(
+      historyTree.getAttribute('aria-label') === 'Operation outputs' &&
+        historyTree.querySelectorAll('[data-kind="step"]').length === 1 &&
+        !allOutputs(),
+      'View all must show only the operation and its full output tree.',
+    );
+    assert(
+      document.querySelector('.workflow-status-selection')?.textContent ===
+        previousSelection &&
+        plotTab()?.textContent === previousPlot &&
+        document.querySelector('.workflow-input-scope')?.textContent ===
+          previousInputs,
+      'Opening the output tree changed the inspection, plot or processing inputs.',
+    );
+    await click('Back to history');
+    assert(
+      historyTree.textContent === previousRows &&
+        Math.abs(historyTree.scrollTop - previousScroll) < 1 &&
+        document.activeElement === allOutputs(),
+      'Returning lost the history rows, scroll position or keyboard focus.',
+    );
+    allOutputs()!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await delay();
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
+    );
+    await until(
+      () => document.activeElement?.getAttribute('aria-posinset') === '40',
+      'last member in the full output tree',
+    );
+    assert(
+      document.activeElement?.getAttribute('aria-setsize') === '40' &&
+        historyTree.querySelectorAll('[data-kind="output"]').length < 40,
+      'The focused tree must expose every member while keeping mounted rows bounded.',
+    );
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await delay();
+    assert(
+      historyTree.getAttribute('aria-label') === 'Operation outputs' &&
+        document.activeElement?.getAttribute('aria-selected') === 'true',
+      'Selecting a late member must keep the focused output tree open.',
+    );
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await delay();
+    assert(
+      !button('Back to history') && document.activeElement === allOutputs(),
+      'Escape must return keyboard focus to the history link.',
+    );
     await closePlot();
     await outputsTab();
     await click('Calculate value');

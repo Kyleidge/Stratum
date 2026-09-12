@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronRight,
   CornerDownRight,
@@ -31,6 +32,12 @@ import type { WorkflowManagementAction } from './workflow-management';
 import { startWorkflowDrag, targetSignals } from '@/lib/workflow-drag';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
+type OutputView = {
+  stepId: string;
+  selectionKey: string;
+  previousScroll: number;
+  previousFocus: string;
+};
 const ROW_HEIGHT = 28;
 
 export default function WorkflowHistory({
@@ -63,13 +70,33 @@ export default function WorkflowHistory({
   onDragSelection?: (selection: WorkflowSelection | null) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [outputView, setOutputView] = useState<OutputView | null>(null);
+  const [outputsCollapsed, setOutputsCollapsed] = useState(false);
+  const focusedStepId = outputView?.stepId;
+  const selectedKey =
+    selection.kind === 'step' ? selection.id : `output:${selection.id}`;
   const selectedOwner =
     selection.kind === 'output' ? index.owner.get(selection.id)?.id : undefined;
+  // Following an input or revealing another operation leaves the focused tree.
+  if (
+    outputView &&
+    (outputView.selectionKey !== selectedKey ||
+      !steps.some((step) => step.id === outputView.stepId))
+  ) {
+    setOutputView(
+      steps.some((step) => step.id === outputView.stepId) &&
+        (selectedOwner ?? selection.id) === outputView.stepId
+        ? { ...outputView, selectionKey: selectedKey }
+        : null,
+    );
+  }
   const effectiveCollapsed = useMemo(() => {
-    const next = new Set(collapsed);
+    const next = focusedStepId
+      ? new Set(outputsCollapsed ? [focusedStepId] : [])
+      : new Set(collapsed);
     if (selectedOwner) next.delete(selectedOwner);
     return next;
-  }, [collapsed, selectedOwner]);
+  }, [collapsed, selectedOwner, focusedStepId, outputsCollapsed]);
   const rows = useMemo(
     () =>
       workflowRows(
@@ -79,8 +106,17 @@ export default function WorkflowHistory({
         query,
         selection.kind === 'output' ? selection.id : undefined,
         contributingOutputs,
+        focusedStepId,
       ),
-    [steps, index, effectiveCollapsed, query, selection, contributingOutputs],
+    [
+      steps,
+      index,
+      effectiveCollapsed,
+      query,
+      selection,
+      contributingOutputs,
+      focusedStepId,
+    ],
   );
   const container = useRef<HTMLDivElement>(null);
   const positions = useMemo(() => {
@@ -99,11 +135,14 @@ export default function WorkflowHistory({
     return result;
   }, [rows]);
   const pendingFocus = useRef<number | null>(null);
+  const pendingNavigation = useRef<{
+    scroll: number;
+    key: string;
+    fallback: string;
+  } | null>(null);
   const [scroll, setScroll] = useState(0);
   const [height, setHeight] = useState(600);
   const [focused, setFocused] = useState('');
-  const selectedKey =
-    selection.kind === 'step' ? selection.id : `output:${selection.id}`;
   const selectedRow = rows.findIndex((row) => row.key === selectedKey);
   const tabKey = rows.some((row) => row.key === focused)
     ? focused
@@ -127,8 +166,9 @@ export default function WorkflowHistory({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => {
-    if (selectedRow < 0 || !container.current) return;
+  useLayoutEffect(() => {
+    if (pendingNavigation.current || selectedRow < 0 || !container.current)
+      return;
     const element = container.current;
     const top = selectedRow * ROW_HEIGHT;
     if (
@@ -137,8 +177,52 @@ export default function WorkflowHistory({
     )
       element.scrollTop = Math.max(0, top - element.clientHeight / 3);
   }, [selectedRow, selectedKey]);
+  useLayoutEffect(() => {
+    const navigation = pendingNavigation.current;
+    if (navigation && container.current) {
+      pendingNavigation.current = null;
+      container.current.scrollTop = navigation.scroll;
+      const target = rows.findIndex((row) => row.key === navigation.key);
+      const position =
+        target >= 0
+          ? target
+          : rows.findIndex((row) => row.key === navigation.fallback);
+      container.current
+        .querySelector<HTMLElement>(`[data-row="${position}"]`)
+        ?.focus({ preventScroll: true });
+    }
+  }, [rows]);
+  function showOutputs(stepId: string) {
+    setOutputView({
+      stepId,
+      selectionKey: selectedKey,
+      previousScroll: container.current?.scrollTop ?? scroll,
+      previousFocus: `more:${stepId}`,
+    });
+    setOutputsCollapsed(false);
+    pendingFocus.current = null;
+    pendingNavigation.current = { scroll: 0, key: stepId, fallback: stepId };
+    setScroll(0);
+    setFocused(stepId);
+  }
+  function returnToHistory() {
+    if (!outputView) return;
+    pendingFocus.current = null;
+    pendingNavigation.current = {
+      scroll: outputView.previousScroll,
+      key: outputView.previousFocus,
+      fallback: outputView.stepId,
+    };
+    setScroll(outputView.previousScroll);
+    setFocused(outputView.previousFocus);
+    setOutputView(null);
+  }
   function setExpanded(id: string, expanded: boolean) {
     if (!expanded && selectedOwner === id) onSelect({ kind: 'step', id });
+    if (focusedStepId) {
+      setOutputsCollapsed(!expanded);
+      return;
+    }
     setCollapsed((old) => {
       const next = new Set(old);
       if (expanded) next.delete(id);
@@ -173,18 +257,40 @@ export default function WorkflowHistory({
   return (
     <div className="workflow-history-pane">
       <div className="workflow-tree-controls">
-        <button
-          onClick={() => setCollapsed(new Set(steps.map((step) => step.id)))}
-        >
-          Compact history
-        </button>
-        <button onClick={() => setCollapsed(new Set())}>Show outputs</button>
+        {focusedStepId ? (
+          <button className="workflow-tree-back" onClick={returnToHistory}>
+            <ArrowLeft size={14} /> Back to history
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={() =>
+                setCollapsed(new Set(steps.map((step) => step.id)))
+              }
+            >
+              Compact history
+            </button>
+            <button onClick={() => setCollapsed(new Set())}>
+              Show outputs
+            </button>
+          </>
+        )}
       </div>
       <div
         className="workflow-tree"
         ref={container}
         role="tree"
-        aria-label="Chronological operation history"
+        aria-label={
+          focusedStepId
+            ? 'Operation outputs'
+            : 'Chronological operation history'
+        }
+        onKeyDown={(event) => {
+          if (focusedStepId && event.key === 'Escape') {
+            event.preventDefault();
+            returnToHistory();
+          }
+        }}
         tabIndex={visible.some((row) => row.key === tabKey) ? -1 : 0}
         onFocus={(event) => {
           if (event.target === container.current && rows.length)
@@ -238,7 +344,8 @@ export default function WorkflowHistory({
               row.kind === 'output'
                 ? { kind: 'output', id: row.outputId! }
                 : { kind: 'step', id: step.id };
-            const select = () => onSelect(target);
+            const select = () =>
+              row.kind === 'more' ? showOutputs(step.id) : onSelect(target);
             const action = (action: WorkflowManagementAction) =>
               onAction(target, action);
             const item = (

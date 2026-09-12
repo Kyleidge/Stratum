@@ -1727,5 +1727,38 @@ void test('5,000 deep operations stay two levels; large batches remain bounded a
     reveal.filter((row) => row.step.outputIds.length === 1000).length,
     6,
   );
+  const batch = steps.at(-1)!;
+  const focused = workflowRows(
+    steps,
+    index,
+    new Set(),
+    '',
+    undefined,
+    undefined,
+    batch.id,
+  );
+  assert.deepEqual(
+    focused.filter((row) => row.kind === 'output').map((row) => row.outputId),
+    batch.outputIds,
+  );
+  assert.equal(focused.length, 1001);
+  assert.ok(focused.every((row) => row.step.id === batch.id));
+  const contributing = new Set(batch.outputIds.slice(50, 56));
+  const focusedLineage = workflowRows(
+    steps,
+    index,
+    new Set(),
+    'Window 5',
+    undefined,
+    contributing,
+    batch.id,
+  );
+  assert.deepEqual(
+    focusedLineage
+      .filter((row) => row.kind === 'output')
+      .map((row) => row.outputId),
+    [...contributing],
+  );
+  assert.equal(focusedLineage.length, 7);
   assert.deepEqual(project.nodes, nodes);
 });

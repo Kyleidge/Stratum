@@ -9,7 +9,7 @@ export type WorkflowRow = {
   label: string;
 };
 
-/** A bounded two-level tree; depth of the dependency graph cannot bury outputs. */
+/** Two levels with bounded previews, or every member of one focused operation. */
 export function workflowRows(
   steps: WorkflowStep[],
   index: WorkflowIndex,
@@ -17,10 +17,12 @@ export function workflowRows(
   query = '',
   selectedOutput?: string,
   contributingOutputs?: ReadonlySet<string>,
+  focusedStepId?: string,
 ): WorkflowRow[] {
   const rows: WorkflowRow[] = [];
   const search = query.trim().toLowerCase();
   for (const step of steps) {
+    if (focusedStepId && step.id !== focusedStepId) continue;
     const label = stepName(step);
     const matchesStep =
       `#${String(step.sequence + 1).padStart(3, '0')} ${step.sequence + 1} ${label}`
@@ -40,7 +42,7 @@ export function workflowRows(
     if (search && !matchesStep && !outputs.length) continue;
     rows.push({ key: step.id, kind: 'step', step, label });
     if (!search && collapsed.has(step.id)) continue;
-    const shown = outputs.slice(0, 3);
+    const shown = focusedStepId ? [...outputs] : outputs.slice(0, 3);
     // A selected output is always revealed, including a member beyond the preview.
     if (
       selectedOutput &&

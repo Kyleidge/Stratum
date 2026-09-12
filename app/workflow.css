@@ -1054,6 +1054,11 @@
 .workflow-tree-controls button:hover {
   text-decoration: underline;
 }
+.workflow-tree-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .workflow-tree-row {
   width: 100%;
   display: flex;

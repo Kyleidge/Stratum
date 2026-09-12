@@ -804,6 +804,7 @@ export default function WorkflowWorkbench() {
           )}
           {sidebar === 'history' ? (
             <WorkflowHistory
+              key={JSON.stringify([sourceId, lineageRoot])}
               onDragSelection={setDragged}
               steps={shownSteps}
               index={index}
