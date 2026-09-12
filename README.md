@@ -5,7 +5,7 @@ Derive signals, segment them into reusable signal chunks, and calculate scalar
 values. Each operation keeps exact links to its inputs and outputs in chronological
 history. The included motor-test example demonstrates the complete signal workflow.
 
-New to Stratus? Read the two-page
+New to Stratus? Read the illustrated
 [beginner's guide (PDF)](output/pdf/stratus-beginners-guide.pdf), with an
 [editable text version](docs/beginners-guide.md).
 
