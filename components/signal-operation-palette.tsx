@@ -1,7 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import { Calculator, Clock3, SlidersHorizontal, Sigma } from 'lucide-react';
+import {
+  Calculator,
+  ChartNoAxesColumnDecreasing,
+  ChartNoAxesColumnIncreasing,
+  ChartScatter,
+  ChartSpline,
+  Clock3,
+  ListFilter,
+  MoveHorizontal,
+  SlidersHorizontal,
+  Sigma,
+  TimerReset,
+  Waves,
+  type LucideIcon,
+} from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import OperationCards from './operation-cards';
 import { FUNCTIONS } from '@/lib/signal-functions';
@@ -37,7 +51,7 @@ const groups = [
   { name: 'Calculus', icon: Sigma, operations: ['derivative', 'integral'] },
 ];
 
-export const OPERATION_FORMULAS: Record<string, string> = {
+export const OPERATION_FORMULAS: Partial<Record<string, string>> = {
   add: 'A + B',
   subtract: 'A − B',
   multiply: 'A × B',
@@ -45,16 +59,19 @@ export const OPERATION_FORMULAS: Record<string, string> = {
   scale: 'A × k',
   offset: 'A + k',
   absolute: '|A|',
-  smooth: 'mean(A)',
-  median: 'median(A)',
-  exponential: 'α',
-  'low-pass': 'low-pass',
-  'high-pass': 'high-pass',
-  'zero-time': 't → 0',
-  'time-shift': 't + Δt',
-  resample: 'Δt',
   derivative: 'dA / dt',
   integral: '∫ A dt',
+};
+
+const OPERATION_ICONS: Partial<Record<string, LucideIcon>> = {
+  smooth: Waves,
+  median: ListFilter,
+  exponential: ChartSpline,
+  'low-pass': ChartNoAxesColumnDecreasing,
+  'high-pass': ChartNoAxesColumnIncreasing,
+  'zero-time': TimerReset,
+  'time-shift': MoveHorizontal,
+  resample: ChartScatter,
 };
 
 export function SignalOperationPalette({
@@ -98,10 +115,15 @@ export function SignalOperationPalette({
               const spec = SIGNAL_FUNCTIONS.find(
                 (item) => item.operation === operation,
               )!;
+              const Icon = OPERATION_ICONS[operation];
               return {
                 value: operation,
                 label: spec.name,
-                visual: OPERATION_FORMULAS[operation],
+                visual: Icon ? (
+                  <Icon size={18} />
+                ) : (
+                  OPERATION_FORMULAS[operation]
+                ),
               };
             })}
           />

@@ -2095,6 +2095,15 @@
   grid-row: span 2;
   white-space: nowrap;
 }
+.signal-palette-grid[data-category='Filters'] .signal-operation-card,
+.signal-palette-grid[data-category='Time'] .signal-operation-card {
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 8px;
+}
+.signal-palette-grid[data-category='Calculus'] .signal-operation-card {
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 12px;
+}
 .signal-operation-settings {
   display: flex;
   flex-direction: column;
