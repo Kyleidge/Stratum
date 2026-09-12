@@ -2300,26 +2300,18 @@
   gap: 5px 10px;
 }
 
-/* Docked document and property panes. Small windows keep both in reading order. */
+/* Selection details stay below navigation; the document fills the remaining width. */
 .workflow-document {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 6px clamp(
-      220px,
-      var(--workflow-properties-width, 248px),
-      min(480px, 40%)
-    );
-}
-.workflow-document:not(:has(.workflow-properties)) {
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
 }
 .workflow-properties {
+  flex-shrink: 0;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--card);
   font-size: 12px;
 }
@@ -2334,16 +2326,79 @@
 .workflow-properties-heading strong {
   font-weight: 600;
 }
+.workflow-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 27px;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  text-align: left;
+}
+.workflow-details-toggle > svg {
+  flex-shrink: 0;
+}
+.workflow-details-toggle > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+.workflow-details-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.workflow-properties-summary {
+  height: clamp(160px, 25dvh, 196px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+.workflow-properties-summary > h2 {
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.workflow-properties-summary > dl {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.workflow-properties-summary .workflow-property-grid > div {
+  grid-template-columns: 70px minmax(0, 1fr);
+  padding: 2px 0;
+}
+.workflow-properties-summary dd,
+.workflow-properties-summary dd .workflow-property-link {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+.workflow-properties-summary > button {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
 .workflow-properties-content {
   padding: 8px;
 }
-.workflow-properties h2 {
-  font-size: 12px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  overflow-wrap: anywhere;
+.workflow-properties-dialog {
+  width: min(560px, calc(100vw - 32px));
 }
-.workflow-properties h3 {
+.workflow-properties-content h3 {
   display: flex;
   justify-content: space-between;
   margin: 12px -8px 4px;
@@ -2353,7 +2408,7 @@
   font-size: 11px;
   font-weight: 600;
 }
-.workflow-properties h3 span {
+.workflow-properties-content h3 span {
   color: var(--muted-foreground);
 }
 .workflow-property-grid {
@@ -2599,32 +2654,6 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
-@media (max-width: 1250px) {
-  .workflow-properties-resizer {
-    display: none;
-  }
-  .workflow-document {
-    display: block;
-    overflow: auto;
-  }
-  .workflow-main {
-    overflow: visible;
-  }
-  .workflow-properties {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-  .workflow-properties-content {
-    columns: 2;
-    column-gap: 24px;
-  }
-  .workflow-properties-content > * {
-    break-inside: avoid;
-  }
-  .workflow-properties-content h3 {
-    break-after: avoid;
-  }
-}
 @media (max-width: 780px) {
   .workflow-app {
     height: auto;
@@ -2636,7 +2665,8 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   }
   .workflow-sidebar {
     min-width: 0;
-    height: 300px;
+    height: 560px;
+    min-height: 540px;
   }
   .workflow-main {
     padding: 0;
@@ -2667,9 +2697,6 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   }
 }
 @media (max-width: 520px) {
-  .workflow-properties-content {
-    columns: 1;
-  }
   .workflow-storage-actions {
     grid-template-columns: 1fr;
   }

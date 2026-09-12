@@ -68,9 +68,18 @@ selection, processing scope, totals and progress; signal details no longer occup
 space below the plot.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
-Drag the divider beside **Operation history** or **Properties** to resize either
-sidebar. Widths are remembered on this device and constrained to leave room for
-the plot. Focus a divider and use Left/Right arrows (Shift for larger steps),
+Selection **Details** sits in a fixed-height, collapsible section below the
+history tree and the Signals & values index. It shows the selected item, units,
+time range and a direct link to its producing operation. **More details** opens
+the complete metadata, time reference, source recordings and input links in a
+dialog. Selection changes update the summary without reopening a collapsed
+section or changing its height. The open/closed preference is remembered on this
+device. There is no permanent right-hand properties pane; the plot uses all the
+remaining width.
+
+Drag the divider beside **Operation history** to resize the navigation and its
+details together. The width is remembered on this device and constrained to
+leave room for the plot. Focus the divider and use Left/Right arrows (Shift for larger steps),
 Home/End for its limits, or Enter to reset. Double-click also resets the width;
 Escape cancels an in-progress drag. Narrow windows retain the stacked layout.
 

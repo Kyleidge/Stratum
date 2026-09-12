@@ -907,6 +907,19 @@ export default function WorkflowWorkbench() {
               />
             </>
           )}
+          {engine.ready && step && (
+            <WorkflowProperties
+              project={project}
+              index={index}
+              graph={graph}
+              selection={selection}
+              originals={selectedLineage.originals}
+              onFollow={follow}
+              onStep={selectStep}
+              onAction={toolbarAction}
+              busy={engine.busy}
+            />
+          )}
           <div className="workflow-inventory">
             <span>
               <LockKeyhole size={13} />
@@ -1336,22 +1349,6 @@ export default function WorkflowWorkbench() {
               </>
             )}
           </main>
-          {engine.ready && step && (
-            <>
-              <WorkflowPaneResizer pane="properties" />
-              <WorkflowProperties
-                project={project}
-                index={index}
-                graph={graph}
-                selection={selection}
-                originals={selectedLineage.originals}
-                onFollow={follow}
-                onStep={selectStep}
-                onAction={toolbarAction}
-                busy={engine.busy}
-              />
-            </>
-          )}
         </div>
       </div>
       <footer className="workflow-status">

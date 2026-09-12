@@ -355,10 +355,7 @@ export async function workflowUiSmoke() {
   }
   async function resizePanes() {
     const canvas = document.querySelector('.scratchpad-canvas');
-    for (const [pane, direction] of [
-      ['history', 1],
-      ['properties', -1],
-    ] as const) {
+    for (const [pane, direction] of [['history', 1]] as const) {
       const splitter = document.querySelector<HTMLElement>(
         `.workflow-${pane}-resizer`,
       );
@@ -439,6 +436,74 @@ export async function workflowUiSmoke() {
       );
     }
   }
+  async function selectionDetails() {
+    const sidebar = document.getElementById('workflow-navigation')!;
+    const details = sidebar.querySelector<HTMLElement>('.workflow-properties');
+    const tree = sidebar.querySelector<HTMLElement>('[role="tree"]')!;
+    assert(details, 'Selection details must be inside the history sidebar.');
+    const initial = details.getBoundingClientRect();
+    const treeHeight = tree.clientHeight;
+    assert(
+      tree.getBoundingClientRect().bottom <= initial.top + 1 &&
+        !document.querySelector('.workflow-document .workflow-properties') &&
+        !document.querySelector('.workflow-properties-resizer'),
+      'Details must sit below history without a right-hand properties pane.',
+    );
+    const documentBounds = document
+      .querySelector('.workflow-document')!
+      .getBoundingClientRect();
+    const plotBounds = document
+      .querySelector('.workflow-main')!
+      .getBoundingClientRect();
+    assert(
+      Math.abs(documentBounds.width - plotBounds.width) < 1,
+      'The plot must use the full document width.',
+    );
+    const selectSignal = (name: string) => {
+      const row = [
+        ...tree.querySelectorAll<HTMLElement>('[data-kind="output"]'),
+      ].find((item) => item.title === name);
+      assert(row, `Missing signal for selection details: ${name}`);
+      row.click();
+    };
+    await click('Toggle selection details');
+    selectSignal('Torque');
+    await delay();
+    assert(
+      details.dataset.open === 'false' &&
+        !details.querySelector('.workflow-properties-summary') &&
+        tree.clientHeight > treeHeight + 100 &&
+        localStorage.getItem('stratus-selection-details-open-v1') === 'false',
+      'Browsing signals must keep details collapsed and return space to history.',
+    );
+    await click('Toggle selection details');
+    assert(
+      details.querySelector('h2')?.textContent === 'Torque' &&
+        details.textContent?.includes('Nm') &&
+        Math.abs(details.getBoundingClientRect().top - initial.top) < 1 &&
+        Math.abs(details.getBoundingClientRect().height - initial.height) < 1,
+      'Details must update in a fixed area below history.',
+    );
+    await click('More details', details);
+    const modal = await dialog();
+    assert(
+      modal.textContent?.includes('Source recordings') &&
+        modal.textContent?.includes('Time axis'),
+      'More details must retain the complete metadata.',
+    );
+    modal.querySelector<HTMLButtonElement>('.workflow-property-link')!.click();
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'follow producing operation from details',
+    );
+    assert(
+      details.textContent?.includes('Operation') &&
+        Math.abs(details.getBoundingClientRect().top - initial.top) < 1,
+      'Following an operation must preserve the details layout.',
+    );
+    selectSignal('Motor speed');
+    await delay();
+  }
   try {
     await until(
       () => button('Open example workflow') || button('Derive signal'),
@@ -451,6 +516,7 @@ export async function workflowUiSmoke() {
       'active plot',
     );
     await resizePanes();
+    await selectionDetails();
     await click('Keep plot');
     const plotTab = () =>
       document.querySelector('[aria-label="Plot tabs"] [aria-selected="true"]');

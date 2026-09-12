@@ -12,15 +12,6 @@ const PANES = {
     fraction: 0.48,
     direction: 1,
   },
-  properties: {
-    id: 'workflow-properties',
-    label: 'Properties',
-    initial: 248,
-    min: 220,
-    max: 480,
-    fraction: 0.4,
-    direction: -1,
-  },
 } as const;
 
 /** Resize the existing panes without remounting the history or live plots. */
