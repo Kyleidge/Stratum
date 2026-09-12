@@ -216,6 +216,7 @@ export type EngineRequest =
       inspection?: boolean;
     }
   | { type: 'rows'; id: string; offset: number; inspection?: boolean }
+  | { type: 'sample-count'; id: string | null; inspection?: boolean }
   | { type: 'export'; ids: string[] }
   | { type: 'export-samples'; ids: string[] }
   | { type: 'cancel'; requestIds?: number[] };
@@ -229,6 +230,7 @@ export type EngineResponse = { requestId: number } & (
       measurements: import('./plot-measurement').PlotMeasurement[];
     }
   | { type: 'rows'; rows: Point[]; hasMore: boolean }
+  | { type: 'sample-count'; count: number | null }
   | { type: 'export'; blob: Blob }
   | { type: 'progress'; message: string; progress: number }
   | { type: 'error'; message: string }

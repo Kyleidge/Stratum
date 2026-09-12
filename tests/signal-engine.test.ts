@@ -60,6 +60,88 @@ void test('raw samples survive derivations and database reopening', async () => 
   assert.deepEqual(scaled.parents, [smooth.id]);
   e.close();
 });
+void test('sample counts include missing values and track output grids without changing history', async (t) => {
+  const { e, s } = await fixture('t,a [V]\n0,1\n1,\n2,3\n3,4\n4,5');
+  t.after(() => e.close());
+  const id = s.channels[0];
+  const derivative = await e.derive(id, 'derivative', 0);
+  const smoothed = await e.derive(derivative.id, 'smooth', 3);
+  const evaluate = t.mock.method(e, 'evaluate', () => {
+    throw new Error(
+      'Sample-preserving counts must not evaluate signal values.',
+    );
+  });
+  assert.equal(await e.sampleCount(id), 5);
+  assert.equal(await e.sampleCount(smoothed.id), 5);
+  evaluate.mock.restore();
+  const extrema = await e.derive(id, 'min-max', 0);
+  const resampled = await e.derive(id, 'resample', 2);
+  const [segment] = await e.segment(
+    s.id,
+    {
+      method: 'ranges',
+      boundary: 'clip',
+      ranges: [[1, 3]],
+    },
+    [id],
+  );
+  const cropped = segment.nodes[0];
+  assert.equal(await e.sampleCount(extrema.id), 2);
+  assert.equal(await e.sampleCount(resampled.id), 9);
+  assert.equal(
+    await e.sampleCount(cropped),
+    3,
+    'Legacy crops include both endpoints and the missing sample',
+  );
+  const [timeCrop] = await e.applyTimeOperation({
+    kind: 'crop',
+    inputIds: [id],
+    start: 0.5,
+    end: 2.5,
+  });
+  const before = structuredClone(e.project);
+  assert.equal(await e.sampleCount(timeCrop.id), 2);
+  assert.deepEqual(e.project, before);
+  const step = e.project.workflowSteps!.at(-1)!;
+  await e.editOperation(step.id, {
+    type: 'time-operation',
+    settings: { kind: 'crop', inputIds: [id], start: 0, end: 4 },
+  });
+  assert.equal(
+    await e.sampleCount(timeCrop.id),
+    5,
+    'Edit must invalidate the cached count',
+  );
+  await e.travel('undo');
+  assert.equal(await e.sampleCount(timeCrop.id), 2);
+  const [aligned] = await e.applyTimeOperation({
+    kind: 'align',
+    reference: { id: 'count-clock', name: 'Aligned', kind: 'relative' },
+    target: 10,
+    groups: [{ inputIds: [id], anchor: { kind: 'start' } }],
+  });
+  assert.equal(await e.sampleCount(aligned.id), 5);
+  const [uniform] = await e.applyTimeOperation({
+    kind: 'resample',
+    inputIds: [id],
+    grid: { kind: 'uniform', start: -1, end: 5, rate: 2 },
+    interpolation: 'linear',
+    maxGap: 1,
+  });
+  assert.equal(
+    await e.sampleCount(uniform.id),
+    13,
+    'Includes missing grid positions outside the input',
+  );
+  const [reference] = await e.applyTimeOperation({
+    kind: 'resample',
+    inputIds: [id],
+    grid: { kind: 'reference', signalId: uniform.id, start: 0.5, end: 3.5 },
+    interpolation: 'linear',
+    maxGap: 1,
+  });
+  assert.equal(await e.sampleCount(reference.id), 7);
+});
 void test('integration uses timestamps and time shift preserves values', async () => {
   const { e, s } = await fixture('t,Fuel [kg/h]\n0,9\n30,9\n120,9');
   const p = await e.plot(s.channels[0]);

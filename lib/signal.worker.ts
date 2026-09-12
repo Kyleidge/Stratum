@@ -10,7 +10,10 @@ const engine = new SignalEngine((message, progress) =>
 let queue = Promise.resolve();
 const pending = new Set<number>(),
   cancelled = new Set<number>();
-const inspections = new Map<number, 'view' | 'rows' | 'measure-plot'>();
+const inspections = new Map<
+  number,
+  'view' | 'rows' | 'measure-plot' | 'sample-count'
+>();
 globalThis.onmessage = (
   event: MessageEvent<EngineRequest & { requestId: number }>,
 ) => {
@@ -21,7 +24,10 @@ globalThis.onmessage = (
     return;
   }
   if (
-    (r.type === 'view' || r.type === 'rows' || r.type === 'measure-plot') &&
+    (r.type === 'view' ||
+      r.type === 'rows' ||
+      r.type === 'measure-plot' ||
+      r.type === 'sample-count') &&
     r.inspection
   ) {
     for (const [id, lane] of inspections)
@@ -181,6 +187,13 @@ globalThis.onmessage = (
             send({ type: 'plot-measurements', requestId, measurements });
             return;
           }
+          case 'sample-count':
+            send({
+              type: 'sample-count',
+              requestId,
+              count: r.id === null ? null : await engine.sampleCount(r.id),
+            });
+            return;
           case 'rows':
             send({
               type: 'rows',

@@ -500,10 +500,18 @@ export async function workflowUiSmoke() {
       'Details must update in a fixed area below history.',
     );
     await click('More details', details);
+    const samples = [...details.querySelectorAll('dt')].find(
+      (term) => term.textContent === 'Samples',
+    );
+    assert(
+      samples?.nextElementSibling?.textContent === (1801).toLocaleString(),
+      'Signal details must show the full sample count.',
+    );
     const modal = await dialog();
     assert(
       modal.textContent?.includes('Source recordings') &&
-        modal.textContent?.includes('Time axis'),
+        modal.textContent?.includes('Time axis') &&
+        modal.textContent?.includes((1801).toLocaleString()),
       'More details must retain the complete metadata.',
     );
     modal.querySelector<HTMLButtonElement>('.workflow-property-link')!.click();

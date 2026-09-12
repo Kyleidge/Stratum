@@ -914,6 +914,7 @@ export default function WorkflowWorkbench() {
               graph={graph}
               selection={selection}
               originals={selectedLineage.originals}
+              request={request}
               onFollow={follow}
               onStep={selectStep}
               onAction={toolbarAction}

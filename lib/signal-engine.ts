@@ -152,6 +152,7 @@ export class SignalEngine {
   cancelled = false;
   private db!: IDBDatabase;
   private cache = new Map<string, Plot>();
+  private sampleCounts = new Map<string, number>();
   private columnCache = new Map<string, Float64Array>();
   private cacheBytes = 0;
   private indexCache = new Map<
@@ -190,6 +191,7 @@ export class SignalEngine {
       this.indexedCount !== this.project.nodes.length
     ) {
       this.indexedGraph = new SignalGraph(this.project);
+      this.sampleCounts.clear();
       this.indexedProject = this.project;
       this.indexedCount = this.project.nodes.length;
     }
@@ -1619,6 +1621,61 @@ export class SignalEngine {
       () => this.check(),
       sourceRange,
     );
+  }
+  /** Count the full output, including missing values; never count plot points. */
+  async sampleCount(id: string): Promise<number> {
+    const graph = this.graph();
+    this.check();
+    const cached = this.sampleCounts.get(id);
+    if (cached !== undefined) return cached;
+    let node = graph.find(id);
+    // These operations keep every input timestamp, even when a value is missing.
+    while (
+      node.timeRecipe
+        ? ['align', 'combine'].includes(node.timeRecipe.kind)
+        : [
+            'smooth',
+            'median',
+            'exponential',
+            'low-pass',
+            'high-pass',
+            'scale',
+            'offset',
+            'absolute',
+            'derivative',
+            'integral',
+            'time-shift',
+            'zero-time',
+            'add',
+            'subtract',
+            'multiply',
+            'divide',
+            'power',
+            'bsfc',
+          ].includes(node.operation)
+    ) {
+      this.check();
+      node = graph.find(node.parents[0]);
+    }
+    let count = this.sampleCounts.get(node.id);
+    if (count === undefined) {
+      if (node.operation === 'raw')
+        count = this.project.sources.find(
+          (source) => source.id === node.sourceId,
+        )!.rows;
+      else {
+        count = 0;
+        for await (const chunk of this.evaluate(node.id)) {
+          this.check();
+          count += chunk.time.length;
+        }
+      }
+    }
+    this.check();
+    if (this.sampleCounts.size >= 64)
+      this.sampleCounts.delete(this.sampleCounts.keys().next().value!);
+    this.sampleCounts.set(id, count);
+    return count;
   }
   async derive(parentId: string, operation: Operation, value: number) {
     return (await this.deriveMany([parentId], operation, value))[0];

@@ -819,6 +819,26 @@ void test('worker cancellation includes queued mutations, coalesces inspections,
       ranges: { [id]: [0.9, 1.1] },
       inspection: true,
     });
+    const supersededCount = send({
+      type: 'sample-count',
+      id,
+      inspection: true,
+    });
+    const count = send({ type: 'sample-count', id, inspection: true });
+    assert.equal((await supersededCount.response).type, 'error');
+    const counted = await count.response;
+    assert.equal(counted.type, 'sample-count');
+    if (counted.type === 'sample-count') assert.equal(counted.count, 3);
+    const cancelledCount = send({ type: 'sample-count', id, inspection: true });
+    const clearedCount = send({
+      type: 'sample-count',
+      id: null,
+      inspection: true,
+    });
+    assert.equal((await cancelledCount.response).type, 'error');
+    const cleared = await clearedCount.response;
+    assert.equal(cleared.type, 'sample-count');
+    if (cleared.type === 'sample-count') assert.equal(cleared.count, null);
     assert.equal((await supersededMeasure.response).type, 'error');
     const measured = await measurement.response;
     assert.equal(measured.type, 'plot-measurements');

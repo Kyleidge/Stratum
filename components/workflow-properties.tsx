@@ -16,20 +16,26 @@ import {
 } from '@/components/ui/dialog';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
 import type { SignalGraph } from '@/lib/signal-graph';
-import type { Project, SignalNode } from '@/lib/signal-types';
+import type {
+  EngineRequest,
+  EngineResponse,
+  Project,
+  SignalNode,
+} from '@/lib/signal-types';
 import type { WorkflowSelection } from './workflow-history';
 import type { ToolbarAction } from './workflow-toolbar';
 import { formatValue } from './signal-chart';
 
 const DETAILS_STORAGE_KEY = 'stratus-selection-details-open-v1';
 
-/** Metadata only: inspecting an output never evaluates or changes its inputs. */
+/** Selection metadata with a cancellable, full-signal sample count. */
 export default function WorkflowProperties({
   project,
   index,
   graph,
   selection,
   originals,
+  request,
   onFollow,
   onStep,
   onAction,
@@ -40,6 +46,7 @@ export default function WorkflowProperties({
   graph: SignalGraph;
   selection: WorkflowSelection;
   originals: SignalNode[];
+  request: (message: EngineRequest) => Promise<EngineResponse>;
   onFollow: (id: string) => void;
   onStep: (id: string) => void;
   onAction: (action: ToolbarAction) => void;
@@ -101,6 +108,85 @@ export default function WorkflowProperties({
       : step
         ? stepName(step)
         : 'Selection';
+  const countId = node?.id;
+  const [counted, setCounted] = useState<{
+    id: string;
+    project: Project;
+    count?: number;
+    error?: string;
+  }>();
+  useEffect(() => {
+    if (!countId || busy || (!open && !moreOpen)) return;
+    let alive = true;
+    const timer = setTimeout(() => {
+      void request({ type: 'sample-count', id: countId, inspection: true })
+        .then((response) => {
+          if (
+            alive &&
+            response.type === 'sample-count' &&
+            response.count !== null
+          )
+            setCounted({ id: countId, project, count: response.count });
+        })
+        .catch((error: unknown) => {
+          if (alive)
+            setCounted({
+              id: countId,
+              project,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : 'Unable to count samples.',
+            });
+        });
+    }, 120);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      // Clear only this inspection lane; plots, measurements and edits continue.
+      void request({ type: 'sample-count', id: null, inspection: true }).catch(
+        () => {},
+      );
+    };
+  }, [countId, project, request, busy, open, moreOpen]);
+  const currentCount =
+    counted && counted.id === countId && counted.project === project
+      ? counted
+      : undefined;
+  const recording = project.sources.find(
+    (source) => source.id === node?.sourceId,
+  );
+  const imported =
+    step?.kind === 'import'
+      ? project.sources.find((source) => source.id === step.sourceId)
+      : undefined;
+  const count =
+    value?.sampleCount ??
+    (node?.operation === 'raw' ? recording?.rows : currentCount?.count) ??
+    (selection.kind === 'step' ? imported?.rows : undefined);
+  const sampleDetail = (node || value || imported) && (
+    <div>
+      <dt>
+        {value
+          ? 'Input samples'
+          : selection.kind === 'step'
+            ? 'Samples / ch.'
+            : 'Samples'}
+      </dt>
+      <dd
+        title={
+          currentCount?.error ??
+          (value
+            ? 'Finite input samples used to calculate this value.'
+            : 'Total samples in the full signal, including missing values.')
+        }
+      >
+        {count?.toLocaleString() ??
+          (currentCount?.error ? 'Unavailable' : 'Counting…')}
+        {value && ' finite'}
+      </dd>
+    </div>
+  );
 
   const fullDetails = (
     <div className="workflow-properties-content">
@@ -119,6 +205,7 @@ export default function WorkflowProperties({
             <dd>{node?.unit || value?.unit || 'Unitless'}</dd>
           </div>
         )}
+        {sampleDetail}
         {step && (
           <>
             <div>
@@ -299,6 +386,7 @@ export default function WorkflowProperties({
                 </dd>
               </div>
             )}
+            {sampleDetail}
             {selection.kind === 'step' && step && (
               <div>
                 <dt>Outputs</dt>
