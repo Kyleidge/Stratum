@@ -681,6 +681,11 @@ export default function PlotScratchpad({
       return next;
     });
   }
+  function closePlot(plot: PlotSheet) {
+    setClosed({ sheet: plot, position: sheets.indexOf(plot) });
+    setSheets((old) => old.filter((item) => item.id !== plot.id));
+    if (selectedTab === plot.id) onView('result');
+  }
   async function imageExport(format: 'svg' | 'png') {
     if (!host.current || exporting) return;
     setExporting(true);
@@ -909,6 +914,14 @@ export default function PlotScratchpad({
                 data-drop={over === item.id}
                 title={item.name}
                 draggable
+                onMouseDown={(event) => {
+                  if (event.button === 1) event.preventDefault();
+                }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
+                  closePlot(item);
+                }}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = 'move';
                   event.dataTransfer.setData(
@@ -1037,16 +1050,7 @@ export default function PlotScratchpad({
                     <button
                       className="workflow-icon-button"
                       aria-label={`Close plot ${sheet.name}`}
-                      onClick={() => {
-                        setClosed({
-                          sheet: saved,
-                          position: sheets.indexOf(saved),
-                        });
-                        setSheets((old) =>
-                          old.filter((item) => item.id !== saved.id),
-                        );
-                        onView('result');
-                      }}
+                      onClick={() => closePlot(saved)}
                     >
                       <X size={16} />
                     </button>
@@ -2286,8 +2290,8 @@ export default function PlotScratchpad({
             </dd>
             <dt>Tabs / trace rows</dt>
             <dd>
-              Drag to reorder. Double-click a tab to rename, a trace to style,
-              or a note to edit.
+              Drag to reorder. Middle-click a plot tab to close it. Double-click
+              a tab to rename, a trace to style, or a note to edit.
             </dd>
             <dt>Drop from History</dt>
             <dd>
