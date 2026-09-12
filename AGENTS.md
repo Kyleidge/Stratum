@@ -87,6 +87,9 @@ There are no server API routes or cloud signal uploads.
   plotting with the operation output dock; saved plots persist styles, limits,
   annotations and viewport independently of workflow history. Plot gestures use
   display time and translate per-trace offsets before viewport evaluation.
+  `lib/plot-axes.ts` groups exact units into independently scaled, automatically
+  named Y axes on a shared time plot. Axis wheel zoom targets only its own scale;
+  persist settings by unit, never by a trace's display position.
   `lib/plot-measurement.ts` streams exact cursor samples and region statistics;
   never use envelope points as measurement samples. Boundary context points may
   extend outside a zoom window for drawing, but never enter its statistics.

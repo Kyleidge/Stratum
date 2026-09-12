@@ -52,13 +52,143 @@ export async function plotUiSmoke() {
         pointerId: 3,
         button: 0,
         clientX:
-          rect.left + ((70 + (width - 98) * fraction) * rect.width) / width,
+          rect.left +
+          ((Number(svg.dataset.plotLeft) +
+            (Number(svg.dataset.plotRight) - Number(svg.dataset.plotLeft)) *
+              fraction) *
+            rect.width) /
+            width,
         clientY: rect.top + rect.height / 2,
       }),
     );
     await delay();
   }
   const fit = window();
+  const axis = (unit: string) =>
+    chart().querySelector<SVGGElement>(`[data-value-axis="unit:${unit}"]`)!;
+  const limits = (unit: string) => [
+    Number(axis(unit).dataset.axisMin),
+    Number(axis(unit).dataset.axisMax),
+  ];
+  const same = (a: number[], b: number[]) =>
+    a.every((value, i) => Math.abs(value - b[i]) < 1e-8);
+  assert(
+    chart().textContent?.includes('Motor speed (rpm)') &&
+      chart().textContent?.includes('Torque (Nm)') &&
+      chart().textContent?.includes('Time (s)'),
+    'Automatic signal and time axis names are absent.',
+  );
+  async function wheelAt(unit: string, deltaY = -120) {
+    const target =
+      unit === 'time' ? chart().querySelector('[data-time-axis]')! : axis(unit);
+    const area = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY,
+        clientX: area.left + area.width / 2,
+        clientY: area.top + area.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await delay();
+  }
+  const speedLimits = limits('rpm'),
+    torqueLimits = limits('Nm');
+  chart().blur();
+  await wheelAt('Nm');
+  assert(
+    same(window(), fit) && same(limits('rpm'), speedLimits),
+    'Right-axis scrolling changed time or the other unit.',
+  );
+  assert(
+    limits('Nm')[1] - limits('Nm')[0] < torqueLimits[1] - torqueLimits[0],
+    'Right-axis scrolling did not zoom torque.',
+  );
+  assert(
+    readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY))[0].axes?.values?.[
+      'unit:Nm'
+    ].y,
+    'Axis zoom was not persisted.',
+  );
+  await click('Previous plot view');
+  assert(
+    same(limits('Nm'), torqueLimits),
+    'Previous view did not restore the Y scale.',
+  );
+  await wheelAt('rpm');
+  assert(
+    same(limits('Nm'), torqueLimits) &&
+      same(window(), fit) &&
+      !same(limits('rpm'), speedLimits),
+    'Left-axis scrolling did not zoom independently.',
+  );
+  await click('Previous plot view');
+  await wheelAt('time');
+  assert(
+    window()[1] - window()[0] < fit[1] - fit[0],
+    'Time-axis scrolling did not zoom time.',
+  );
+  await click('Fit entire plot');
+  // Double-click the right-hand axis to edit that unit, including its auto name.
+  const rightAxis = axis('Nm').getBoundingClientRect();
+  axis('Nm').dispatchEvent(
+    new MouseEvent('dblclick', {
+      clientX: rightAxis.left + rightAxis.width / 2,
+      clientY: rightAxis.top + rightAxis.height / 2,
+      bubbles: true,
+    }),
+  );
+  await delay();
+  assert(
+    document.querySelector<HTMLElement & { value: string }>(
+      '[aria-label="Y axis"]',
+    )?.value === 'unit:Nm',
+    'Right-axis double-click edited the wrong unit.',
+  );
+  setValue(
+    document.querySelector<HTMLInputElement>('[aria-label="Y axis name"]')!,
+    'Shaft torque (Nm)',
+  );
+  await delay();
+  await click('Apply axes');
+  assert(
+    chart().textContent?.includes('Shaft torque (Nm)'),
+    'Custom Y axis name was not displayed.',
+  );
+  await click('Plot axes and limits');
+  setValue(
+    document.querySelector<HTMLInputElement>('[aria-label="Time axis name"]')!,
+    'Test time (s)',
+  );
+  await delay();
+  const selector = document.querySelector<HTMLElement & { value: string }>(
+    '[aria-label="Y axis"]',
+  )!;
+  selector.value = 'unit:Nm';
+  selector.dispatchEvent(new Event('change', { bubbles: true }));
+  await delay();
+  setValue(
+    document.querySelector<HTMLInputElement>('[aria-label="Y axis name"]')!,
+    '',
+  );
+  await delay();
+  await click('Apply axes');
+  assert(
+    chart().textContent?.includes('Torque (Nm)'),
+    'Clearing the axis name did not restore automatic naming.',
+  );
+  assert(
+    chart().textContent?.includes('Test time (s)'),
+    'Switching Y axes discarded the pending time name.',
+  );
+  await click('Plot axes and limits');
+  setValue(
+    document.querySelector<HTMLInputElement>('[aria-label="Time axis name"]')!,
+    '',
+  );
+  await delay();
+  await click('Apply axes');
   assert(
     ![...document.querySelectorAll('[role="tab"]')].some((tab) =>
       tab.textContent?.includes('Step outputs'),
@@ -197,6 +327,17 @@ export async function plotUiSmoke() {
     chart().textContent?.includes('Log Y'),
     'Logarithmic scaling did not activate.',
   );
+  const logBefore = limits('rpm'),
+    unaffectedTorque = limits('Nm'),
+    logTime = window();
+  await wheelAt('rpm');
+  assert(
+    Math.log(limits('rpm')[1] / limits('rpm')[0]) <
+      Math.log(logBefore[1] / logBefore[0]) &&
+      same(limits('Nm'), unaffectedTorque) &&
+      same(window(), logTime),
+    'Log-axis zoom affected another axis or failed.',
+  );
   const axisRect = chart().getBoundingClientRect();
   chart().dispatchEvent(
     new MouseEvent('dblclick', {
@@ -243,11 +384,17 @@ export async function plotUiSmoke() {
     'PNG delivery',
   );
   const stored = () => readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
+  await wheelAt('Nm');
+  const torqueBeforeReorder = limits('Nm');
   const original = stored()[0];
   await click('Move trace down Motor speed');
   assert(
     stored()[0].traces[1].id === original.traces[0].id,
     'Keyboard trace reordering failed.',
+  );
+  assert(
+    same(limits('Nm'), torqueBeforeReorder),
+    'Moving an axis to the left lost its unit-specific limits.',
   );
   // Real drag payload and drop path, distinct from workflow signal imports.
   const rows = [...document.querySelectorAll<HTMLElement>('.scratchpad-trace')];
@@ -274,7 +421,8 @@ export async function plotUiSmoke() {
   await click('Duplicate plot');
   assert(
     stored().length === 2 &&
-      stored()[1].annotations?.[0].text === 'Review marker <safe>',
+      stored()[1].annotations?.[0].text === 'Review marker <safe>' &&
+      JSON.stringify(stored()[1].axes) === JSON.stringify(original.axes),
     'Duplicate did not preserve annotations.',
   );
   await click('Move plot tab left');

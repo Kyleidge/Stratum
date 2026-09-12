@@ -8,6 +8,13 @@ import type {
   PlotRange,
   PlotTrace,
 } from '@/lib/plot-scratchpad';
+import {
+  groupPlotAxes,
+  plotAxisKey,
+  valueAxisRange,
+  valueAxisSettings,
+  zoomValueAxis,
+} from '@/lib/plot-axes';
 
 export function formatValue(value: number, digits = 1): string {
   return Number.isFinite(value)
@@ -31,13 +38,16 @@ type Trace = {
 export type ChartInteraction = {
   mode: 'pan' | 'zoom' | 'cursor';
   axes?: PlotAxes;
+  primaryAxisKey?: string;
+  timeLabel?: string;
   cursors?: PlotRange;
   annotations?: PlotAnnotation[];
   onRange: (range: PlotRange) => void;
   onCursors: (range: PlotRange) => void;
   onFit: () => void;
   onBack: () => void;
-  onAxes: () => void;
+  onAxes: (key?: string) => void;
+  onValueRange: (key: string, range: PlotRange) => void;
   onAnnotation: (time: number, id?: string) => void;
 };
 export default function SignalChart({
@@ -100,41 +110,56 @@ export default function SignalChart({
     return () => observer.disconnect();
   }, [fluid, fillHeight]);
   const chartHeight = fillHeight ? measuredHeight : height;
-  const chartWidth = fluid ? width : 900;
-  const left = fluid ? 70 : 58;
-  const right = chartWidth - 28;
+  const axisGroups = useMemo(
+    () =>
+      groupPlotAxes(
+        traces.map((trace) => ({
+          unit: trace.node.unit,
+          name: trace.label || trace.node.name,
+          color: trace.color || trace.node.color,
+        })),
+      ),
+    [traces],
+  );
+  const axisCount = interaction ? Math.max(1, axisGroups.length) : 1;
+  const minimumWidth = 300 + axisCount * 88;
+  const chartWidth = Math.max(
+    fluid ? width : 900,
+    interaction ? minimumWidth : 0,
+  );
+  const left = interaction ? 92 : fluid ? 70 : 58;
+  const right =
+    chartWidth - (interaction && axisCount > 1 ? (axisCount - 1) * 88 : 28);
   const span = right - left;
   const ticks = fluid ? Math.max(3, Math.min(10, Math.floor(span / 85))) : 10;
   const primary = traces[0];
-  const logarithmic = !!interaction?.axes?.log;
-  const finite = traces
-    .flatMap((t) =>
-      t.plot.summary.count
-        ? [t.plot.summary.min, t.plot.summary.max]
-        : t.plot.points.map((point) => point[1]),
-    )
-    .filter((n) => Number.isFinite(n) && (!logarithmic || n > 0));
-  if (logarithmic) {
-    for (const trace of traces)
-      for (const [, n] of trace.plot.points)
-        if (Number.isFinite(n) && n > 0) finite.push(n);
-  }
-  const low = finite.reduce((a, b) => Math.min(a, b), Infinity);
-  const high = finite.reduce((a, b) => Math.max(a, b), -Infinity);
-  const safeLow = Number.isFinite(low) ? low : logarithmic ? 0.1 : 0;
-  const safeHigh = Number.isFinite(high) ? high : 1;
-  const padding = (safeHigh - safeLow || Math.abs(safeHigh) || 1) * 0.08;
-  const yRange =
-    interaction?.axes?.y ??
-    (logarithmic
-      ? [safeLow / 1.1, safeHigh * 1.1]
-      : [
-          includeZero ? Math.min(0, safeLow - padding) : safeLow - padding,
-          includeZero ? Math.max(0, safeHigh + padding) : safeHigh + padding,
-        ]);
-  const min = logarithmic ? Math.log10(yRange[0]) : yRange[0];
-  const max = logarithmic ? Math.log10(yRange[1]) : yRange[1];
-  const bottom = chartHeight - 31;
+  const scales = useMemo(() => {
+    const groups = interaction
+      ? axisGroups
+      : [{ key: '', label: '', color: '', unit: '' }];
+    return groups.map((group) => {
+      const settings = valueAxisSettings(
+        interaction?.axes,
+        group.key,
+        interaction?.primaryAxisKey ?? axisGroups[0]?.key,
+      );
+      const plots = traces
+        .filter(
+          (trace) => !interaction || plotAxisKey(trace.node.unit) === group.key,
+        )
+        .map((trace) => trace.plot);
+      const range = valueAxisRange(plots, settings, includeZero);
+      return {
+        ...group,
+        label: settings.label || group.label,
+        range,
+        log: !!settings.log,
+        min: settings.log ? Math.log10(range[0]) : range[0],
+        max: settings.log ? Math.log10(range[1]) : range[1],
+      };
+    });
+  }, [axisGroups, traces, interaction, includeZero]);
+  const bottom = chartHeight - (interaction ? 51 : 31);
   const plotHeight = bottom - 15;
   const valueTicks = fluid
     ? Math.max(4, Math.min(8, Math.floor(plotHeight / 85)))
@@ -156,6 +181,10 @@ export default function SignalChart({
       }
     >();
     for (const trace of traces) {
+      const scale = scales.find(
+        (axis) => !interaction || axis.key === plotAxisKey(trace.node.unit),
+      )!;
+      const { min, max, log: logarithmic } = scale;
       const color = trace.color || trace.node.color;
       const dots =
         trace.style === 'points' ||
@@ -163,7 +192,7 @@ export default function SignalChart({
         trace.plot.points.length === 1;
       const reference = !!trace.referenceLine;
       const strokeWidth = trace.width ?? 1.45;
-      const key = `${color}:${dots}:${reference}:${trace.style ?? 'line'}:${strokeWidth}`;
+      const key = `${scale.key}:${color}:${dots}:${reference}:${trace.style ?? 'line'}:${strokeWidth}`;
       const group = groups.get(key) ?? {
         key,
         d: [],
@@ -209,7 +238,7 @@ export default function SignalChart({
       ...group,
       d: group.d.join(' '),
     }));
-  }, [traces, left, span, range, bottom, min, max, plotHeight, logarithmic]);
+  }, [traces, left, span, range, bottom, scales, plotHeight, interaction]);
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
   const nearest =
@@ -234,14 +263,44 @@ export default function SignalChart({
     );
     return inputRange[0] + fraction * (inputRange[1] - inputRange[0]);
   };
+  const hitAxis = (clientX: number, clientY: number) => {
+    const rect = svg.current!.getBoundingClientRect();
+    const px = ((clientX - rect.left) * chartWidth) / rect.width;
+    const py = ((clientY - rect.top) * chartHeight) / rect.height;
+    const axis =
+      px < left
+        ? scales[0]
+        : px > right && axisCount > 1
+          ? scales[
+              Math.min(scales.length - 1, 1 + Math.floor((px - right) / 88))
+            ]
+          : undefined;
+    return {
+      axis,
+      time: !axis && py > bottom,
+      fraction: Math.max(0, Math.min(1, (bottom - py) / plotHeight)),
+    };
+  };
   useEffect(() => {
     const element = svg.current;
     if (!interaction || !element) return;
     const wheel = (event: WheelEvent) => {
-      if (document.activeElement !== element) return;
+      const hit = hitAxis(event.clientX, event.clientY);
+      if (document.activeElement !== element && !hit.axis && !hit.time) return;
       event.preventDefault();
+      element.focus({ preventScroll: true });
+      const delta =
+        event.deltaY *
+        (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? chartHeight : 1);
+      const factor = Math.exp(Math.max(-1, Math.min(1, delta * 0.002)));
+      if (hit.axis) {
+        interaction.onValueRange(
+          hit.axis.key,
+          zoomValueAxis(hit.axis.range, factor, hit.fraction, hit.axis.log),
+        );
+        return;
+      }
       const anchor = eventTime(event.clientX);
-      const factor = Math.exp(Math.max(-1, Math.min(1, event.deltaY * 0.002)));
       interaction.onRange([
         anchor + (inputRange[0] - anchor) * factor,
         anchor + (inputRange[1] - anchor) * factor,
@@ -289,24 +348,25 @@ export default function SignalChart({
         role={interaction ? 'application' : 'img'}
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
         data-fill-height={fillHeight || undefined}
-        style={!fillHeight && height !== 151 ? { height } : undefined}
+        style={{
+          ...(!fillHeight && height !== 151 ? { height } : {}),
+          ...(interaction ? { minWidth: minimumWidth } : {}),
+        }}
         preserveAspectRatio={fluid ? 'xMidYMid meet' : 'none'}
         aria-label={`${primary?.label || primary?.node.name || 'Signal'} over time`}
         tabIndex={interaction ? 0 : undefined}
         data-interactive={interaction?.mode}
         data-range-start={inputRange[0]}
         data-range-end={inputRange[1]}
+        data-plot-left={left}
+        data-plot-right={right}
         onDoubleClick={
           interaction
             ? (event) => {
                 event.preventDefault();
                 setGesture(undefined);
-                const rect = event.currentTarget.getBoundingClientRect();
-                const px =
-                  ((event.clientX - rect.left) * chartWidth) / rect.width;
-                const py =
-                  ((event.clientY - rect.top) * chartHeight) / rect.height;
-                if (px < left || py > bottom) interaction.onAxes();
+                const hit = hitAxis(event.clientX, event.clientY);
+                if (hit.axis || hit.time) interaction.onAxes(hit.axis?.key);
                 else interaction.onFit();
               }
             : undefined
@@ -315,7 +375,9 @@ export default function SignalChart({
           interaction
             ? (event) => {
                 event.preventDefault();
-                interaction.onAxes();
+                interaction.onAxes(
+                  hitAxis(event.clientX, event.clientY).axis?.key,
+                );
               }
             : undefined
         }
@@ -350,6 +412,8 @@ export default function SignalChart({
                 if (event.button !== 0 && event.button !== 1) return;
                 event.preventDefault();
                 event.currentTarget.focus();
+                const hit = hitAxis(event.clientX, event.clientY);
+                if (hit.axis || hit.time) return;
                 if (event.isTrusted)
                   event.currentTarget.setPointerCapture(event.pointerId);
                 const time = eventTime(event.clientX);
@@ -407,6 +471,13 @@ export default function SignalChart({
         onPointerMove={(event) => {
           if (gesture)
             setGesture({ ...gesture, end: eventTime(event.clientX) });
+          if (interaction && !gesture) {
+            const hit = hitAxis(event.clientX, event.clientY);
+            if (hit.axis || hit.time) {
+              setCursor(null);
+              return;
+            }
+          }
           const rect = event.currentTarget.getBoundingClientRect();
           setCursor(
             Math.max(
@@ -438,19 +509,89 @@ export default function SignalChart({
                 className="chart-grid"
               />
             )}
-            <text
-              x={left - 12}
-              y={19 + (i * plotHeight) / (valueTicks - 1)}
-              textAnchor="end"
-            >
-              {axisNumber(
-                logarithmic
-                  ? 10 ** (max - (i / (valueTicks - 1)) * (max - min))
-                  : max - (i / (valueTicks - 1)) * (max - min),
-              )}
-            </text>
           </g>
         ))}
+        {scales.map((axis, axisIndex) => {
+          const position = axisIndex ? right + (axisIndex - 1) * 88 : left;
+          const direction = axisIndex ? 1 : -1;
+          const label = axis.label + (axis.log ? ' · Log Y' : '');
+          const labelLimit = Math.max(12, Math.floor(plotHeight / 6));
+          return (
+            <g
+              key={axis.key}
+              data-value-axis={axis.key}
+              data-axis-min={axis.range[0]}
+              data-axis-max={axis.range[1]}
+              data-axis-log={axis.log}
+              className={interaction ? 'plot-value-axis' : undefined}
+            >
+              {interaction && (
+                <>
+                  <title>
+                    {label}
+                    {axis.log ? ' · positive values only' : ''} · Scroll to
+                    zoom; double-click to edit
+                  </title>
+                  <rect
+                    x={axisIndex ? position : 0}
+                    y="0"
+                    width={axisIndex ? 88 : left}
+                    height={chartHeight}
+                    fill="transparent"
+                  />
+                  <line
+                    x1={position}
+                    x2={position}
+                    y1="15"
+                    y2={bottom}
+                    stroke={axis.color}
+                    opacity="0.6"
+                  />
+                  <text
+                    className="plot-axis-title"
+                    transform={`translate(${position + direction * 73}, ${15 + plotHeight / 2}) rotate(${axisIndex ? 90 : -90})`}
+                    textAnchor="middle"
+                    style={{ fill: axis.color }}
+                  >
+                    {label.length > labelLimit
+                      ? `${label.slice(0, labelLimit - 1)}…`
+                      : label}
+                  </text>
+                </>
+              )}
+              {Array.from({ length: valueTicks }, (_, i) => (
+                <text
+                  key={i}
+                  x={position + direction * 9}
+                  y={19 + (i * plotHeight) / (valueTicks - 1)}
+                  textAnchor={axisIndex ? 'start' : 'end'}
+                  style={interaction ? { fill: axis.color } : undefined}
+                >
+                  {axisNumber(
+                    axis.log
+                      ? 10 **
+                          (axis.max -
+                            (i / (valueTicks - 1)) * (axis.max - axis.min))
+                      : axis.max -
+                          (i / (valueTicks - 1)) * (axis.max - axis.min),
+                  )}
+                </text>
+              ))}
+            </g>
+          );
+        })}
+        {interaction && (
+          <g className="plot-time-axis">
+            <title>Scroll to zoom time; double-click to edit</title>
+            <rect
+              x={left}
+              y={bottom + 3}
+              width={span}
+              height={chartHeight - bottom - 3}
+              fill="transparent"
+            />
+          </g>
+        )}
         {Array.from({ length: ticks }, (_, i) => (
           <g key={i}>
             {grid && (
@@ -464,8 +605,9 @@ export default function SignalChart({
             )}
             <text
               x={left + (i * span) / (ticks - 1)}
-              y={chartHeight - 9}
+              y={bottom + 22}
               textAnchor="middle"
+              className={interaction ? 'plot-time-axis' : undefined}
             >
               {axisNumber(range[0] + (i / (ticks - 1)) * (range[1] - range[0]))}
             </text>
@@ -636,13 +778,16 @@ export default function SignalChart({
               </text>
             </g>
           ))}
-        {logarithmic && (
-          <text x={left + 4} y={bottom - 6}>
-            Log Y · positive values only
-          </text>
-        )}
-        <text x={chartWidth - 5} y={chartHeight - 9} textAnchor="end">
-          s
+        <text
+          data-time-axis
+          className={interaction ? 'plot-time-axis plot-axis-title' : undefined}
+          x={interaction ? left + span / 2 : chartWidth - 5}
+          y={chartHeight - 6}
+          textAnchor={interaction ? 'middle' : 'end'}
+        >
+          {interaction
+            ? interaction.axes?.timeLabel || interaction.timeLabel || 'Time (s)'
+            : 's'}
         </text>
       </svg>
     </section>

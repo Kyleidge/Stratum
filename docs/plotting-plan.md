@@ -14,23 +14,23 @@ in [DIAdem's band zoom](https://knowledge.ni.com/KnowledgeArticleDetails?id=kA0V
 [DIAdem's curve scaling](https://knowledge.ni.com/KnowledgeArticleDetails?id=kA0VU0000000quf0AA),
 and [Signal Analyzer's measurements](https://www.mathworks.com/help/signal/ug/measure-signals.html).
 
-| Expectation                 | Design for this implementation                                                                                                                                                                                                                                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A useful Active document    | One Active tab contains the current signal/value plot and its operation's outputs. Selecting an operation shows its outputs immediately; selecting a member shows its plot with the output list still accessible below. No duplicate Step outputs tab.                                                |
-| Persistent comparison plots | Keep, create, duplicate, rename, close and reopen plots. Preserve trace styles, axes, viewport and annotations locally. Existing saved layouts migrate with defaults.                                                                                                                                 |
-| Direct manipulation         | Drag to pan; wheel zoom about the pointer; select Zoom and drag a time band; double-click the plot to fit. Escape cancels a gesture. Keyboard arrows pan, +/− zoom, Home fits and Backspace restores the previous view.                                                                               |
-| Predictable navigation      | Toolbar equivalents for every gesture, bounded navigation history, explicit mode and visible selected range. A fit command restores the complete range. Zoom requests a new envelope from evaluated data.                                                                                             |
-| Axis control                | Double-click an axis to edit its limits. Automatic or fixed Y limits, linear or logarithmic Y scaling, explicit time limits, grid and trace rendering settings. Invalid limits receive inline errors. Log plots exclude non-positive values and say so.                                               |
-| Honest comparisons          | Overlay only matching units and time references; other signals remain stacked. Matching time axes share navigation and cursors. Relative-start alignment stays an explicit display setting. Different clocks retain independent ranges.                                                               |
-| Trace manipulation          | Drop history items on a plot or its tab; drop on New plot to create a comparison. Preserve exact existing batch membership. Drag trace rows to reorder; keyboard move controls are also available. Show/hide, isolate, restore all, color, line/point/step style, width and direct source inspection. |
-| Plot manipulation           | Double-click a tab to rename. Drag saved tabs to reorder, with keyboard alternatives. Duplicate includes settings. Closing is reversible and never removes workflow outputs.                                                                                                                          |
-| Measurement cursors         | Toggle A/B cursors, click or drag their handles, or enter times. A/B time, Δt, sampled values and Δvalue remain visible in a bounded table. Cursor measurements use actual evaluated samples, including missing values; no preview-point value is presented as an exact measurement.                  |
-| Region statistics           | Compute finite count, min, max, mean, RMS and time integral between cursors, using a cancellable worker read. Preserve missing-data discontinuities and return no result for an empty interval. Scalar results remain reference lines rather than synthetic sampled signals.                          |
-| Annotations                 | Add a time annotation with text; double-click its marker to edit or remove it. Notes are plot-local display metadata, bounded in number, and exported with the plot.                                                                                                                                  |
-| Delivery                    | Export the rendered plot as SVG or PNG with labels, units, cursors and annotations. Keep evaluated-sample CSV/report exports in their existing explicit workflow scope.                                                                                                                               |
-| Dense layout                | Compact grouped toolbar, plot canvas, measurement tray and trace list. Output details are a collapsible dock within Active. No repeated instructional banner; gestures live in a concise help dialog and tooltips.                                                                                    |
-| Accessibility and recovery  | Labeled controls, focus rings, keyboard equivalents, visible loading/errors, retry, no mutation during measurement, stale-response protection, missing trace references retained for workflow Undo.                                                                                                   |
-| Large collections           | Preserve up to 10,000 trace references and 12 plots, render bounded trace pages and at most eight stacked panels. Measurement requests cover a page of traces; never create thousands of hidden rows or charts.                                                                                       |
+| Expectation                 | Design for this implementation                                                                                                                                                                                                                                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A useful Active document    | One Active tab contains the current signal/value plot and its operation's outputs. Selecting an operation shows its outputs immediately; selecting a member shows its plot with the output list still accessible below. No duplicate Step outputs tab.                                                                                                     |
+| Persistent comparison plots | Keep, create, duplicate, rename, close and reopen plots. Preserve trace styles, axes, viewport and annotations locally. Existing saved layouts migrate with defaults.                                                                                                                                                                                      |
+| Direct manipulation         | Drag to pan; wheel zoom about the pointer; select Zoom and drag a time band; double-click the plot to fit. Escape cancels a gesture. Keyboard arrows pan, +/− zoom, Home fits and Backspace restores the previous view.                                                                                                                                    |
+| Predictable navigation      | Toolbar equivalents for every gesture, bounded navigation history, explicit mode and visible selected range. A fit command restores the complete range. Zoom requests a new envelope from evaluated data.                                                                                                                                                  |
+| Axis control                | Automatically name axes from signal names/units; double-click an axis to edit its name and limits. Wheel over an axis zooms only that axis. Automatic or fixed Y limits, linear or logarithmic Y scaling, explicit time limits, grid and trace rendering settings. Invalid limits receive inline errors. Log plots exclude non-positive values and say so. |
+| Honest comparisons          | Matching time references overlay with one independently scaled Y axis per unit; unrelated clocks remain stacked. Matching time axes share navigation and cursors. Relative-start alignment stays an explicit display setting. Different clocks retain independent ranges.                                                                                  |
+| Trace manipulation          | Drop history items on a plot or its tab; drop on New plot to create a comparison. Preserve exact existing batch membership. Drag trace rows to reorder; keyboard move controls are also available. Show/hide, isolate, restore all, color, line/point/step style, width and direct source inspection.                                                      |
+| Plot manipulation           | Double-click a tab to rename. Drag saved tabs to reorder, with keyboard alternatives. Duplicate includes settings. Closing is reversible and never removes workflow outputs.                                                                                                                                                                               |
+| Measurement cursors         | Toggle A/B cursors, click or drag their handles, or enter times. A/B time, Δt, sampled values and Δvalue remain visible in a bounded table. Cursor measurements use actual evaluated samples, including missing values; no preview-point value is presented as an exact measurement.                                                                       |
+| Region statistics           | Compute finite count, min, max, mean, RMS and time integral between cursors, using a cancellable worker read. Preserve missing-data discontinuities and return no result for an empty interval. Scalar results remain reference lines rather than synthetic sampled signals.                                                                               |
+| Annotations                 | Add a time annotation with text; double-click its marker to edit or remove it. Notes are plot-local display metadata, bounded in number, and exported with the plot.                                                                                                                                                                                       |
+| Delivery                    | Export the rendered plot as SVG or PNG with labels, units, cursors and annotations. Keep evaluated-sample CSV/report exports in their existing explicit workflow scope.                                                                                                                                                                                    |
+| Dense layout                | Compact grouped toolbar, plot canvas, measurement tray and trace list. Output details are a collapsible dock within Active. No repeated instructional banner; gestures live in a concise help dialog and tooltips.                                                                                                                                         |
+| Accessibility and recovery  | Labeled controls, focus rings, keyboard equivalents, visible loading/errors, retry, no mutation during measurement, stale-response protection, missing trace references retained for workflow Undo.                                                                                                                                                        |
+| Large collections           | Preserve up to 10,000 trace references and 12 plots, render bounded trace pages and at most eight stacked panels. Measurement requests cover a page of traces; never create thousands of hidden rows or charts.                                                                                                                                            |
 
 ## Interaction contracts
 
@@ -42,8 +42,9 @@ and [Signal Analyzer's measurements](https://www.mathworks.com/help/signal/ug/me
 3. Pan and zoom operate in display time. Per-trace source ranges add back any
    relative-start offset before worker evaluation. Shared clocks use the same
    display limits; unrelated clocks do not acquire a false common time reference.
-4. Wheel handling is confined to a focused plot, so ordinary workspace scrolling
-   remains available. Pointer capture keeps drags working outside the canvas.
+4. Wheel handling is confined to a focused plot or an explicit axis hit region.
+   Over a Y axis it zooms that unit; over time ticks it zooms time. Pointer capture
+   keeps drags working outside the canvas.
 5. Cursor A/B readings choose the nearest evaluated sample, prefer the earlier
    sample on ties, and expose its actual sample time. Out-of-range cursors return
    no sample. Missing samples stay missing rather than snapping past a gap.
@@ -107,7 +108,8 @@ share one document. Saved plots retain their viewport, trace styling, axes,
 annotations, cursor positions and measurement visibility. Output table rows can
 also be dragged directly into plots.
 
-- 118 numerical and workflow tests pass, including streaming measurement gaps,
+- 120 numerical and workflow tests pass, including independent unit axes,
+  pointer-anchored logarithmic scaling, streaming measurement gaps,
   earlier-sample ties, cancellation, viewport boundary context and independent
   measurement/plot request coalescing.
 - The native UI suite passes pan/box/wheel gestures, Escape cancellation,
@@ -125,3 +127,14 @@ Plot images contain the currently rendered panels and a bounded trace legend.
 Samples CSV remains an evaluated-data export. Measurement reads and zoom
 refinement stream existing signals; they do not add an envelope pyramid or claim
 constant-time access to arbitrary large recordings.
+
+## Multiple-axis follow-up
+
+Each exact unit gets a stable, independent Y scale on the shared time plot.
+Signal names and units supply automatic axis names; blank manual names restore
+automatic naming. Wheel zoom targets the axis under the pointer, with logarithmic
+zoom performed in log space. Axis limits/names persist, survive trace reordering
+and duplication, and participate in Previous view. Legacy Y limits apply only
+to the first unit. Unrelated clocks still require explicit display alignment.
+For unusually large unit collections, each page draws at most eight Y axes;
+horizontal scrolling preserves a useful data area without dropping trace membership.

@@ -21,6 +21,12 @@ import {
 } from '../lib/plot-scratchpad';
 import { measurePlot } from '../lib/plot-measurement';
 import {
+  groupPlotAxes,
+  valueAxisSettings,
+  valueAxisRange,
+  zoomValueAxis,
+} from '../lib/plot-axes';
+import {
   readWorkflowDrag,
   targetSignals,
   targetPlotOutputs,
@@ -101,6 +107,88 @@ void test('plot windows preserve pointer anchors, clamp pan, and validate saved 
   assert.deepEqual(saved.annotations, [
     { id: 'note', time: 3, text: 'Test <label>' },
   ]);
+});
+
+void test('unit axes name and scale independently and retain their identity across trace reorder', () => {
+  const inputs = [
+    { name: 'Speed', unit: 'rpm', color: '#91e5ba' },
+    { name: 'Torque', unit: 'Nm', color: '#7ebcff' },
+    { name: 'Filtered speed', unit: 'rpm', color: '#c4a0ff' },
+    { name: 'Temperature', unit: '°C', color: '#f2c479' },
+  ];
+  const groups = groupPlotAxes(inputs);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[0].label, 'Speed / Filtered speed (rpm)');
+  assert.equal(groups[1].label, 'Torque (Nm)');
+  assert.equal(groupPlotAxes(inputs.toReversed())[0].key, groups[2].key);
+  const saved = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:multi',
+        name: 'Multi',
+        traces: [],
+        axes: {
+          y: [0, 7000],
+          timeLabel: ' Test time ',
+          values: {
+            'unit:Nm': { y: [1, 100], log: true, label: 'Shaft torque' },
+            'unit:°C': { y: [-10, 0], log: true },
+            __proto__: {},
+          },
+        },
+      },
+    ]),
+  )[0].axes;
+  assert.equal(saved?.timeLabel, 'Test time');
+  assert.deepEqual(valueAxisSettings(saved, 'unit:Nm', 'unit:rpm').y, [1, 100]);
+  assert.equal(
+    valueAxisSettings(saved, 'unit:Nm', 'unit:rpm').label,
+    'Shaft torque',
+  );
+  assert.deepEqual(
+    valueAxisSettings(saved, 'unit:rpm', 'unit:rpm').y,
+    [0, 7000],
+  );
+  assert.equal(valueAxisSettings(saved, 'unit:°C', 'unit:rpm').y, undefined);
+  assert.equal(valueAxisSettings(saved, 'unit:V', 'unit:rpm').y, undefined);
+  const plot = {
+    id: 'torque',
+    points: [
+      [0, 40],
+      [1, 80],
+    ],
+    summary: {
+      count: 2,
+      start: 0,
+      end: 1,
+      min: 40,
+      max: 80,
+      mean: 60,
+      integral: 60,
+    },
+  } satisfies import('../lib/signal-types').Plot;
+  assert.deepEqual(valueAxisRange([plot], {}, false), [36.8, 83.2]);
+  assert.deepEqual(valueAxisRange([plot], { y: [0, 100] }, false), [0, 100]);
+});
+
+void test('axis wheel zoom preserves the pointer value for linear and logarithmic scales', () => {
+  assert.deepEqual(zoomValueAxis([0, 100], 0.5, 0.25), [12.5, 62.5]);
+  const logarithmic = zoomValueAxis([1, 10000], 0.5, 0.25, true);
+  assert.ok(Math.abs(Math.log10(logarithmic[0]) - 0.5) < 1e-12);
+  assert.ok(Math.abs(Math.log10(logarithmic[1]) - 2.5) < 1e-12);
+  assert.deepEqual(zoomValueAxis([-1, 10], 0.5, 0.5, true), [-1, 10]);
+  assert.deepEqual(zoomValueAxis([1, 10], NaN, 0.5), [1, 10]);
+  assert.deepEqual(zoomValueAxis([1, 1 + Number.EPSILON], 0.5, 0.5), [
+    1,
+    1 + Number.EPSILON,
+  ]);
+  const tiny = zoomValueAxis([0, 1e-18], 0.5, 0.5);
+  assert.ok(Math.abs(tiny[0] / 1e-18 - 0.25) < 1e-12);
+  assert.ok(Math.abs(tiny[1] / 1e-18 - 0.75) < 1e-12);
+  assert.deepEqual(
+    zoomValueAxis([1e-300, 1e300], 3, 0.5, true),
+    [1e-300, 1e300],
+  );
 });
 
 void test('plot measurements stream actual samples across chunks and never bridge missing data', async () => {

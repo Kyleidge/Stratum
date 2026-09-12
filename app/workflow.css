@@ -435,6 +435,7 @@
 .scratchpad-canvas .signal-chart {
   border: 0;
   padding: 0 4px;
+  overflow-x: auto;
 }
 .scratchpad-canvas .signal-chart svg {
   min-height: 0;
@@ -2860,6 +2861,39 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
 }
 .plot-scratchpad .scratchpad-canvas .signal-chart svg[data-fill-height] {
   height: clamp(230px, calc(100dvh - 320px), 900px);
+}
+.plot-axis-names {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.plot-axis-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+}
+.plot-axis-field input,
+.plot-axis-field select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--input);
+  color: var(--foreground);
+}
+.scratchpad-canvas .signal-chart svg .plot-axis-title {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+}
+.plot-value-axis {
+  cursor: ns-resize;
+}
+.plot-time-axis {
+  cursor: ew-resize;
 }
 .plot-scratchpad:has(.scratchpad-traces)
   .scratchpad-canvas

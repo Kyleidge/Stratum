@@ -22,7 +22,11 @@ export type PlotTrace = {
   width?: number;
 };
 export type PlotAnnotation = { id: string; time: number; text: string };
-export type PlotAxes = { y?: PlotRange; log?: boolean };
+export type PlotValueAxis = { y?: PlotRange; log?: boolean; label?: string };
+export type PlotAxes = PlotValueAxis & {
+  values?: Record<string, PlotValueAxis>;
+  timeLabel?: string;
+};
 export type PlotSheet = {
   id: string;
   name: string;
@@ -138,11 +142,16 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
             ? { window: plotWindow(sheet.window) }
             : {}),
           axes: {
-            log: sheet.axes?.log === true,
-            ...(validPlotRange(sheet.axes?.y) &&
-            (!sheet.axes?.log || sheet.axes.y[0] > 0)
-              ? { y: sheet.axes.y }
-              : {}),
+            ...readValueAxis(sheet.axes),
+            timeLabel: readAxisLabel(sheet.axes?.timeLabel),
+            values: Object.fromEntries(
+              sheet.axes?.values && typeof sheet.axes.values === 'object'
+                ? Object.entries(sheet.axes.values)
+                    .slice(0, MAX_PLOT_TRACES)
+                    .filter(([key]) => key.startsWith('unit:'))
+                    .map(([key, axis]) => [key, readValueAxis(axis)])
+                : [],
+            ),
           },
           annotations: Array.isArray(sheet.annotations)
             ? sheet.annotations.slice(0, 50).flatMap((note) =>
@@ -168,4 +177,22 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
   } catch {
     return [];
   }
+}
+
+function readAxisLabel(value: unknown): string | undefined {
+  return typeof value === 'string'
+    ? value.trim().slice(0, 160) || undefined
+    : undefined;
+}
+
+function readValueAxis(value: unknown): PlotValueAxis {
+  if (!value || typeof value !== 'object') return {};
+  const axis = value as PlotValueAxis;
+  return {
+    log: axis.log === true,
+    label: readAxisLabel(axis.label),
+    ...(validPlotRange(axis.y) && (!axis.log || axis.y[0] > 0)
+      ? { y: axis.y }
+      : {}),
+  };
 }

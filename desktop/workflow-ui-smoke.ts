@@ -386,12 +386,16 @@ export async function workflowUiSmoke() {
       document.querySelector<HTMLElement>('.scratchpad-canvas')!,
     );
     await until(
-      () => document.querySelectorAll('.scratchpad-stack svg').length === 2,
-      'separate axes for mixed units',
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 2,
+      'multiple Y axes for mixed units',
     );
     assert(
-      button('Overlay') === undefined,
-      'Mixed units were allowed on one value axis.',
+      button('Overlay') !== undefined &&
+        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+          .length === 1,
+      'Mixed units should share one plot with independent value axes.',
     );
     await click(
       'Motor speed',
@@ -414,7 +418,7 @@ export async function workflowUiSmoke() {
     hide.click();
     await until(
       () =>
-        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
           .length === 1,
       'hidden trace',
     );
@@ -423,7 +427,7 @@ export async function workflowUiSmoke() {
       .click();
     await until(
       () =>
-        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
           .length === 2,
       'restored trace',
     );
@@ -494,6 +498,40 @@ export async function workflowUiSmoke() {
     await until(
       () => document.querySelectorAll('.scratchpad-trace').length === 3,
       'picker trace added',
+    );
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 2 &&
+        document
+          .querySelector('[data-value-axis="unit:Nm"]')
+          ?.textContent?.includes('Torque / Smoothed torque (Nm)'),
+      'Same-unit traces did not share an automatically named axis.',
+    );
+    await click('Add signals');
+    const thirdUnitPicker = await dialog();
+    setValue(
+      thirdUnitPicker.querySelector<HTMLInputElement>(
+        '[aria-label="Search plot signals"]',
+      )!,
+      'Torque × speed',
+    );
+    await delay();
+    thirdUnitPicker
+      .querySelector<HTMLButtonElement>('[role="checkbox"]')!
+      .click();
+    await delay();
+    await click('Apply signals', thirdUnitPicker);
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 3,
+      'third independent Y axis',
+    );
+    assert(
+      document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+        .length === 1,
+      'A third unit split the plot.',
     );
     document
       .querySelector<HTMLButtonElement>(
@@ -889,7 +927,13 @@ export async function workflowUiSmoke() {
     assert(
       [
         ...document.querySelectorAll('.scratchpad-canvas [clip-path] path[d]'),
-      ].every((path) => path.getAttribute('d')?.startsWith('M70.00,')),
+      ].every((path) =>
+        path
+          .getAttribute('d')
+          ?.startsWith(
+            `M${Number(path.closest('svg')?.getAttribute('data-plot-left')).toFixed(2)},`,
+          ),
+      ),
       'Segments did not share the zero origin.',
     );
     // A processing tool receives this member, without adding its sibling segments.
