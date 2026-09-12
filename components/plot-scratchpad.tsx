@@ -83,7 +83,6 @@ type Props = {
   outputs: ReactNode;
   outputCount: number;
   valueCard: ReactNode;
-  onExport: () => void;
   busy: boolean;
   onNotice: (message: string) => void;
   onDragEnd: () => void;
@@ -109,7 +108,6 @@ export default function PlotScratchpad({
   outputs,
   outputCount,
   valueCard,
-  onExport,
   busy,
   onNotice,
   onDragEnd,
@@ -460,22 +458,6 @@ export default function PlotScratchpad({
 
   return (
     <section className="plot-scratchpad" aria-label="Plot scratchpad">
-      <header className="scratchpad-heading">
-        <div>
-          <ChartNoAxesCombined size={21} />
-          <h1>Plot scratchpad</h1>
-        </div>
-        <span>Drag from History to add traces</span>
-        <button
-          className="secondary-button"
-          disabled={!loaded || sheets.length >= MAX_PLOT_TABS}
-          title={`Create a blank plot · up to ${MAX_PLOT_TABS} tabs`}
-          {...dropProps('new')}
-          onClick={() => create([])}
-        >
-          <Plus size={16} /> New plot
-        </button>
-      </header>
       <Tabs
         value={selectedTab}
         onValueChange={onView}
@@ -485,11 +467,11 @@ export default function PlotScratchpad({
           <TabsList variant="line" aria-label="Plot tabs">
             <TabsTrigger
               value="result"
+              title="Follows the selected signal in History"
               {...dropProps('result')}
               data-drop={over === 'result'}
             >
               <Activity size={15} /> Active{' '}
-              <span className="scratchpad-live">LIVE</span>
             </TabsTrigger>
             {sheets.map((item) => (
               <TabsTrigger
@@ -516,19 +498,17 @@ export default function PlotScratchpad({
               <span className="scratchpad-tab-count">{outputCount}</span>
             </TabsTrigger>
           </TabsList>
+          <button
+            className="secondary-button"
+            disabled={!loaded || sheets.length >= MAX_PLOT_TABS}
+            title={`Create a blank plot · up to ${MAX_PLOT_TABS} tabs`}
+            {...dropProps('new')}
+            onClick={() => create([])}
+          >
+            <Plus size={16} /> New plot
+          </button>
         </div>
-        <TabsContent value="outputs">
-          <div className="scratchpad-output-actions">
-            <button
-              className="secondary-button"
-              disabled={busy || !outputCount}
-              onClick={onExport}
-            >
-              <Download size={15} /> Export / report
-            </button>
-          </div>
-          {outputs}
-        </TabsContent>
+        <TabsContent value="outputs">{outputs}</TabsContent>
         {/* Only the selected plot mounts; large workspaces never render hidden charts. */}
         <TabsContent
           value={selectedTab === 'outputs' ? '__inactive-plot' : selectedTab}
@@ -547,17 +527,8 @@ export default function PlotScratchpad({
                   {saved.name}
                 </button>
               ) : (
-                <strong>
-                  {activeId
-                    ? index.label(activeId)
-                    : 'Select a signal to begin'}
-                </strong>
+                <h1>{activeId ? index.label(activeId) : 'Select a signal'}</h1>
               )}
-              <small>
-                {isActive
-                  ? 'Follows your selection in History'
-                  : `${sheet.traces.length} traces · click the title to rename`}
-              </small>
             </div>
             {isActive ? (
               <button
@@ -755,6 +726,7 @@ export default function PlotScratchpad({
                         onSegment={() => {}}
                         fluid
                         height={traces.length > 1 ? 185 : 340}
+                        fillHeight={traces.length === 1}
                         heading={false}
                         grid={sheet.grid}
                         includeZero={false}
@@ -781,6 +753,7 @@ export default function PlotScratchpad({
                     onSegment={() => {}}
                     fluid
                     height={340}
+                    fillHeight
                     heading={false}
                     grid={sheet.grid}
                     includeZero={false}
@@ -794,14 +767,14 @@ export default function PlotScratchpad({
                   {sheet.traces.length
                     ? 'No visible traces'
                     : saved
-                      ? 'A fresh canvas'
-                      : 'Your selection, in focus'}
+                      ? 'Empty plot'
+                      : 'No signal selected'}
                 </h2>
                 <p>
                   {sheet.traces.length
                     ? 'Show a trace below, or add another signal.'
                     : saved
-                      ? 'Add signals to compare them here. This plot stays put as you explore.'
+                      ? 'Add signals or drag outputs from History.'
                       : 'Select a signal in History. Keep a plot when you want to build on it.'}
                 </p>
                 {saved && (
@@ -849,10 +822,7 @@ export default function PlotScratchpad({
                         ? 'Shared time axis · separate value axes'
                         : 'Shared time & value axes'}
               </span>
-              <span>
-                {formatValue(100 / (window[1] - window[0]), 0)}% · hover to
-                inspect preview
-              </span>
+              <span>{formatValue(100 / (window[1] - window[0]), 0)}%</span>
             </div>
           </div>
           {saved ? (

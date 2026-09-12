@@ -335,7 +335,7 @@ export default function WorkflowToolbar({
                 />
               }
             >
-              <MoreHorizontal size={19} />
+              <MoreHorizontal size={16} /> <span>Inspect / export</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="workflow-tools-menu" align="end">
               <DropdownMenuGroup>

@@ -457,7 +457,7 @@ export async function workflowUiSmoke() {
       .click();
     await delay();
     assert(
-      document.querySelector('.scratchpad-plot-title strong')?.textContent ===
+      document.querySelector('.scratchpad-plot-title h1')?.textContent ===
         'Torque',
       'Active did not follow the latest selection.',
     );
@@ -499,7 +499,7 @@ export async function workflowUiSmoke() {
     await delay();
     assert(
       document
-        .querySelector('.workflow-status')
+        .querySelector('.workflow-properties')
         ?.textContent?.includes('Original signal'),
       'Startup must expose an original signal.',
     );
@@ -791,7 +791,9 @@ export async function workflowUiSmoke() {
     await click('Create 1 derived signal', await dialog());
     await settled();
     assert(
-      selectedHistoryRow().textContent?.includes('Derived signal'),
+      selectedHistoryRow()
+        .getAttribute('aria-label')
+        ?.includes('Derived signal'),
       'Derived output was not selected.',
     );
     await segment('12, 51\n70, 109\n128, 167');
@@ -802,7 +804,7 @@ export async function workflowUiSmoke() {
     await openFirstOutput();
     assert(
       document
-        .querySelector('.workflow-status')
+        .querySelector('.workflow-input-scope')
         ?.textContent?.includes('3 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
@@ -1002,7 +1004,7 @@ export async function workflowUiSmoke() {
     await segment(Array.from({ length: 40 }, () => '15, 16').join('\n'));
     assert(
       document
-        .querySelector('.workflow-status')
+        .querySelector('.workflow-input-scope')
         ?.textContent?.includes('40 checked'),
       'Batch processing selection lost members.',
     );
@@ -1084,7 +1086,7 @@ export async function workflowUiSmoke() {
     );
     await openFirstOutput();
     assert(
-      selectedHistoryRow().textContent?.includes('Value'),
+      selectedHistoryRow().getAttribute('aria-label')?.includes('Value'),
       'A late batch member cannot be selected.',
     );
     await exportFile();
@@ -1146,7 +1148,7 @@ export async function workflowUiSmoke() {
     await delay();
     assert(
       document
-        .querySelector('.workflow-status')
+        .querySelector('.workflow-properties')
         ?.textContent?.includes('Original signal'),
       'Original signal was lost after downstream processing.',
     );

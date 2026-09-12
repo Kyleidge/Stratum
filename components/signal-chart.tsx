@@ -31,6 +31,7 @@ export default function SignalChart({
   heading = true,
   grid = true,
   includeZero = true,
+  fillHeight = false,
 }: {
   traces: Trace[];
   segments: Segment[];
@@ -42,20 +43,25 @@ export default function SignalChart({
   heading?: boolean;
   grid?: boolean;
   includeZero?: boolean;
+  /** Match a CSS-sized viewport without stretching labels or pointer geometry. */
+  fillHeight?: boolean;
 }) {
   const clipId = useId();
   const [cursor, setCursor] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(900);
+  const [measuredHeight, setMeasuredHeight] = useState(height);
   useEffect(() => {
-    if (!fluid || !svg.current) return;
+    if ((!fluid && !fillHeight) || !svg.current) return;
     const element = svg.current;
-    const observer = new ResizeObserver(() =>
-      setWidth(Math.max(200, element.clientWidth)),
-    );
+    const observer = new ResizeObserver(() => {
+      setWidth(Math.max(200, element.clientWidth));
+      if (fillHeight) setMeasuredHeight(Math.max(120, element.clientHeight));
+    });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [fluid]);
+  }, [fluid, fillHeight]);
+  const chartHeight = fillHeight ? measuredHeight : height;
   const chartWidth = fluid ? width : 900;
   const left = fluid ? 70 : 58;
   const right = chartWidth - 28;
@@ -70,8 +76,11 @@ export default function SignalChart({
   const padding = (high - low || Math.abs(high) || 1) * 0.08;
   const min = includeZero ? Math.min(0, low - padding) : low - padding;
   const max = includeZero ? Math.max(0, high + padding) : high + padding;
-  const bottom = height - 31;
+  const bottom = chartHeight - 31;
   const plotHeight = bottom - 15;
+  const valueTicks = fluid
+    ? Math.max(4, Math.min(8, Math.floor(plotHeight / 85)))
+    : 4;
   const x = (t: number) =>
     left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
   // Merge independent subpaths by style for large overlays. Every trace and
@@ -171,8 +180,9 @@ export default function SignalChart({
       )}
       <svg
         ref={svg}
-        viewBox={`0 0 ${chartWidth} ${height}`}
-        style={height !== 151 ? { height } : undefined}
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        data-fill-height={fillHeight || undefined}
+        style={!fillHeight && height !== 151 ? { height } : undefined}
         preserveAspectRatio={fluid ? 'xMidYMid meet' : 'none'}
         aria-label={`${primary?.label || primary?.node.name || 'Signal'} over time`}
         onPointerMove={(event) => {
@@ -196,19 +206,26 @@ export default function SignalChart({
             <rect x={left} y="8" width={span} height={bottom - 5} />
           </clipPath>
         </defs>
-        {[0, 1, 2, 3].map((i) => (
+        {Array.from({ length: valueTicks }, (_, i) => (
           <g key={i}>
             {grid && (
               <line
                 x1={left}
                 x2={right}
-                y1={15 + (i * plotHeight) / 3}
-                y2={15 + (i * plotHeight) / 3}
+                y1={15 + (i * plotHeight) / (valueTicks - 1)}
+                y2={15 + (i * plotHeight) / (valueTicks - 1)}
                 className="chart-grid"
               />
             )}
-            <text x={left - 12} y={19 + (i * plotHeight) / 3} textAnchor="end">
-              {formatValue(max - (i / 3) * (max - min), max > 100 ? 0 : 1)}
+            <text
+              x={left - 12}
+              y={19 + (i * plotHeight) / (valueTicks - 1)}
+              textAnchor="end"
+            >
+              {formatValue(
+                max - (i / (valueTicks - 1)) * (max - min),
+                max > 100 ? 0 : 1,
+              )}
             </text>
           </g>
         ))}
@@ -225,7 +242,7 @@ export default function SignalChart({
             )}
             <text
               x={left + (i * span) / (ticks - 1)}
-              y={height - 9}
+              y={chartHeight - 9}
               textAnchor="middle"
             >
               {formatValue(
@@ -302,7 +319,7 @@ export default function SignalChart({
             </text>
           </g>
         )}
-        <text x={chartWidth - 5} y={height - 9} textAnchor="end">
+        <text x={chartWidth - 5} y={chartHeight - 9} textAnchor="end">
           s
         </text>
       </svg>

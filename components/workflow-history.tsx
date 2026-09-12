@@ -31,7 +31,7 @@ import type { WorkflowManagementAction } from './workflow-management';
 import { startWorkflowDrag, targetSignals } from '@/lib/workflow-drag';
 
 export type WorkflowSelection = { kind: 'step' | 'output'; id: string };
-const ROW_HEIGHT = 48;
+const ROW_HEIGHT = 28;
 
 export default function WorkflowHistory({
   steps,
@@ -194,7 +194,9 @@ export default function WorkflowHistory({
       >
         {!rows.length && (
           <p className="workflow-empty">
-            No matching steps. Clear the search or lineage filter.
+            {steps.length
+              ? 'No matching steps. Clear the search or lineage filter.'
+              : 'No operations in this scope.'}
           </p>
         )}
         <div
@@ -271,6 +273,13 @@ export default function WorkflowHistory({
                 }}
                 onDragEnd={() => onDragSelection?.(null)}
                 title={row.label}
+                aria-label={
+                  row.kind === 'step'
+                    ? `${row.label} · ${step.outputIds.length} outputs${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
+                    : row.outputId
+                      ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}`
+                      : row.label
+                }
                 style={{
                   position: 'absolute',
                   top: position * ROW_HEIGHT,
@@ -369,12 +378,11 @@ export default function WorkflowHistory({
                         {row.label}
                       </strong>
                       <small>
-                        {row.kind === 'step' &&
-                          (step.revision ?? 1) > 1 &&
-                          `v${step.revision} · `}
                         {row.kind === 'step'
-                          ? `${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length} ${contributingOutputs ? 'contributing ' : ''}${step.kind === 'value' ? 'values' : 'signals'}${step.kind === 'regions' ? ' · saved ranges' : ''}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ` +${inputSteps.length - 3}` : ''}` : ''}`
-                          : `${index.kind(row.outputId!)} · ${index.nodes.get(row.outputId!)?.unit ?? index.values.get(row.outputId!)?.unit ?? ''}`}
+                          ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length}`
+                          : (index.nodes.get(row.outputId!)?.unit ??
+                            index.values.get(row.outputId!)?.unit ??
+                            '')}
                       </small>
                     </span>
                   </>

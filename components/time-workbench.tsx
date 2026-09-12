@@ -498,8 +498,11 @@ export default function TimeWorkbench({
                 [...new Set(plotIds.map((id) => graph.find(id).unit))].map(
                   (unit) => (
                     <div key={unit}>
+                      <div className="time-plot-unit">{unit || 'Value'}</div>
                       <SignalChart
                         fluid
+                        heading={false}
+                        height={190}
                         traces={plots.plots
                           .filter((p) => graph.find(p.id).unit === unit)
                           .map((plot, i) => ({

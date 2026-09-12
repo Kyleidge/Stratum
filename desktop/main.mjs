@@ -40,10 +40,13 @@ let window;
 const downloads = [];
 const downloaded = new Set();
 if (smoke)
-  setTimeout(() => {
-    process.stderr.write('Desktop startup or integration test timed out.\n');
-    app.exit(1);
-  }, 60000);
+  setTimeout(
+    () => {
+      process.stderr.write('Desktop startup or integration test timed out.\n');
+      app.exit(1);
+    },
+    uiSmoke ? 120000 : 60000,
+  );
 
 async function createWindow() {
   window = new BrowserWindow({
@@ -161,17 +164,45 @@ async function createWindow() {
           }
           window.setContentSize(1540, 940);
           await new Promise((resolve) => setTimeout(resolve, 300));
+          // Flush the hidden window's first frame before saving review images.
+          await window.webContents.capturePage(undefined, { stayHidden: true });
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const verifyChartLayout = async () => {
+            assert.ok(
+              await window.webContents.executeJavaScript(`
+                (() => {
+                  const chart = document.querySelector('.scratchpad-canvas .signal-chart svg[data-fill-height]');
+                  const height = chart.viewBox.baseVal.height;
+                  const unit = chart.lastElementChild;
+                  return Math.abs(chart.clientHeight - height) < 1 &&
+                    Math.abs(chart.clientWidth - chart.viewBox.baseVal.width) < 1 &&
+                    Number(unit.getAttribute('y')) > height - 20;
+                })()
+              `),
+              'Resized plots must keep labels at the axis and preserve pointer coordinates',
+            );
+          };
+          await verifyChartLayout();
           const output = resolve('outputs');
           mkdirSync(output, { recursive: true });
           writeFileSync(
             resolve(output, 'workflow-desktop.png'),
-            (await window.webContents.capturePage()).toPNG(),
+            (
+              await window.webContents.capturePage(undefined, {
+                stayHidden: true,
+              })
+            ).toPNG(),
           );
           window.setContentSize(860, 820);
           await new Promise((resolve) => setTimeout(resolve, 300));
+          await verifyChartLayout();
           writeFileSync(
             resolve(output, 'workflow-desktop-compact.png'),
-            (await window.webContents.capturePage()).toPNG(),
+            (
+              await window.webContents.capturePage(undefined, {
+                stayHidden: true,
+              })
+            ).toPNG(),
           );
           assert.ok(
             await window.webContents.executeJavaScript(`
@@ -186,7 +217,11 @@ async function createWindow() {
           await new Promise((resolve) => setTimeout(resolve, 300));
           writeFileSync(
             resolve(output, 'workflow-desktop-derived.png'),
-            (await window.webContents.capturePage()).toPNG(),
+            (
+              await window.webContents.capturePage(undefined, {
+                stayHidden: true,
+              })
+            ).toPNG(),
           );
         }
         app.exit(0);

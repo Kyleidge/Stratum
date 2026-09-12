@@ -603,7 +603,7 @@ export default function SegmentationEditor({
             </p>
           )}
       </div>
-      <div className="segment-preview" aria-live="polite">
+      <div className="segment-preview" aria-live="polite" data-empty={!plan}>
         {plan ? (
           <>
             <strong>
