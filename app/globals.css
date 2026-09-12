@@ -54,6 +54,16 @@ body {
   font-family:
     var(--font-geist-sans, 'Segoe UI'), 'Segoe UI', Arial, sans-serif;
   font-size: 14px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable=''],
+[contenteditable='true'],
+[contenteditable='plaintext-only'] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 button,
 input {
