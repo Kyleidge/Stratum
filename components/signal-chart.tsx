@@ -2,6 +2,12 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
+import type {
+  PlotAnnotation,
+  PlotAxes,
+  PlotRange,
+  PlotTrace,
+} from '@/lib/plot-scratchpad';
 
 export function formatValue(value: number, digits = 1): string {
   return Number.isFinite(value)
@@ -19,11 +25,25 @@ type Trace = {
   color?: string;
   label?: string;
   referenceLine?: boolean;
+  style?: PlotTrace['style'];
+  width?: number;
+};
+export type ChartInteraction = {
+  mode: 'pan' | 'zoom' | 'cursor';
+  axes?: PlotAxes;
+  cursors?: PlotRange;
+  annotations?: PlotAnnotation[];
+  onRange: (range: PlotRange) => void;
+  onCursors: (range: PlotRange) => void;
+  onFit: () => void;
+  onBack: () => void;
+  onAxes: () => void;
+  onAnnotation: (time: number, id?: string) => void;
 };
 export default function SignalChart({
   traces,
   segments,
-  range,
+  range: inputRange,
   onSegment,
   compact = false,
   fluid = false,
@@ -32,6 +52,7 @@ export default function SignalChart({
   grid = true,
   includeZero = true,
   fillHeight = false,
+  interaction,
 }: {
   traces: Trace[];
   segments: Segment[];
@@ -45,12 +66,29 @@ export default function SignalChart({
   includeZero?: boolean;
   /** Match a CSS-sized viewport without stretching labels or pointer geometry. */
   fillHeight?: boolean;
+  interaction?: ChartInteraction;
 }) {
   const clipId = useId();
   const [cursor, setCursor] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(900);
   const [measuredHeight, setMeasuredHeight] = useState(height);
+  const [gesture, setGesture] = useState<{
+    start: number;
+    end: number;
+    range: PlotRange;
+    mode: 'pan' | 'zoom' | 'a' | 'b';
+  }>();
+  const range = useMemo<PlotRange>(
+    () =>
+      gesture?.mode === 'pan'
+        ? [
+            gesture.range[0] + gesture.start - gesture.end,
+            gesture.range[1] + gesture.start - gesture.end,
+          ]
+        : inputRange,
+    [gesture, inputRange],
+  );
   useEffect(() => {
     if ((!fluid && !fillHeight) || !svg.current) return;
     const element = svg.current;
@@ -68,14 +106,34 @@ export default function SignalChart({
   const span = right - left;
   const ticks = fluid ? Math.max(3, Math.min(10, Math.floor(span / 85))) : 10;
   const primary = traces[0];
+  const logarithmic = !!interaction?.axes?.log;
   const finite = traces
-    .flatMap((t) => [t.plot.summary.min, t.plot.summary.max])
-    .filter(Number.isFinite);
-  const low = finite.length ? Math.min(...finite) : 0;
-  const high = finite.length ? Math.max(...finite) : 1;
-  const padding = (high - low || Math.abs(high) || 1) * 0.08;
-  const min = includeZero ? Math.min(0, low - padding) : low - padding;
-  const max = includeZero ? Math.max(0, high + padding) : high + padding;
+    .flatMap((t) =>
+      t.plot.summary.count
+        ? [t.plot.summary.min, t.plot.summary.max]
+        : t.plot.points.map((point) => point[1]),
+    )
+    .filter((n) => Number.isFinite(n) && (!logarithmic || n > 0));
+  if (logarithmic) {
+    for (const trace of traces)
+      for (const [, n] of trace.plot.points)
+        if (Number.isFinite(n) && n > 0) finite.push(n);
+  }
+  const low = finite.reduce((a, b) => Math.min(a, b), Infinity);
+  const high = finite.reduce((a, b) => Math.max(a, b), -Infinity);
+  const safeLow = Number.isFinite(low) ? low : logarithmic ? 0.1 : 0;
+  const safeHigh = Number.isFinite(high) ? high : 1;
+  const padding = (safeHigh - safeLow || Math.abs(safeHigh) || 1) * 0.08;
+  const yRange =
+    interaction?.axes?.y ??
+    (logarithmic
+      ? [safeLow / 1.1, safeHigh * 1.1]
+      : [
+          includeZero ? Math.min(0, safeLow - padding) : safeLow - padding,
+          includeZero ? Math.max(0, safeHigh + padding) : safeHigh + padding,
+        ]);
+  const min = logarithmic ? Math.log10(yRange[0]) : yRange[0];
+  const max = logarithmic ? Math.log10(yRange[1]) : yRange[1];
   const bottom = chartHeight - 31;
   const plotHeight = bottom - 15;
   const valueTicks = fluid
@@ -94,18 +152,30 @@ export default function SignalChart({
         color: string;
         reference: boolean;
         dots: boolean;
+        width: number;
       }
     >();
     for (const trace of traces) {
       const color = trace.color || trace.node.color;
-      const dots = trace.node.operation === 'min-max';
+      const dots =
+        trace.style === 'points' ||
+        trace.node.operation === 'min-max' ||
+        trace.plot.points.length === 1;
       const reference = !!trace.referenceLine;
-      const key = `${color}:${dots}:${reference}`;
-      const group = groups.get(key) ?? { key, d: [], color, reference, dots };
+      const strokeWidth = trace.width ?? 1.45;
+      const key = `${color}:${dots}:${reference}:${trace.style ?? 'line'}:${strokeWidth}`;
+      const group = groups.get(key) ?? {
+        key,
+        d: [],
+        color,
+        reference,
+        dots,
+        width: strokeWidth,
+      };
       let drawing = false;
       const parts: string[] = [];
       for (const [time, value] of trace.plot.points) {
-        if (!Number.isFinite(value)) {
+        if (!Number.isFinite(value) || (logarithmic && value <= 0)) {
           drawing = false;
           continue;
         }
@@ -114,13 +184,21 @@ export default function SignalChart({
           ((time - (trace.offset ?? 0) - range[0]) /
             (range[1] - range[0] || 1)) *
             span;
-        const py = bottom - ((value - min) / (max - min || 1)) * plotHeight;
+        const py =
+          bottom -
+          (((logarithmic ? Math.log10(value) : value) - min) /
+            (max - min || 1)) *
+            plotHeight;
         if (dots) {
           parts.push(
             `M${(px - 3.5).toFixed(2)},${py.toFixed(2)}a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0`,
           );
         } else {
-          parts.push(`${drawing ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`);
+          parts.push(
+            drawing && trace.style === 'step'
+              ? `H${px.toFixed(2)}V${py.toFixed(2)}`
+              : `${drawing ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`,
+          );
           drawing = true;
         }
       }
@@ -131,7 +209,7 @@ export default function SignalChart({
       ...group,
       d: group.d.join(' '),
     }));
-  }, [traces, left, span, range, bottom, min, max, plotHeight]);
+  }, [traces, left, span, range, bottom, min, max, plotHeight, logarithmic]);
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
   const nearest =
@@ -145,6 +223,33 @@ export default function SignalChart({
           primary.plot.points[0] || [0, NaN],
         )
       : null;
+  const eventTime = (clientX: number) => {
+    const rect = svg.current!.getBoundingClientRect();
+    const fraction = Math.max(
+      0,
+      Math.min(
+        1,
+        (((clientX - rect.left) * chartWidth) / rect.width - left) / span,
+      ),
+    );
+    return inputRange[0] + fraction * (inputRange[1] - inputRange[0]);
+  };
+  useEffect(() => {
+    const element = svg.current;
+    if (!interaction || !element) return;
+    const wheel = (event: WheelEvent) => {
+      if (document.activeElement !== element) return;
+      event.preventDefault();
+      const anchor = eventTime(event.clientX);
+      const factor = Math.exp(Math.max(-1, Math.min(1, event.deltaY * 0.002)));
+      interaction.onRange([
+        anchor + (inputRange[0] - anchor) * factor,
+        anchor + (inputRange[1] - anchor) * factor,
+      ]);
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  });
   return (
     <section className={`signal-chart ${compact ? 'compact-chart' : ''}`}>
       {heading && (
@@ -178,14 +283,130 @@ export default function SignalChart({
           </div>
         </div>
       )}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- Role is application for interactive plots and img for retained static callers. */}
       <svg
         ref={svg}
+        role={interaction ? 'application' : 'img'}
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
         data-fill-height={fillHeight || undefined}
         style={!fillHeight && height !== 151 ? { height } : undefined}
         preserveAspectRatio={fluid ? 'xMidYMid meet' : 'none'}
         aria-label={`${primary?.label || primary?.node.name || 'Signal'} over time`}
+        tabIndex={interaction ? 0 : undefined}
+        data-interactive={interaction?.mode}
+        data-range-start={inputRange[0]}
+        data-range-end={inputRange[1]}
+        onDoubleClick={
+          interaction
+            ? (event) => {
+                event.preventDefault();
+                setGesture(undefined);
+                const rect = event.currentTarget.getBoundingClientRect();
+                const px =
+                  ((event.clientX - rect.left) * chartWidth) / rect.width;
+                const py =
+                  ((event.clientY - rect.top) * chartHeight) / rect.height;
+                if (px < left || py > bottom) interaction.onAxes();
+                else interaction.onFit();
+              }
+            : undefined
+        }
+        onContextMenu={
+          interaction
+            ? (event) => {
+                event.preventDefault();
+                interaction.onAxes();
+              }
+            : undefined
+        }
+        onKeyDown={
+          interaction
+            ? (event) => {
+                const width = inputRange[1] - inputRange[0];
+                let next: PlotRange | undefined;
+                if (event.key === 'Escape') setGesture(undefined);
+                else if (event.key === 'Home') interaction.onFit();
+                else if (event.key === 'Backspace') interaction.onBack();
+                else if (event.key === '+' || event.key === '=')
+                  next = [inputRange[0] + width / 4, inputRange[1] - width / 4];
+                else if (event.key === '-')
+                  next = [inputRange[0] - width / 2, inputRange[1] + width / 2];
+                else if (
+                  event.key === 'ArrowLeft' ||
+                  event.key === 'ArrowRight'
+                ) {
+                  const delta =
+                    width * (event.key === 'ArrowLeft' ? -0.1 : 0.1);
+                  next = [inputRange[0] + delta, inputRange[1] + delta];
+                } else return;
+                event.preventDefault();
+                if (next) interaction.onRange(next);
+              }
+            : undefined
+        }
+        onPointerDown={
+          interaction
+            ? (event) => {
+                if (event.button !== 0 && event.button !== 1) return;
+                event.preventDefault();
+                event.currentTarget.focus();
+                if (event.isTrusted)
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                const time = eventTime(event.clientX);
+                const mode =
+                  event.shiftKey || event.button === 1
+                    ? 'pan'
+                    : interaction.mode === 'cursor' && interaction.cursors
+                      ? Math.abs(time - interaction.cursors[0]) <=
+                        Math.abs(time - interaction.cursors[1])
+                        ? 'a'
+                        : 'b'
+                      : interaction.mode === 'zoom'
+                        ? 'zoom'
+                        : 'pan';
+                setGesture({ start: time, end: time, range: inputRange, mode });
+              }
+            : undefined
+        }
+        onPointerUp={
+          interaction
+            ? (event) => {
+                if (!gesture) return;
+                const time = eventTime(event.clientX);
+                if (
+                  gesture.mode === 'pan' &&
+                  Math.abs(time - gesture.start) > 0
+                )
+                  interaction.onRange([
+                    gesture.range[0] + gesture.start - time,
+                    gesture.range[1] + gesture.start - time,
+                  ]);
+                else if (
+                  gesture.mode === 'zoom' &&
+                  Math.abs(time - gesture.start) >
+                    (inputRange[1] - inputRange[0]) * 0.005
+                )
+                  interaction.onRange([
+                    Math.min(time, gesture.start),
+                    Math.max(time, gesture.start),
+                  ]);
+                else if (
+                  (gesture.mode === 'a' || gesture.mode === 'b') &&
+                  interaction.cursors
+                )
+                  interaction.onCursors(
+                    gesture.mode === 'a'
+                      ? [time, interaction.cursors[1]]
+                      : [interaction.cursors[0], time],
+                  );
+                setGesture(undefined);
+              }
+            : undefined
+        }
+        onPointerCancel={() => setGesture(undefined)}
         onPointerMove={(event) => {
+          if (gesture)
+            setGesture({ ...gesture, end: eventTime(event.clientX) });
           const rect = event.currentTarget.getBoundingClientRect();
           setCursor(
             Math.max(
@@ -222,9 +443,10 @@ export default function SignalChart({
               y={19 + (i * plotHeight) / (valueTicks - 1)}
               textAnchor="end"
             >
-              {formatValue(
-                max - (i / (valueTicks - 1)) * (max - min),
-                max > 100 ? 0 : 1,
+              {axisNumber(
+                logarithmic
+                  ? 10 ** (max - (i / (valueTicks - 1)) * (max - min))
+                  : max - (i / (valueTicks - 1)) * (max - min),
               )}
             </text>
           </g>
@@ -245,10 +467,7 @@ export default function SignalChart({
               y={chartHeight - 9}
               textAnchor="middle"
             >
-              {formatValue(
-                range[0] + (i / (ticks - 1)) * (range[1] - range[0]),
-                range[1] - range[0] > 100 ? 0 : 1,
-              )}
+              {axisNumber(range[0] + (i / (ticks - 1)) * (range[1] - range[0]))}
             </text>
           </g>
         ))}
@@ -278,21 +497,23 @@ export default function SignalChart({
               />
             </g>
           ))}
-          {geometry.map(({ key, d, color, reference, dots }) => (
-            <path
-              key={key}
-              d={d}
-              fill={dots ? color : 'none'}
-              stroke={color}
-              strokeWidth="1.45"
-              strokeDasharray={reference ? '6 4' : undefined}
-              vectorEffect="non-scaling-stroke"
-              strokeLinejoin="round"
-            />
-          ))}
+          {geometry.map(
+            ({ key, d, color, reference, dots, width: strokeWidth }) => (
+              <path
+                key={key}
+                d={d}
+                fill={dots ? color : 'none'}
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeDasharray={reference ? '6 4' : undefined}
+                vectorEffect="non-scaling-stroke"
+                strokeLinejoin="round"
+              />
+            ),
+          )}
         </g>
-        {currentTime !== null && (
-          <g>
+        {currentTime !== null && !gesture && !interaction?.cursors && (
+          <g pointerEvents="none" data-plot-transient>
             <line
               x1={x(currentTime)}
               x2={x(currentTime)}
@@ -315,9 +536,110 @@ export default function SignalChart({
               y="26"
               className="cursor-value"
             >
-              {formatValue(currentTime)} s · {formatValue(nearest?.[1] ?? NaN)}
+              {formatValue(currentTime, interaction ? 5 : 1)} s
+              {!interaction && ` · ${formatValue(nearest?.[1] ?? NaN)}`}
             </text>
           </g>
+        )}
+        {gesture?.mode === 'zoom' && (
+          <rect
+            x={Math.min(x(gesture.start), x(gesture.end))}
+            y="8"
+            width={Math.abs(x(gesture.start) - x(gesture.end))}
+            height={plotHeight}
+            fill="#87baf2"
+            opacity="0.2"
+            pointerEvents="none"
+          />
+        )}
+        {interaction?.cursors?.map((original, i) => {
+          const time =
+            gesture?.mode === (i ? 'b' : 'a') ? gesture.end : original;
+          return (
+            time >= range[0] &&
+            time <= range[1] && (
+              <g
+                key={i}
+                className="plot-cursor"
+                data-cursor={i ? 'B' : 'A'}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  svg.current?.focus();
+                  if (event.isTrusted)
+                    svg.current?.setPointerCapture(event.pointerId);
+                  setGesture({
+                    start: eventTime(event.clientX),
+                    end: original,
+                    range: inputRange,
+                    mode: i ? 'b' : 'a',
+                  });
+                }}
+              >
+                <line
+                  x1={x(time)}
+                  x2={x(time)}
+                  y1="8"
+                  y2={bottom}
+                  stroke={i ? '#f2c479' : '#87baf2'}
+                  strokeDasharray="5 3"
+                />
+                <rect
+                  x={x(time) - 10}
+                  y="4"
+                  width="20"
+                  height="20"
+                  rx="2"
+                  fill={i ? '#f2c479' : '#87baf2'}
+                />
+                <text
+                  x={x(time)}
+                  y="18"
+                  textAnchor="middle"
+                  style={{ fill: '#142235' }}
+                >
+                  {i ? 'B' : 'A'}
+                </text>
+              </g>
+            )
+          );
+        })}
+        {interaction?.annotations
+          ?.filter((note) => note.time >= range[0] && note.time <= range[1])
+          .map((note, i) => (
+            <g
+              key={note.id}
+              className="plot-annotation"
+              onPointerDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                interaction.onAnnotation(note.time, note.id);
+              }}
+            >
+              <title>{note.text}</title>
+              <line
+                x1={x(note.time)}
+                x2={x(note.time)}
+                y1={35 + (i % 3) * 20}
+                y2={bottom}
+                stroke="#b6c7db"
+                opacity="0.45"
+              />
+              <text
+                x={Math.min(right - 100, Math.max(left, x(note.time) + 4))}
+                y={35 + (i % 3) * 20}
+              >
+                {note.text.length > 28
+                  ? `${note.text.slice(0, 28)}…`
+                  : note.text}
+              </text>
+            </g>
+          ))}
+        {logarithmic && (
+          <text x={left + 4} y={bottom - 6}>
+            Log Y · positive values only
+          </text>
         )}
         <text x={chartWidth - 5} y={chartHeight - 9} textAnchor="end">
           s
@@ -325,4 +647,14 @@ export default function SignalChart({
       </svg>
     </section>
   );
+}
+
+function axisNumber(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  return abs && (abs >= 1e6 || abs < 0.001)
+    ? value.toExponential(2)
+    : Number(value.toPrecision(5)).toLocaleString('en-GB', {
+        maximumFractionDigits: 6,
+      });
 }

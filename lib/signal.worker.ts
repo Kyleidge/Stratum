@@ -1,5 +1,6 @@
 import { SignalEngine } from './signal-engine';
 import type { EngineRequest, EngineResponse } from './signal-types';
+import { measurePlot } from './plot-measurement';
 
 let requestId = 0;
 const send = (message: EngineResponse) => globalThis.postMessage(message);
@@ -9,7 +10,7 @@ const engine = new SignalEngine((message, progress) =>
 let queue = Promise.resolve();
 const pending = new Set<number>(),
   cancelled = new Set<number>();
-const inspections = new Map<number, 'view' | 'rows'>();
+const inspections = new Map<number, 'view' | 'rows' | 'measure-plot'>();
 globalThis.onmessage = (
   event: MessageEvent<EngineRequest & { requestId: number }>,
 ) => {
@@ -19,7 +20,10 @@ globalThis.onmessage = (
     if (cancelled.has(requestId)) engine.cancelled = true;
     return;
   }
-  if ((r.type === 'view' || r.type === 'rows') && r.inspection) {
+  if (
+    (r.type === 'view' || r.type === 'rows' || r.type === 'measure-plot') &&
+    r.inspection
+  ) {
     for (const [id, lane] of inspections)
       if (lane === r.type) cancelled.add(id);
     if (cancelled.has(requestId)) engine.cancelled = true;
@@ -143,8 +147,35 @@ globalThis.onmessage = (
             break;
           case 'view': {
             const plots = [];
-            for (const id of r.ids) plots.push(await engine.plot(id, r.range));
+            for (const id of r.ids)
+              plots.push(
+                await engine.plot(
+                  id,
+                  r.ranges?.[id] ?? r.range,
+                  !!r.ranges?.[id],
+                ),
+              );
             send({ type: 'plots', requestId, plots });
+            return;
+          }
+          case 'measure-plot': {
+            if (r.items.length > 30)
+              throw new Error('Measure up to 30 traces per page.');
+            const measurements = [];
+            for (const item of r.items)
+              measurements.push(
+                await measurePlot(
+                  item.id,
+                  engine.evaluate(item.id),
+                  item.a,
+                  item.b,
+                  () => {
+                    if (engine.cancelled)
+                      throw new Error('Measurement cancelled.');
+                  },
+                ),
+              );
+            send({ type: 'plot-measurements', requestId, measurements });
             return;
           }
           case 'rows':

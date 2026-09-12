@@ -970,6 +970,7 @@ export default function WorkflowWorkbench() {
                   onInspect={follow}
                   request={request}
                   outputCount={stepOutputs.length}
+                  outputKey={step?.id ?? ''}
                   busy={engine.busy}
                   onNotice={setNotice}
                   onDragEnd={() => setDragged(null)}
@@ -1143,6 +1144,23 @@ export default function WorkflowWorkbench() {
                                     return (
                                       <TableRow
                                         key={id}
+                                        draggable
+                                        onDragStart={(event) => {
+                                          const target = {
+                                            kind: 'output' as const,
+                                            id,
+                                          };
+                                          startWorkflowDrag(
+                                            event.dataTransfer,
+                                            target,
+                                            index.label(id),
+                                          );
+                                          setDragged(target);
+                                        }}
+                                        onDragEnd={() => setDragged(null)}
+                                        onDoubleClick={() =>
+                                          select({ kind: 'output', id })
+                                        }
                                         data-state={
                                           selection.kind === 'output' &&
                                           selection.id === id
@@ -1872,10 +1890,10 @@ export default function WorkflowWorkbench() {
             </li>
             <li>
               <strong>Inspect and compare inputs.</strong> Open a name to view
-              its plot or value. In Step outputs, check signals to process
-              together. The input-count control reviews your scope. Checked
-              inputs stay selected while you explore; Follow selection returns
-              to using the item in view.
+              its plot or value. In the Active view’s operation outputs, check
+              signals to process together. The input-count control reviews your
+              scope. Checked inputs stay selected while you explore; Follow
+              selection returns to using the item in view.
             </li>
             <li>
               <strong>Build a plot.</strong> Drag a signal onto the canvas or a

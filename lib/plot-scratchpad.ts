@@ -13,7 +13,16 @@ export const TRACE_COLORS = [
   '#ded785',
   '#b6c7db',
 ];
-export type PlotTrace = { id: string; visible: boolean; color: string };
+export type PlotRange = [number, number];
+export type PlotTrace = {
+  id: string;
+  visible: boolean;
+  color: string;
+  style?: 'line' | 'points' | 'step';
+  width?: number;
+};
+export type PlotAnnotation = { id: string; time: number; text: string };
+export type PlotAxes = { y?: PlotRange; log?: boolean };
 export type PlotSheet = {
   id: string;
   name: string;
@@ -21,7 +30,45 @@ export type PlotSheet = {
   layout: 'overlay' | 'stacked';
   grid: boolean;
   zeroTime?: boolean;
+  window?: PlotRange;
+  axes?: PlotAxes;
+  annotations?: PlotAnnotation[];
+  cursors?: PlotRange;
+  measuring?: boolean;
 };
+
+export function validPlotRange(value: unknown): value is PlotRange {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    value.every((n) => typeof n === 'number' && Number.isFinite(n)) &&
+    value[1] > value[0] &&
+    Number.isFinite(value[1] - value[0])
+  );
+}
+
+/** Fractions of the evaluated time extent, including one-sample recordings. */
+export function plotWindow(value: PlotRange): PlotRange {
+  const width = Math.max(0.000001, Math.min(1, value[1] - value[0]));
+  const start = Math.max(0, Math.min(1 - width, value[0]));
+  return [start, start + width];
+}
+
+export function navigatePlot(
+  value: PlotRange,
+  factor: number,
+  anchor = 0.5,
+  shift = 0,
+): PlotRange {
+  const width = value[1] - value[0];
+  const nextWidth = Math.max(0.000001, Math.min(1, width * factor));
+  const start = value[0] + width * anchor - nextWidth * anchor + shift;
+  return plotWindow([start, start + nextWidth]);
+}
+
+export function plotExtent(range: PlotRange): PlotRange {
+  return validPlotRange(range) ? range : [range[0], range[0] + 1];
+}
 
 export function readPlotSheets(raw: string | null): PlotSheet[] {
   if (!raw) return [];
@@ -59,6 +106,12 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
                 typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color)
                   ? t.color
                   : TRACE_COLORS[(traceIds.size - 1) % TRACE_COLORS.length],
+              ...(['line', 'points', 'step'].includes(t.style ?? '')
+                ? { style: t.style }
+                : {}),
+              ...(typeof t.width === 'number' && Number.isFinite(t.width)
+                ? { width: Math.min(4, Math.max(1, t.width)) }
+                : {}),
             },
           ];
         });
@@ -73,6 +126,42 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
               : ('overlay' as const),
           grid: sheet.grid !== false,
           zeroTime: sheet.zeroTime === true,
+          measuring: sheet.measuring === true,
+          ...(Array.isArray(sheet.cursors) &&
+          sheet.cursors.length === 2 &&
+          sheet.cursors.every(
+            (n) => typeof n === 'number' && Number.isFinite(n),
+          )
+            ? { cursors: sheet.cursors }
+            : {}),
+          ...(validPlotRange(sheet.window)
+            ? { window: plotWindow(sheet.window) }
+            : {}),
+          axes: {
+            log: sheet.axes?.log === true,
+            ...(validPlotRange(sheet.axes?.y) &&
+            (!sheet.axes?.log || sheet.axes.y[0] > 0)
+              ? { y: sheet.axes.y }
+              : {}),
+          },
+          annotations: Array.isArray(sheet.annotations)
+            ? sheet.annotations.slice(0, 50).flatMap((note) =>
+                note &&
+                typeof note.id === 'string' &&
+                typeof note.time === 'number' &&
+                Number.isFinite(note.time) &&
+                typeof note.text === 'string' &&
+                note.text.trim()
+                  ? [
+                      {
+                        id: note.id.slice(0, 80),
+                        time: note.time,
+                        text: note.text.trim().slice(0, 160),
+                      },
+                    ]
+                  : [],
+              )
+            : [],
         },
       ];
     });

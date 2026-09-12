@@ -5,6 +5,7 @@ import WorkflowExport from '../components/workflow-export';
 import WorkflowList from '../components/workflow-list';
 import type { EngineResponse, Project } from '../lib/signal-types';
 import { PLOT_STORAGE_KEY, readPlotSheets } from '../lib/plot-scratchpad';
+import { plotUiSmoke } from './plot-ui-smoke';
 
 export async function workflowUiSmoke() {
   const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
@@ -220,12 +221,19 @@ export async function workflowUiSmoke() {
     const tab = await until(
       () =>
         [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
-          (element) => element.textContent?.trim().includes('Step outputs'),
+          (element) => element.textContent?.trim() === 'Active',
         ),
-      'Step outputs tab',
+      'Active tab',
     );
     tab.click();
     await delay();
+    const dock =
+      document.querySelector<HTMLDetailsElement>('.plot-output-dock');
+    assert(dock, 'Active must contain the operation outputs.');
+    if (!dock.open) {
+      dock.querySelector<HTMLElement>('summary')!.click();
+      await delay();
+    }
   }
   async function choose(label: string, text: string) {
     const chooser = (await dialog()).querySelector<HTMLButtonElement>(
@@ -443,6 +451,7 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('100%'),
       'Fit did not reset the time window.',
     );
+    await plotUiSmoke();
     const stored = readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
     assert(
       stored.length === 1 &&

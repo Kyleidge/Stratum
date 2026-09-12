@@ -112,6 +112,8 @@ async function createWindow() {
               'Stratus-values-40.csv',
               'Stratus-samples-1.csv',
               'Stratus-report-1.html',
+              'Motor comparison.svg',
+              'Motor comparison.png',
             ])
               assert.ok(
                 downloaded.has(name),
@@ -119,6 +121,17 @@ async function createWindow() {
               );
             const contents = (name) =>
               readFileSync(resolve('outputs', name), 'utf8');
+            assert.ok(
+              contents('Motor comparison.svg').includes(
+                'Review marker &lt;safe&gt;',
+              ),
+            );
+            assert.equal(
+              readFileSync(resolve('outputs', 'Motor comparison.png'))
+                .subarray(1, 4)
+                .toString(),
+              'PNG',
+            );
             assert.equal(
               contents('Stratus-values-1.csv').split('\r\n').length,
               2,

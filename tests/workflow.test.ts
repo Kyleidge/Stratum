@@ -14,7 +14,12 @@ import type {
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 import { affectedOperations } from '../lib/workflow-lifecycle';
 import { WORKFLOW_EXAMPLE } from '../lib/workflow-example';
-import { readPlotSheets } from '../lib/plot-scratchpad';
+import {
+  readPlotSheets,
+  navigatePlot,
+  plotWindow,
+} from '../lib/plot-scratchpad';
+import { measurePlot } from '../lib/plot-measurement';
 import {
   readWorkflowDrag,
   targetSignals,
@@ -67,6 +72,72 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
   );
   assert.equal(large[0].traces.length, 5000);
   assert.equal(large[0].zeroTime, false);
+});
+
+void test('plot windows preserve pointer anchors, clamp pan, and validate saved engineering settings', () => {
+  assert.deepEqual(navigatePlot([0, 1], 0.5, 0.25), [0.125, 0.625]);
+  assert.deepEqual(navigatePlot([0.5, 1], 1, 0.5, 2), [0.5, 1]);
+  assert.deepEqual(plotWindow([-0.1, 0.4]), [0, 0.5]);
+  const saved = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:axes',
+        name: 'Axes',
+        traces: [{ id: 'one', style: 'step', width: 3 }],
+        window: [-0.5, 0],
+        axes: { log: true, y: [-1, 10] },
+        annotations: [
+          { id: 'note', time: 3, text: '  Test <label>  ' },
+          { id: 'bad', time: null, text: 'No' },
+        ],
+      },
+    ]),
+  )[0];
+  assert.deepEqual(saved.window, [0, 0.5]);
+  assert.equal(saved.axes?.y, undefined);
+  assert.equal(saved.axes?.log, true);
+  assert.equal(saved.traces[0].style, 'step');
+  assert.equal(saved.traces[0].width, 3);
+  assert.deepEqual(saved.annotations, [
+    { id: 'note', time: 3, text: 'Test <label>' },
+  ]);
+});
+
+void test('plot measurements stream actual samples across chunks and never bridge missing data', async () => {
+  async function* chunks() {
+    yield {
+      time: new Float64Array([0, 1, 2]),
+      values: new Float64Array([2, 4, NaN]),
+    };
+    yield { time: new Float64Array([3, 4]), values: new Float64Array([8, 10]) };
+  }
+  const all = await measurePlot('a', chunks(), 0, 4);
+  assert.deepEqual(all.a, [0, 2]);
+  assert.deepEqual(all.b, [4, 10]);
+  assert.equal(all.count, 4);
+  assert.equal(all.mean, 6);
+  assert.equal(all.min, 2);
+  assert.equal(all.max, 10);
+  assert.ok(Math.abs(all.rms! - Math.sqrt(46)) < 1e-12);
+  assert.equal(all.integral, 12);
+  const gap = await measurePlot('a', chunks(), 2.5, 3.5);
+  assert.equal(gap.a?.[0], 2);
+  assert.ok(Number.isNaN(gap.a?.[1]));
+  assert.deepEqual(gap.b, [3, 8]);
+  assert.equal(gap.count, 1);
+  assert.equal(gap.integral, 0);
+  const outside = await measurePlot('a', chunks(), -4, -1);
+  assert.equal(outside.a, null);
+  assert.equal(outside.b, null);
+  assert.equal(outside.count, 0);
+  assert.equal(outside.rms, null);
+  await assert.rejects(measurePlot('a', chunks(), NaN, 4), /finite/);
+  await assert.rejects(
+    measurePlot('a', chunks(), 0, 4, () => {
+      throw new Error('cancelled');
+    }),
+    /cancelled/,
+  );
 });
 
 void test('example CSV recordings import with their documented grids, units and missing samples', async () => {
@@ -467,6 +538,49 @@ void test('worker cancellation includes queued mutations, coalesces inspections,
     assert.equal((await first.response).type, 'error');
     assert.equal((await second.response).type, 'error');
     assert.equal((await third.response).type, 'plots');
+    const supersededMeasure = send({
+      type: 'measure-plot',
+      items: [{ id, a: 0, b: 2 }],
+      inspection: true,
+    });
+    const measurement = send({
+      type: 'measure-plot',
+      items: [{ id, a: 0.5, b: 2 }],
+      inspection: true,
+    });
+    const detailed = send({
+      type: 'view',
+      ids: [id],
+      ranges: { [id]: [0.9, 1.1] },
+      inspection: true,
+    });
+    assert.equal((await supersededMeasure.response).type, 'error');
+    const measured = await measurement.response;
+    assert.equal(measured.type, 'plot-measurements');
+    if (measured.type === 'plot-measurements') {
+      assert.deepEqual(measured.measurements[0].a, [0, 1]);
+      assert.equal(measured.measurements[0].count, 2);
+    }
+    const zoomed = await detailed.response;
+    assert.equal(zoomed.type, 'plots');
+    if (zoomed.type === 'plots') assert.equal(zoomed.plots[0].summary.count, 1);
+    const between = await send({
+      type: 'view',
+      ids: [id],
+      ranges: { [id]: [0.25, 0.75] },
+    }).response;
+    assert.equal(between.type, 'plots');
+    if (between.type === 'plots') {
+      assert.equal(
+        between.plots[0].summary.count,
+        0,
+        'Boundary context must not enter statistics',
+      );
+      assert.deepEqual(between.plots[0].points, [
+        [0, 1],
+        [1, 2],
+      ]);
+    }
     const backup = send({ type: 'backup-workspace' });
     const cancelled = send({
       type: 'derive-many',

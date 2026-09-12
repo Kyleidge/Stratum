@@ -83,6 +83,15 @@ There are no server API routes or cloud signal uploads.
   saved settings, explicit scopes and a virtualized chronological history.
 - `components/workbench.tsx`: retained legacy workspace for compatibility.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
+- `components/plot-scratchpad.tsx` and `lib/plot-scratchpad.ts`: Active combines
+  plotting with the operation output dock; saved plots persist styles, limits,
+  annotations and viewport independently of workflow history. Plot gestures use
+  display time and translate per-trace offsets before viewport evaluation.
+  `lib/plot-measurement.ts` streams exact cursor samples and region statistics;
+  never use envelope points as measurement samples. Boundary context points may
+  extend outside a zoom window for drawing, but never enter its statistics.
+  `lib/plot-export.ts` creates standalone SVG/PNG snapshots of displayed panels.
+  See `docs/plotting-plan.md`; native checks include `desktop/plot-ui-smoke.ts`.
 - Legacy `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
   numbered operation chains with explicit batch collections and independent
   member branches. Keep exact batch membership; never infer batches from names.
@@ -116,7 +125,7 @@ There are no server API routes or cloud signal uploads.
   crops only; engineering metrics are a separate explicit operation.
 - `lib/signal.worker.ts`: serialized processing away from the UI thread, coordinated
   across windows by Web Locks plus optimistic metadata revisions. Cancellation
-  includes queued requests; plot and samples inspections coalesce separately.
+  includes queued requests; plot, samples and measurement inspections coalesce separately.
   Failed lock acquisition must never poison the queue. Fatal worker/renderer
   failures expose recovery, not another request to a dead worker.
 - `lib/create-signal-worker.ts`: shared Vite worker factory. Use its explicit

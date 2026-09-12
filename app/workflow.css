@@ -3,6 +3,7 @@
   margin-bottom: 0;
   min-width: 0;
 }
+
 .workflow-action-toolbar {
   margin: 0;
   display: flex;
@@ -2649,5 +2650,244 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   }
   .workflow-dialog {
     padding: 10px 12px;
+  }
+}
+
+/* Engineering plotting controls and the Active document's output dock. */
+.scratchpad-chart-tools {
+  justify-content: flex-start;
+}
+.scratchpad-chart-tools fieldset {
+  margin: 0;
+  padding: 0 5px 0 0;
+  border: 0;
+  border-right: 1px solid var(--border);
+}
+.scratchpad-chart-tools fieldset:last-child {
+  border: 0;
+}
+.scratchpad-chart-tools button {
+  font-size: 11px;
+}
+.signal-chart svg[data-interactive] {
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  outline: none;
+}
+.signal-chart svg[data-interactive='zoom'] {
+  cursor: crosshair;
+}
+.signal-chart svg[data-interactive='cursor'],
+.plot-cursor {
+  cursor: col-resize;
+}
+.signal-chart svg[data-interactive]:active {
+  cursor: grabbing;
+}
+.signal-chart svg[data-interactive]:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.plot-annotation {
+  cursor: pointer;
+}
+.plot-output-dock {
+  border-top: 1px solid var(--border);
+}
+.plot-output-dock > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  min-height: 31px;
+  cursor: pointer;
+  background: var(--muted);
+  font-weight: 600;
+}
+.plot-output-dock > summary::before {
+  content: '▸';
+  color: var(--muted-foreground);
+}
+.plot-output-dock[open] > summary::before {
+  content: '▾';
+}
+.plot-output-dock > summary span {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.plot-output-dock .workflow-output-panel {
+  margin: 0;
+  border: 0;
+}
+.plot-scratchpad:has(.scratchpad-canvas)
+  .plot-output-dock[open]
+  > .workflow-output-panel {
+  max-height: 300px;
+  overflow: auto;
+}
+.plot-settings-dialog {
+  max-width: 560px !important;
+}
+.plot-settings-form {
+  display: grid;
+  gap: 12px;
+}
+.plot-settings-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+.plot-settings-form input,
+.plot-settings-form select,
+.plot-measurement-tools input {
+  min-width: 0;
+  height: 28px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 2px;
+  color: var(--foreground);
+}
+.plot-settings-form .plot-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plot-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.plot-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.plot-shortcuts {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  margin: 0;
+  gap: 8px 14px;
+  font-size: 12px;
+}
+.plot-shortcuts dt {
+  color: var(--primary);
+}
+.plot-shortcuts dd {
+  margin: 0;
+}
+.plot-measurements {
+  border-block: 1px solid var(--border);
+  background: var(--card);
+  font-size: 11px;
+}
+.plot-measurement-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 5px 8px;
+}
+.plot-measurement-tools label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.plot-measurement-tools input {
+  width: 112px;
+  font: 11px var(--font-mono);
+}
+.plot-measurement-tools b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.plot-measurement-table {
+  overflow: auto;
+  max-height: 210px;
+}
+.plot-measurement-table table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+.plot-measurement-table th,
+.plot-measurement-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.plot-measurement-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--muted);
+}
+.plot-measurement-table th {
+  font-weight: 500;
+}
+.plot-measurement-table tbody th {
+  text-align: left;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plot-measurement-table small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.plot-notes {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.plot-notes summary {
+  cursor: pointer;
+}
+.plot-notes > button {
+  display: block;
+  margin-top: 5px;
+}
+.scratchpad-trace[draggable] {
+  cursor: grab;
+}
+.scratchpad-trace[draggable]:hover {
+  background: var(--muted);
+}
+.scratchpad-trace .workflow-icon-button {
+  width: 24px;
+  height: 24px;
+}
+.plot-scratchpad .scratchpad-canvas .signal-chart svg[data-fill-height] {
+  height: clamp(230px, calc(100dvh - 320px), 900px);
+}
+.plot-scratchpad:has(.scratchpad-traces)
+  .scratchpad-canvas
+  .signal-chart
+  svg[data-fill-height] {
+  height: clamp(210px, calc(100dvh - 420px), 800px);
+}
+.plot-scratchpad:has(.plot-measurements)
+  .scratchpad-canvas
+  .signal-chart
+  svg[data-fill-height],
+.plot-scratchpad:has(.plot-output-dock[open])
+  .scratchpad-canvas
+  .signal-chart
+  svg[data-fill-height] {
+  height: clamp(200px, calc(100dvh - 560px), 650px);
+}
+@media (max-width: 600px) {
+  .plot-shortcuts {
+    grid-template-columns: 110px 1fr;
+  }
+  .scratchpad-trace-range {
+    display: none;
+  }
+  .scratchpad-plot-toolbar {
+    flex-wrap: wrap;
+  }
+  .plot-measurement-tools {
+    gap: 6px;
   }
 }

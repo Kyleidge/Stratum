@@ -207,6 +207,12 @@ export type EngineRequest =
       type: 'view';
       ids: string[];
       range?: [number, number];
+      ranges?: Record<string, [number, number]>;
+      inspection?: boolean;
+    }
+  | {
+      type: 'measure-plot';
+      items: { id: string; a: number; b: number }[];
       inspection?: boolean;
     }
   | { type: 'rows'; id: string; offset: number; inspection?: boolean }
@@ -218,6 +224,10 @@ export type EngineResponse = { requestId: number } & (
   | { type: 'project'; project: Project; canUndo?: boolean; canRedo?: boolean }
   | { type: 'segment-plan'; plan: SegmentationPlan }
   | { type: 'plots'; plots: Plot[] }
+  | {
+      type: 'plot-measurements';
+      measurements: import('./plot-measurement').PlotMeasurement[];
+    }
   | { type: 'rows'; rows: Point[]; hasMore: boolean }
   | { type: 'export'; blob: Blob }
   | { type: 'progress'; message: string; progress: number }

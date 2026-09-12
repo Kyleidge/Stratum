@@ -2286,16 +2286,30 @@ export class SignalEngine {
     });
     return segments.filter((segment) => ids.includes(segment.id));
   }
-  async plot(id: string, range?: [number, number]): Promise<Plot> {
+  async plot(
+    id: string,
+    range?: [number, number],
+    context = false,
+  ): Promise<Plot> {
     const bounds = range ?? this.bounds(id);
-    const key = JSON.stringify([id, bounds]);
+    const key = JSON.stringify([id, bounds, context]);
     const cached = this.cache.get(key);
     if (cached) return cached;
     const envelope = new Envelope(...bounds);
+    let before: Point | undefined, after: Point | undefined;
     for await (const chunk of this.evaluate(id))
-      for (let i = 0; i < chunk.time.length; i++)
-        envelope.add(chunk.time[i], chunk.values[i]);
+      for (let i = 0; i < chunk.time.length; i++) {
+        const time = chunk.time[i],
+          value = chunk.values[i];
+        if (context && time < bounds[0]) before = [time, value];
+        if (context && time > bounds[1] && !after) after = [time, value];
+        envelope.add(time, value);
+      }
     const plot = { id, ...envelope.finish() };
+    // Boundary neighbors keep line segments visible between sample instants.
+    // They never enter the viewport summary, and a missing neighbor breaks the line.
+    if (before) plot.points.unshift(before);
+    if (after) plot.points.push(after);
     const node = this.find(id);
     if (node.operation === 'bsfc') {
       // Integrate only intervals valid in BOTH inputs to avoid bias from missing fuel samples.
