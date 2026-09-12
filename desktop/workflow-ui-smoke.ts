@@ -353,6 +353,92 @@ export async function workflowUiSmoke() {
     await until(() => !menu.isConnected, 'closed history context menu');
     await delay();
   }
+  async function resizePanes() {
+    const canvas = document.querySelector('.scratchpad-canvas');
+    for (const [pane, direction] of [
+      ['history', 1],
+      ['properties', -1],
+    ] as const) {
+      const splitter = document.querySelector<HTMLElement>(
+        `.workflow-${pane}-resizer`,
+      );
+      assert(splitter, `Missing ${pane} resize handle.`);
+      const target = document.getElementById(
+        splitter.getAttribute('aria-controls')!,
+      );
+      assert(target, `Missing ${pane} controlled pane.`);
+      const width = () => target.getBoundingClientRect().width;
+      const initial = width();
+      const rect = splitter.getBoundingClientRect();
+      const start = rect.left + rect.width / 2;
+      function pointer(type: string, delta = 0) {
+        splitter!.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 71,
+            button: 0,
+            clientX: start + delta * direction,
+            clientY: rect.top + rect.height / 2,
+          }),
+        );
+      }
+      function key(value: string) {
+        splitter!.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: value,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      pointer('pointerdown');
+      pointer('pointermove', 90);
+      await until(
+        () => Math.abs(width() - initial - 90) < 1,
+        `${pane} drag resize`,
+      );
+      pointer('pointerup', 90);
+      const storageKey = `stratus-${pane}-width-v1`;
+      assert(
+        Math.abs(Number(localStorage.getItem(storageKey)) - initial - 90) < 1,
+        `${pane} width was not saved.`,
+      );
+      key(direction === 1 ? 'ArrowLeft' : 'ArrowRight');
+      await until(
+        () => Math.abs(width() - initial - 80) < 1,
+        `${pane} keyboard resize`,
+      );
+      pointer('pointerdown');
+      pointer('pointermove', -60);
+      key('Escape');
+      await until(
+        () => Math.abs(width() - initial - 80) < 1,
+        `${pane} cancelled resize`,
+      );
+      key('End');
+      await delay();
+      assert(
+        width() <= Number(splitter.getAttribute('aria-valuemax')) + 1 &&
+          document.querySelector('.workflow-main')!.getBoundingClientRect()
+            .width >= 350,
+        `${pane} resize crowded out the plot.`,
+      );
+      key('Home');
+      await until(
+        () =>
+          Math.abs(width() - Number(splitter.getAttribute('aria-valuemin'))) <
+          1,
+        `${pane} minimum width`,
+      );
+      splitter.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await until(() => Math.abs(width() - initial) < 1, `${pane} reset width`);
+      assert(
+        document.querySelector('.scratchpad-canvas') === canvas,
+        'Resizing remounted the active plot.',
+      );
+    }
+  }
   try {
     await until(
       () => button('Open example workflow') || button('Derive signal'),
@@ -364,6 +450,7 @@ export async function workflowUiSmoke() {
       () => document.querySelector('.scratchpad-canvas .signal-chart svg'),
       'active plot',
     );
+    await resizePanes();
     await click('Keep plot');
     const plotTab = () =>
       document.querySelector('[aria-label="Plot tabs"] [aria-selected="true"]');

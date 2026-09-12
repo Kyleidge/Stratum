@@ -68,6 +68,7 @@ import PlotScratchpad, {
   type PlotScratchpadHandle,
 } from './plot-scratchpad';
 import WorkflowProperties from './workflow-properties';
+import WorkflowPaneResizer from './workflow-pane-resizer';
 import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
 import {
   startWorkflowDrag,
@@ -921,6 +922,7 @@ export default function WorkflowWorkbench() {
             </span>
           </div>
         </aside>
+        <WorkflowPaneResizer pane="history" />
         <div className="workflow-document">
           <main className="workflow-main">
             {!engine.ready ? (
@@ -1335,17 +1337,20 @@ export default function WorkflowWorkbench() {
             )}
           </main>
           {engine.ready && step && (
-            <WorkflowProperties
-              project={project}
-              index={index}
-              graph={graph}
-              selection={selection}
-              originals={selectedLineage.originals}
-              onFollow={follow}
-              onStep={selectStep}
-              onAction={toolbarAction}
-              busy={engine.busy}
-            />
+            <>
+              <WorkflowPaneResizer pane="properties" />
+              <WorkflowProperties
+                project={project}
+                index={index}
+                graph={graph}
+                selection={selection}
+                originals={selectedLineage.originals}
+                onFollow={follow}
+                onStep={selectStep}
+                onAction={toolbarAction}
+                busy={engine.busy}
+              />
+            </>
           )}
         </div>
       </div>

@@ -56,7 +56,11 @@ export default function WorkflowProperties({
         : 'Selection';
 
   return (
-    <aside className="workflow-properties" aria-label="Selection properties">
+    <aside
+      id="workflow-properties"
+      className="workflow-properties"
+      aria-label="Selection properties"
+    >
       <header className="workflow-properties-heading">
         <strong>Properties</strong>
         <button

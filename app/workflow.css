@@ -953,16 +953,47 @@
   min-height: 0;
 }
 .workflow-sidebar {
-  width: 320px;
+  width: var(--workflow-history-width, 320px);
   min-width: 250px;
-  max-width: 48vw;
-  resize: horizontal;
+  max-width: min(640px, 48%);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--card);
   flex-shrink: 0;
+}
+.workflow-pane-resizer {
+  position: relative;
+  flex: 0 0 6px;
+  align-self: stretch;
+  width: 6px;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  background: var(--card);
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.workflow-pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 2px;
+  height: 28px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--muted-foreground);
+}
+.workflow-pane-resizer:hover,
+.workflow-pane-resizer[data-dragging='true'] {
+  background: color-mix(in srgb, var(--primary) 20%, var(--card));
+}
+.workflow-pane-resizer:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 .workflow-sidebar-heading {
   padding: 5px 10px;
@@ -2172,7 +2203,7 @@
     padding: 8px 10px;
   }
   .workflow-sidebar {
-    width: 290px;
+    width: var(--workflow-history-width, 290px);
   }
   .workflow-local {
     display: none;
@@ -2213,6 +2244,9 @@
     border-bottom: 1px solid var(--border);
   }
   .workflow-sidebar[data-open='false'] {
+    display: none;
+  }
+  .workflow-history-resizer {
     display: none;
   }
   .workflow-history-toggle {
@@ -2272,7 +2306,14 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 248px;
+  grid-template-columns: minmax(0, 1fr) 6px clamp(
+      220px,
+      var(--workflow-properties-width, 248px),
+      min(480px, 40%)
+    );
+}
+.workflow-document:not(:has(.workflow-properties)) {
+  grid-template-columns: minmax(0, 1fr);
 }
 .workflow-properties {
   min-width: 0;
@@ -2559,6 +2600,9 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   outline-offset: 2px;
 }
 @media (max-width: 1250px) {
+  .workflow-properties-resizer {
+    display: none;
+  }
   .workflow-document {
     display: block;
     overflow: auto;

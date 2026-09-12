@@ -68,6 +68,12 @@ selection, processing scope, totals and progress; signal details no longer occup
 space below the plot.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
+Drag the divider beside **Operation history** or **Properties** to resize either
+sidebar. Widths are remembered on this device and constrained to leave room for
+the plot. Focus a divider and use Left/Right arrows (Shift for larger steps),
+Home/End for its limits, or Enter to reset. Double-click also resets the width;
+Escape cancels an in-progress drag. Narrow windows retain the stacked layout.
+
 The history tree has two levels: an operation and its immediate outputs. The
 operation sequence remains chronological, oldest first. Dependency depth does
 not increase indentation. Stable step references identify where a signal was
