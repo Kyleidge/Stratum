@@ -19,11 +19,33 @@ export async function plotUiSmoke() {
     ].find(
       (item) =>
         !item.disabled &&
+        !item.closest('[data-closed]') &&
         (item.getAttribute('aria-label') === name ||
           item.textContent?.trim() === name),
     );
     assert(button, `Missing plot control: ${name}`);
     button!.click();
+    await delay();
+  }
+  async function choose(label: string, value: string) {
+    await click(label);
+    await until(
+      () => !!document.querySelector('.plot-select-popup [role="option"]'),
+      'themed select options',
+    );
+    const popup = document.querySelector('.plot-select-popup')!;
+    assert(
+      getComputedStyle(popup).colorScheme === 'dark' &&
+        getComputedStyle(popup).backgroundColor !== 'rgb(255, 255, 255)',
+      'Plot selector is not using the dark popup theme.',
+    );
+    const option = [
+      ...document.querySelectorAll<HTMLElement>(
+        '.plot-select-popup [role="option"]',
+      ),
+    ].find((item) => item.dataset.plotOption === value);
+    assert(option, `Missing compatible choice ${value}`);
+    option!.click();
     await delay();
   }
   function setValue(element: HTMLInputElement, value: string) {
@@ -95,6 +117,84 @@ export async function plotUiSmoke() {
   }
   const speedLimits = limits('rpm'),
     torqueLimits = limits('Nm');
+  async function axisDrag(unit: string, cancel = false) {
+    const target =
+      unit === 'time' ? chart().querySelector('[data-time-axis]')! : axis(unit);
+    const area = target.getBoundingClientRect(),
+      svgRect = chart().getBoundingClientRect();
+    const startX = area.left + area.width / 2,
+      startY = area.top + area.height / 2;
+    const x = startX + (unit === 'time' ? svgRect.width * 0.12 : 0),
+      y = startY + (unit === 'time' ? 0 : svgRect.height * 0.12);
+    for (const [type, clientX, clientY] of [
+      ['pointerdown', startX, startY],
+      ['pointermove', x, y],
+    ] as const) {
+      chart().dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 8,
+          button: 0,
+          clientX,
+          clientY,
+        }),
+      );
+      await delay();
+    }
+    if (cancel) {
+      chart().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      await delay();
+    }
+    chart().dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        pointerId: 8,
+        button: 0,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+    await delay();
+  }
+  await axisDrag('Nm', true);
+  assert(
+    same(limits('Nm'), torqueLimits) && same(window(), fit),
+    'Cancelling an axis drag changed the view.',
+  );
+  await axisDrag('Nm');
+  assert(
+    !same(limits('Nm'), torqueLimits) &&
+      same(limits('rpm'), speedLimits) &&
+      same(window(), fit),
+    'Right-axis dragging did not pan independently.',
+  );
+  assert(
+    Math.abs(
+      limits('Nm')[1] - limits('Nm')[0] - (torqueLimits[1] - torqueLimits[0]),
+    ) < 1e-8,
+    'Axis panning changed scale.',
+  );
+  await click('Previous plot view');
+  await axisDrag('rpm');
+  assert(
+    !same(limits('rpm'), speedLimits) && same(limits('Nm'), torqueLimits),
+    'Left-axis drag affected the other axis.',
+  );
+  await click('Previous plot view');
+  await axisDrag('time');
+  assert(
+    window()[0] < fit[0] &&
+      Math.abs(window()[1] - window()[0] - (fit[1] - fit[0])) < 1e-8,
+    'Time-axis pan did not move the full view.',
+  );
+  await click('Fit entire plot');
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'full-view samples after axis drag',
+  );
   chart().blur();
   await wheelAt('Nm');
   assert(
@@ -141,9 +241,8 @@ export async function plotUiSmoke() {
   );
   await delay();
   assert(
-    document.querySelector<HTMLElement & { value: string }>(
-      '[aria-label="Y axis"]',
-    )?.value === 'unit:Nm',
+    document.querySelector<HTMLElement>('[aria-label="Y axis"]')?.dataset
+      .plotSelected === 'unit:Nm',
     'Right-axis double-click edited the wrong unit.',
   );
   setValue(
@@ -162,12 +261,7 @@ export async function plotUiSmoke() {
     'Test time (s)',
   );
   await delay();
-  const selector = document.querySelector<HTMLElement & { value: string }>(
-    '[aria-label="Y axis"]',
-  )!;
-  selector.value = 'unit:Nm';
-  selector.dispatchEvent(new Event('change', { bubbles: true }));
-  await delay();
+  await choose('Y axis', 'unit:Nm');
   setValue(
     document.querySelector<HTMLInputElement>('[aria-label="Y axis name"]')!,
     '',
@@ -242,22 +336,51 @@ export async function plotUiSmoke() {
     window()[1] - window()[0] < cancelled[1] - cancelled[0],
     'Focused wheel zoom did not zoom.',
   );
+  const beforeAnnotation = window();
+  const annotationX =
+    Number(chart().dataset.plotLeft) +
+    (Number(chart().dataset.plotRight) - Number(chart().dataset.plotLeft)) *
+      0.4;
   chart().dispatchEvent(
     new MouseEvent('dblclick', {
-      clientX: rect.left + rect.width / 2,
+      clientX:
+        rect.left + (annotationX / chart().viewBox.baseVal.width) * rect.width,
       clientY: rect.top + rect.height / 2,
       bubbles: true,
     }),
   );
   await delay();
   assert(
-    window()[0] === fit[0] && window()[1] === fit[1],
-    'Double-click did not fit.',
+    same(window(), beforeAnnotation) &&
+      Math.abs(
+        Number(
+          document.querySelector<HTMLInputElement>(
+            '[aria-label="Annotation time"]',
+          )?.value,
+        ) -
+          (beforeAnnotation[0] +
+            (beforeAnnotation[1] - beforeAnnotation[0]) * 0.4),
+      ) <
+        (beforeAnnotation[1] - beforeAnnotation[0]) /
+          (Number(chart().dataset.plotRight) -
+            Number(chart().dataset.plotLeft)),
+    'Double-click did not open an annotation at the pointer time (within one screen pixel).',
   );
+  document
+    .querySelector('[aria-label="Annotation time"]')!
+    .closest('[role="dialog"]')!
+    .querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!
+    .click();
+  await delay();
+  chart().dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Home', bubbles: true }),
+  );
+  await delay();
+  assert(same(window(), fit), 'Home did not fit the plot.');
   await click('Toggle measurement cursors');
   const input = (label: string) =>
     document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
-  setValue(input('Cursor A time'), '12');
+  setValue(input('Cursor A time'), '12.03');
   await delay();
   setValue(input('Cursor B time'), '20');
   await delay();
@@ -277,6 +400,26 @@ export async function plotUiSmoke() {
       ?.textContent?.includes('…'),
     'Measurement values are still pending.',
   );
+  assert(
+    document
+      .querySelector('.plot-measurement-table thead')
+      ?.textContent?.includes('A / time') &&
+      document.querySelector('.plot-measurement-table tbody td small')
+        ?.textContent === '12.030000 s',
+    'Cursor statistics did not default to cursor time.',
+  );
+  const sampleToggle = document.querySelector<HTMLInputElement>(
+    '.plot-measurements .plot-checkbox input',
+  )!;
+  sampleToggle.click();
+  await delay();
+  assert(
+    document.querySelector('.plot-measurement-table tbody td small')
+      ?.textContent === '12.000000 s',
+    'Sample-time inspection did not show the actual sample time.',
+  );
+  sampleToggle.click();
+  await delay();
   await pointer('pointerdown', 0.2);
   await pointer('pointermove', 0.23);
   await pointer('pointerup', 0.23);
@@ -330,6 +473,16 @@ export async function plotUiSmoke() {
   const logBefore = limits('rpm'),
     unaffectedTorque = limits('Nm'),
     logTime = window();
+  await axisDrag('rpm');
+  assert(
+    Math.abs(
+      limits('rpm')[1] / limits('rpm')[0] - logBefore[1] / logBefore[0],
+    ) < 1e-6 &&
+      !same(limits('rpm'), logBefore) &&
+      same(limits('Nm'), unaffectedTorque),
+    'Log-axis pan did not preserve ratios independently.',
+  );
+  await click('Previous plot view');
   await wheelAt('rpm');
   assert(
     Math.log(limits('rpm')[1] / limits('rpm')[0]) <
@@ -374,6 +527,89 @@ export async function plotUiSmoke() {
       ?.textContent?.includes('Review marker'),
     'Annotation marker is missing.',
   );
+  const stored = () => readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
+  const noteLabel = () =>
+    chart().querySelector<SVGTextElement>('.plot-annotation text')!;
+  const noteLine = () =>
+    chart().querySelector<SVGLineElement>('.plot-annotation line')!;
+  const initialLabelY = noteLabel().y.baseVal[0].value;
+  const initialNoteX = noteLine().x1.baseVal.value;
+  const annotationWindow = window();
+  async function dragNote(deltaY: number, cancel?: 'escape' | 'pointer') {
+    const svg = chart(),
+      rect = noteLabel().getBoundingClientRect();
+    const start = {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+    const emit = (
+      target: Element,
+      type: string,
+      clientX: number,
+      clientY: number,
+    ) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 8,
+          button: 0,
+          clientX,
+          clientY,
+        }),
+      );
+    emit(noteLabel(), 'pointerdown', start.clientX, start.clientY);
+    await delay();
+    // A diagonal pointer movement must only affect label height.
+    emit(svg, 'pointermove', start.clientX + 90, start.clientY + deltaY);
+    await delay();
+    if (cancel === 'escape') {
+      svg.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
+      );
+      await delay();
+    } else if (cancel === 'pointer') {
+      emit(svg, 'pointercancel', start.clientX + 90, start.clientY + deltaY);
+      await delay();
+    }
+    emit(svg, 'pointerup', start.clientX + 90, start.clientY + deltaY);
+    await delay();
+  }
+  await dragNote(85);
+  const movedLabelY = noteLabel().y.baseVal[0].value;
+  const labelPosition = stored()[0].annotations?.[0].labelPosition;
+  assert(
+    movedLabelY > initialLabelY + 40 &&
+      typeof labelPosition === 'number' &&
+      noteLine().x1.baseVal.value === initialNoteX &&
+      stored()[0].annotations?.[0].time === 25 &&
+      same(window(), annotationWindow),
+    'Annotation drag moved time or viewport, or failed to save its label height.',
+  );
+  await dragNote(-45, 'escape');
+  await dragNote(-45, 'pointer');
+  assert(
+    noteLabel().y.baseVal[0].value === movedLabelY &&
+      stored()[0].annotations?.[0].labelPosition === labelPosition,
+    'Cancelled annotation drag changed its saved position.',
+  );
+  await dragNote(0);
+  assert(
+    noteLabel().y.baseVal[0].value === movedLabelY &&
+      stored()[0].annotations?.[0].time === 25,
+    'Horizontal annotation drag changed its label or time.',
+  );
+  noteLabel().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  await delay();
+  assert(
+    input('Annotation time').value === '25',
+    'Editing a dragged annotation changed its time.',
+  );
+  await click('Save annotation');
+  assert(
+    stored()[0].annotations?.[0].labelPosition === labelPosition,
+    'Saving annotation text reset its height.',
+  );
   await click('Export plot SVG');
   await click('Export plot PNG');
   await until(
@@ -383,7 +619,6 @@ export async function plotUiSmoke() {
       )?.disabled,
     'PNG delivery',
   );
-  const stored = () => readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
   await wheelAt('Nm');
   const torqueBeforeReorder = limits('Nm');
   const original = stored()[0];
@@ -422,6 +657,7 @@ export async function plotUiSmoke() {
   assert(
     stored().length === 2 &&
       stored()[1].annotations?.[0].text === 'Review marker <safe>' &&
+      stored()[1].annotations?.[0].labelPosition === labelPosition &&
       JSON.stringify(stored()[1].axes) === JSON.stringify(original.axes),
     'Duplicate did not preserve annotations.',
   );

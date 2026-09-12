@@ -10,7 +10,9 @@ import type {
 } from '@/lib/plot-scratchpad';
 import {
   groupPlotAxes,
-  plotAxisKey,
+  traceAxisKey,
+  panValueAxis,
+  type PlotAxisGroup,
   valueAxisRange,
   valueAxisSettings,
   zoomValueAxis,
@@ -34,12 +36,14 @@ type Trace = {
   referenceLine?: boolean;
   style?: PlotTrace['style'];
   width?: number;
+  axisId?: string;
 };
 export type ChartInteraction = {
   mode: 'pan' | 'zoom' | 'cursor';
   axes?: PlotAxes;
   primaryAxisKey?: string;
   timeLabel?: string;
+  valueAxes?: PlotAxisGroup[];
   cursors?: PlotRange;
   annotations?: PlotAnnotation[];
   onRange: (range: PlotRange) => void;
@@ -49,6 +53,7 @@ export type ChartInteraction = {
   onAxes: (key?: string) => void;
   onValueRange: (key: string, range: PlotRange) => void;
   onAnnotation: (time: number, id?: string) => void;
+  onAnnotationPosition: (id: string, position: number) => void;
 };
 export default function SignalChart({
   traces,
@@ -83,11 +88,19 @@ export default function SignalChart({
   const svg = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(900);
   const [measuredHeight, setMeasuredHeight] = useState(height);
+  const [annotationDrag, setAnnotationDrag] = useState<{
+    id: string;
+    start: number;
+    origin: number;
+    position: number;
+  }>();
   const [gesture, setGesture] = useState<{
     start: number;
     end: number;
     range: PlotRange;
-    mode: 'pan' | 'zoom' | 'a' | 'b';
+    mode: 'pan' | 'zoom' | 'a' | 'b' | 'y-pan';
+    axisKey?: string;
+    logarithmic?: boolean;
   }>();
   const range = useMemo<PlotRange>(
     () =>
@@ -112,14 +125,17 @@ export default function SignalChart({
   const chartHeight = fillHeight ? measuredHeight : height;
   const axisGroups = useMemo(
     () =>
+      interaction?.valueAxes ??
       groupPlotAxes(
         traces.map((trace) => ({
           unit: trace.node.unit,
           name: trace.label || trace.node.name,
           color: trace.color || trace.node.color,
+          axisId: trace.axisId,
         })),
+        interaction?.axes,
       ),
-    [traces],
+    [traces, interaction?.axes, interaction?.valueAxes],
   );
   const axisCount = interaction ? Math.max(1, axisGroups.length) : 1;
   const minimumWidth = 300 + axisCount * 88;
@@ -145,10 +161,20 @@ export default function SignalChart({
       );
       const plots = traces
         .filter(
-          (trace) => !interaction || plotAxisKey(trace.node.unit) === group.key,
+          (trace) =>
+            !interaction ||
+            traceAxisKey(trace.node.unit, trace.axisId, interaction.axes) ===
+              group.key,
         )
         .map((trace) => trace.plot);
-      const range = valueAxisRange(plots, settings, includeZero);
+      const range =
+        gesture?.mode === 'y-pan' && gesture.axisKey === group.key
+          ? panValueAxis(
+              gesture.range,
+              gesture.end - gesture.start,
+              gesture.logarithmic,
+            )
+          : valueAxisRange(plots, settings, includeZero);
       return {
         ...group,
         label: settings.label || group.label,
@@ -158,7 +184,7 @@ export default function SignalChart({
         max: settings.log ? Math.log10(range[1]) : range[1],
       };
     });
-  }, [axisGroups, traces, interaction, includeZero]);
+  }, [axisGroups, traces, interaction, includeZero, gesture]);
   const bottom = chartHeight - (interaction ? 51 : 31);
   const plotHeight = bottom - 15;
   const valueTicks = fluid
@@ -182,7 +208,10 @@ export default function SignalChart({
     >();
     for (const trace of traces) {
       const scale = scales.find(
-        (axis) => !interaction || axis.key === plotAxisKey(trace.node.unit),
+        (axis) =>
+          !interaction ||
+          axis.key ===
+            traceAxisKey(trace.node.unit, trace.axisId, interaction.axes),
       )!;
       const { min, max, log: logarithmic } = scale;
       const color = trace.color || trace.node.color;
@@ -252,17 +281,33 @@ export default function SignalChart({
           primary.plot.points[0] || [0, NaN],
         )
       : null;
-  const eventTime = (clientX: number) => {
+  const eventTime = (clientX: number, clamp = true) => {
     const rect = svg.current!.getBoundingClientRect();
-    const fraction = Math.max(
+    const position =
+      (((clientX - rect.left) * chartWidth) / rect.width - left) / span;
+    const fraction = clamp ? Math.max(0, Math.min(1, position)) : position;
+    return inputRange[0] + fraction * (inputRange[1] - inputRange[0]);
+  };
+  const verticalPosition = (clientY: number) => {
+    const rect = svg.current!.getBoundingClientRect();
+    return ((clientY - rect.top) * chartHeight) / (rect.height * plotHeight);
+  };
+  const annotationPosition = (clientY: number) => {
+    const rect = svg.current!.getBoundingClientRect();
+    return (
+      (((clientY - rect.top) * chartHeight) / rect.height - 20) / (bottom - 26)
+    );
+  };
+  const draggedLabelPosition = (clientY: number) =>
+    Math.max(
       0,
       Math.min(
         1,
-        (((clientX - rect.left) * chartWidth) / rect.width - left) / span,
+        annotationDrag!.origin +
+          annotationPosition(clientY) -
+          annotationDrag!.start,
       ),
     );
-    return inputRange[0] + fraction * (inputRange[1] - inputRange[0]);
-  };
   const hitAxis = (clientX: number, clientY: number) => {
     const rect = svg.current!.getBoundingClientRect();
     const px = ((clientX - rect.left) * chartWidth) / rect.width;
@@ -288,6 +333,7 @@ export default function SignalChart({
       const hit = hitAxis(event.clientX, event.clientY);
       if (document.activeElement !== element && !hit.axis && !hit.time) return;
       event.preventDefault();
+      if (annotationDrag) return;
       element.focus({ preventScroll: true });
       const delta =
         event.deltaY *
@@ -365,9 +411,10 @@ export default function SignalChart({
             ? (event) => {
                 event.preventDefault();
                 setGesture(undefined);
+                setAnnotationDrag(undefined);
                 const hit = hitAxis(event.clientX, event.clientY);
                 if (hit.axis || hit.time) interaction.onAxes(hit.axis?.key);
-                else interaction.onFit();
+                else interaction.onAnnotation(eventTime(event.clientX));
               }
             : undefined
         }
@@ -386,8 +433,10 @@ export default function SignalChart({
             ? (event) => {
                 const width = inputRange[1] - inputRange[0];
                 let next: PlotRange | undefined;
-                if (event.key === 'Escape') setGesture(undefined);
-                else if (event.key === 'Home') interaction.onFit();
+                if (event.key === 'Escape') {
+                  setGesture(undefined);
+                  setAnnotationDrag(undefined);
+                } else if (event.key === 'Home') interaction.onFit();
                 else if (event.key === 'Backspace') interaction.onBack();
                 else if (event.key === '+' || event.key === '=')
                   next = [inputRange[0] + width / 4, inputRange[1] - width / 4];
@@ -413,12 +462,23 @@ export default function SignalChart({
                 event.preventDefault();
                 event.currentTarget.focus();
                 const hit = hitAxis(event.clientX, event.clientY);
-                if (hit.axis || hit.time) return;
                 if (event.isTrusted)
                   event.currentTarget.setPointerCapture(event.pointerId);
+                if (hit.axis) {
+                  const position = verticalPosition(event.clientY);
+                  setGesture({
+                    start: position,
+                    end: position,
+                    range: hit.axis.range,
+                    axisKey: hit.axis.key,
+                    logarithmic: hit.axis.log,
+                    mode: 'y-pan',
+                  });
+                  return;
+                }
                 const time = eventTime(event.clientX);
                 const mode =
-                  event.shiftKey || event.button === 1
+                  hit.time || event.shiftKey || event.button === 1
                     ? 'pan'
                     : interaction.mode === 'cursor' && interaction.cursors
                       ? Math.abs(time - interaction.cursors[0]) <=
@@ -435,8 +495,28 @@ export default function SignalChart({
         onPointerUp={
           interaction
             ? (event) => {
+                if (annotationDrag) {
+                  const position = draggedLabelPosition(event.clientY);
+                  if (Math.abs(position - annotationDrag.origin) > 0.000001)
+                    interaction.onAnnotationPosition(
+                      annotationDrag.id,
+                      position,
+                    );
+                  setAnnotationDrag(undefined);
+                  return;
+                }
                 if (!gesture) return;
-                const time = eventTime(event.clientX);
+                if (gesture.mode === 'y-pan') {
+                  const delta = verticalPosition(event.clientY) - gesture.start;
+                  if (delta && gesture.axisKey)
+                    interaction.onValueRange(
+                      gesture.axisKey,
+                      panValueAxis(gesture.range, delta, gesture.logarithmic),
+                    );
+                  setGesture(undefined);
+                  return;
+                }
+                const time = eventTime(event.clientX, gesture.mode !== 'pan');
                 if (
                   gesture.mode === 'pan' &&
                   Math.abs(time - gesture.start) > 0
@@ -467,10 +547,26 @@ export default function SignalChart({
               }
             : undefined
         }
-        onPointerCancel={() => setGesture(undefined)}
+        onPointerCancel={() => {
+          setGesture(undefined);
+          setAnnotationDrag(undefined);
+        }}
         onPointerMove={(event) => {
+          if (annotationDrag) {
+            setAnnotationDrag({
+              ...annotationDrag,
+              position: draggedLabelPosition(event.clientY),
+            });
+            return;
+          }
           if (gesture)
-            setGesture({ ...gesture, end: eventTime(event.clientX) });
+            setGesture({
+              ...gesture,
+              end:
+                gesture.mode === 'y-pan'
+                  ? verticalPosition(event.clientY)
+                  : eventTime(event.clientX, gesture.mode !== 'pan'),
+            });
           if (interaction && !gesture) {
             const hit = hitAxis(event.clientX, event.clientY);
             if (hit.axis || hit.time) {
@@ -530,7 +626,7 @@ export default function SignalChart({
                   <title>
                     {label}
                     {axis.log ? ' · positive values only' : ''} · Scroll to
-                    zoom; double-click to edit
+                    zoom; drag to pan; double-click to edit
                   </title>
                   <rect
                     x={axisIndex ? position : 0}
@@ -582,7 +678,9 @@ export default function SignalChart({
         })}
         {interaction && (
           <g className="plot-time-axis">
-            <title>Scroll to zoom time; double-click to edit</title>
+            <title>
+              Scroll to zoom time; drag to pan; double-click to edit
+            </title>
             <rect
               x={left}
               y={bottom + 3}
@@ -749,35 +847,74 @@ export default function SignalChart({
         })}
         {interaction?.annotations
           ?.filter((note) => note.time >= range[0] && note.time <= range[1])
-          .map((note, i) => (
-            <g
-              key={note.id}
-              className="plot-annotation"
-              onPointerDown={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => {
-                event.stopPropagation();
-                interaction.onAnnotation(note.time, note.id);
-              }}
-            >
-              <title>{note.text}</title>
-              <line
-                x1={x(note.time)}
-                x2={x(note.time)}
-                y1={35 + (i % 3) * 20}
-                y2={bottom}
-                stroke="#b6c7db"
-                opacity="0.45"
-              />
-              <text
-                x={Math.min(right - 100, Math.max(left, x(note.time) + 4))}
-                y={35 + (i % 3) * 20}
+          .map((note, i) => {
+            const position = Math.max(
+              0,
+              Math.min(
+                1,
+                note.labelPosition ?? (15 + (i % 3) * 20) / (bottom - 26),
+              ),
+            );
+            const labelY =
+              20 +
+              Math.max(
+                0,
+                Math.min(
+                  1,
+                  annotationDrag?.id === note.id
+                    ? annotationDrag.position
+                    : position,
+                ),
+              ) *
+                (bottom - 26);
+            return (
+              <g
+                key={note.id}
+                className="plot-annotation"
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  svg.current?.focus();
+                  if (event.isTrusted)
+                    svg.current?.setPointerCapture(event.pointerId);
+                  setCursor(null);
+                  setAnnotationDrag({
+                    id: note.id,
+                    start: annotationPosition(event.clientY),
+                    origin: position,
+                    position,
+                  });
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  setAnnotationDrag(undefined);
+                  interaction.onAnnotation(note.time, note.id);
+                }}
               >
-                {note.text.length > 28
-                  ? `${note.text.slice(0, 28)}…`
-                  : note.text}
-              </text>
-            </g>
-          ))}
+                <title>
+                  {note.text} — Drag vertically to move label; double-click to
+                  edit.
+                </title>
+                <line
+                  x1={x(note.time)}
+                  x2={x(note.time)}
+                  y1={labelY}
+                  y2={bottom}
+                  stroke="#b6c7db"
+                  opacity="0.45"
+                />
+                <text
+                  x={Math.min(right - 100, Math.max(left, x(note.time) + 4))}
+                  y={labelY}
+                >
+                  {note.text.length > 28
+                    ? `${note.text.slice(0, 28)}…`
+                    : note.text}
+                </text>
+              </g>
+            );
+          })}
         <text
           data-time-axis
           className={interaction ? 'plot-time-axis plot-axis-title' : undefined}

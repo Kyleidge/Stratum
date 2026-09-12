@@ -30,6 +30,7 @@ export default function PlotMeasurements({
   project: Project;
 }) {
   const [page, setPage] = useState(0);
+  const [sampleTimes, setSampleTimes] = useState(false);
   const safePage = Math.min(
     page,
     Math.max(0, Math.ceil(items.length / 30) - 1),
@@ -103,9 +104,17 @@ export default function PlotMeasurements({
         <span>
           Δt <b>{formatValue(cursors[1] - cursors[0], 6)} s</b>
         </span>
-        <span className="workflow-muted">
-          Nearest samples · statistics between cursors
-        </span>
+        <label
+          className="plot-checkbox"
+          title="Show the actual nearest sample's time instead of cursor time."
+        >
+          <input
+            type="checkbox"
+            checked={sampleTimes}
+            onChange={(event) => setSampleTimes(event.target.checked)}
+          />
+          Sample times
+        </label>
       </div>
       {current?.error ? (
         <p role="alert">
@@ -123,8 +132,8 @@ export default function PlotMeasurements({
             <thead>
               <tr>
                 <th>Trace / unit</th>
-                <th>A / sample time</th>
-                <th>B / sample time</th>
+                <th>A / {sampleTimes ? 'sample time' : 'time'}</th>
+                <th>B / {sampleTimes ? 'sample time' : 'time'}</th>
                 <th>Δvalue</th>
                 <th>Count</th>
                 <th>Min</th>
@@ -145,19 +154,47 @@ export default function PlotMeasurements({
                     <th title={item.label}>
                       {item.label} <small>{item.unit}</small>
                     </th>
-                    <td>
+                    <td
+                      title={
+                        row?.a
+                          ? `Nearest sample: ${formatValue(row.a[0] - item.offset, 6)} s`
+                          : undefined
+                      }
+                    >
                       {number(a)}
-                      {row?.a && (
+                      {!scalar && (
                         <small>
-                          {formatValue(row.a[0] - item.offset, 6)} s
+                          {formatValue(
+                            sampleTimes
+                              ? row?.a
+                                ? row.a[0] - item.offset
+                                : NaN
+                              : cursors[0],
+                            6,
+                          )}{' '}
+                          s
                         </small>
                       )}
                     </td>
-                    <td>
+                    <td
+                      title={
+                        row?.b
+                          ? `Nearest sample: ${formatValue(row.b[0] - item.offset, 6)} s`
+                          : undefined
+                      }
+                    >
                       {number(b)}
-                      {row?.b && (
+                      {!scalar && (
                         <small>
-                          {formatValue(row.b[0] - item.offset, 6)} s
+                          {formatValue(
+                            sampleTimes
+                              ? row?.b
+                                ? row.b[0] - item.offset
+                                : NaN
+                              : cursors[1],
+                            6,
+                          )}{' '}
+                          s
                         </small>
                       )}
                     </td>

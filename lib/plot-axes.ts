@@ -14,17 +14,31 @@ export type PlotAxisGroup = {
   label: string;
   color: string;
 };
+type AxisTrace = { unit: string; name: string; color: string; axisId?: string };
+
+export function traceAxisKey(
+  unit: string,
+  axisId?: string,
+  axes?: PlotAxes,
+): string {
+  return axisId?.startsWith('axis:') &&
+    axes?.values?.[axisId]?.unit === unit.trim()
+    ? axisId
+    : plotAxisKey(unit);
+}
 
 /** Exact unit strings share a scale; no implicit conversion between units. */
 export function groupPlotAxes(
-  items: { unit: string; name: string; color: string }[],
+  items: AxisTrace[],
+  axes?: PlotAxes,
+  includeEmpty = false,
 ): PlotAxisGroup[] {
   const groups = new Map<
     string,
     { unit: string; names: Set<string>; color: string }
   >();
   for (const item of items) {
-    const key = plotAxisKey(item.unit);
+    const key = traceAxisKey(item.unit, item.axisId, axes);
     const group = groups.get(key) ?? {
       unit: item.unit.trim(),
       names: new Set<string>(),
@@ -33,6 +47,19 @@ export function groupPlotAxes(
     group.names.add(item.name.trim() || 'Value');
     groups.set(key, group);
   }
+  if (includeEmpty)
+    for (const [key, axis] of Object.entries(axes?.values ?? {})) {
+      if (
+        key.startsWith('axis:') &&
+        axis.unit !== undefined &&
+        !groups.has(key)
+      )
+        groups.set(key, {
+          unit: axis.unit,
+          names: new Set(['Y axis']),
+          color: '#b6c7db',
+        });
+    }
   return [...groups].map(([key, group]) => {
     const names = [...group.names];
     const name =
@@ -42,9 +69,48 @@ export function groupPlotAxes(
       key,
       unit: group.unit,
       color: group.color,
-      label: `${name} (${group.unit || 'unitless'})`,
+      label:
+        axes?.values?.[key]?.label || `${name} (${group.unit || 'unitless'})`,
     };
   });
+}
+
+/** Offer each unit's automatic axis as well as compatible named extra axes. */
+export function plotAxisOptions(
+  items: AxisTrace[],
+  axes?: PlotAxes,
+): PlotAxisGroup[] {
+  const automatic = groupPlotAxes(
+    items.map((item) => ({ ...item, axisId: undefined })),
+    axes,
+  );
+  const assigned = groupPlotAxes(items, axes, true);
+  return [
+    ...new Map(
+      [...automatic, ...assigned].map((axis) => [axis.key, axis]),
+    ).values(),
+  ];
+}
+
+/** Shift in scale coordinates, retaining logarithmic ratios and missing data. */
+export function panValueAxis(
+  range: PlotRange,
+  fraction: number,
+  log = false,
+): PlotRange {
+  if (
+    !validPlotRange(range) ||
+    !Number.isFinite(fraction) ||
+    (log && range[0] <= 0)
+  )
+    return range;
+  const low = log ? Math.log10(range[0]) : range[0];
+  const high = log ? Math.log10(range[1]) : range[1];
+  const shift = (high - low) * fraction;
+  const next: PlotRange = log
+    ? [10 ** (low + shift), 10 ** (high + shift)]
+    : [low + shift, high + shift];
+  return validPlotRange(next) && (!log || next[0] > 0) ? next : range;
 }
 
 /** Legacy single-axis limits belong to the first unit, never to other units. */

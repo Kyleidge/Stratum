@@ -3,6 +3,7 @@ export const PLOT_STORAGE_KEY = 'stratus.plot-scratchpad.v1';
 export const MAX_PLOT_TABS = 12;
 // Bounded persisted metadata; complete normal segment batches remain intact.
 export const MAX_PLOT_TRACES = 10000;
+export const MAX_CUSTOM_AXES = 32;
 export const TRACE_COLORS = [
   '#91e5ba',
   '#7ebcff',
@@ -20,9 +21,22 @@ export type PlotTrace = {
   color: string;
   style?: 'line' | 'points' | 'step';
   width?: number;
+  axisId?: string;
 };
-export type PlotAnnotation = { id: string; time: number; text: string };
-export type PlotValueAxis = { y?: PlotRange; log?: boolean; label?: string };
+export type PlotAnnotation = {
+  id: string;
+  time: number;
+  text: string;
+  clockId?: string;
+  /** Label height as a fraction of the available plot height, from the top. */
+  labelPosition?: number;
+};
+export type PlotValueAxis = {
+  y?: PlotRange;
+  log?: boolean;
+  label?: string;
+  unit?: string;
+};
 export type PlotAxes = PlotValueAxis & {
   values?: Record<string, PlotValueAxis>;
   timeLabel?: string;
@@ -58,16 +72,28 @@ export function plotWindow(value: PlotRange): PlotRange {
   return [start, start + width];
 }
 
+/** Interactive axes may pan beyond the data; fit restores the full extent. */
+export function plotViewport(value: PlotRange): PlotRange {
+  if (!validPlotRange(value)) return [0, 1];
+  const width = Math.max(0.000001, Math.min(1000, value[1] - value[0]));
+  const next: PlotRange = [value[0], value[0] + width];
+  return validPlotRange(next) ? next : [0, 1];
+}
+
 export function navigatePlot(
   value: PlotRange,
   factor: number,
   anchor = 0.5,
   shift = 0,
+  bounded = true,
 ): PlotRange {
   const width = value[1] - value[0];
-  const nextWidth = Math.max(0.000001, Math.min(1, width * factor));
+  const nextWidth = Math.max(
+    0.000001,
+    Math.min(bounded ? 1 : 1000, width * factor),
+  );
   const start = value[0] + width * anchor - nextWidth * anchor + shift;
-  return plotWindow([start, start + nextWidth]);
+  return (bounded ? plotWindow : plotViewport)([start, start + nextWidth]);
 }
 
 export function plotExtent(range: PlotRange): PlotRange {
@@ -116,9 +142,15 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
               ...(typeof t.width === 'number' && Number.isFinite(t.width)
                 ? { width: Math.min(4, Math.max(1, t.width)) }
                 : {}),
+              ...(typeof t.axisId === 'string' &&
+              /^(unit:|axis:)/.test(t.axisId) &&
+              t.axisId.length <= 256
+                ? { axisId: t.axisId }
+                : {}),
             },
           ];
         });
+      let customAxes = 0;
       return [
         {
           id: sheet.id,
@@ -139,7 +171,7 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
             ? { cursors: sheet.cursors }
             : {}),
           ...(validPlotRange(sheet.window)
-            ? { window: plotWindow(sheet.window) }
+            ? { window: plotViewport(sheet.window) }
             : {}),
           axes: {
             ...readValueAxis(sheet.axes),
@@ -147,8 +179,17 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
             values: Object.fromEntries(
               sheet.axes?.values && typeof sheet.axes.values === 'object'
                 ? Object.entries(sheet.axes.values)
-                    .slice(0, MAX_PLOT_TRACES)
-                    .filter(([key]) => key.startsWith('unit:'))
+                    .slice(0, MAX_PLOT_TRACES + MAX_CUSTOM_AXES)
+                    .filter(
+                      ([key, value]) =>
+                        key.startsWith('unit:') ||
+                        (key.startsWith('axis:') &&
+                          key.length <= 256 &&
+                          value &&
+                          typeof value === 'object' &&
+                          typeof value.unit === 'string' &&
+                          ++customAxes <= MAX_CUSTOM_AXES),
+                    )
                     .map(([key, axis]) => [key, readValueAxis(axis)])
                 : [],
             ),
@@ -166,6 +207,18 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
                         id: note.id.slice(0, 80),
                         time: note.time,
                         text: note.text.trim().slice(0, 160),
+                        ...(typeof note.labelPosition === 'number' &&
+                        Number.isFinite(note.labelPosition)
+                          ? {
+                              labelPosition: Math.max(
+                                0,
+                                Math.min(1, note.labelPosition),
+                              ),
+                            }
+                          : {}),
+                        ...(typeof note.clockId === 'string'
+                          ? { clockId: note.clockId.slice(0, 256) }
+                          : {}),
                       },
                     ]
                   : [],
@@ -191,6 +244,9 @@ function readValueAxis(value: unknown): PlotValueAxis {
   return {
     log: axis.log === true,
     label: readAxisLabel(axis.label),
+    ...(typeof axis.unit === 'string'
+      ? { unit: axis.unit.trim().slice(0, 160) }
+      : {}),
     ...(validPlotRange(axis.y) && (!axis.log || axis.y[0] > 0)
       ? { y: axis.y }
       : {}),

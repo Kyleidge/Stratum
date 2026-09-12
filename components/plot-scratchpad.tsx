@@ -66,11 +66,12 @@ import type { WorkflowIndex } from '@/lib/workflow-history';
 import {
   MAX_PLOT_TABS,
   MAX_PLOT_TRACES,
+  MAX_CUSTOM_AXES,
   PLOT_STORAGE_KEY,
   TRACE_COLORS,
   readPlotSheets,
   navigatePlot,
-  plotWindow,
+  plotViewport,
   plotExtent,
   validPlotRange,
   type PlotRange,
@@ -82,6 +83,9 @@ import {
 import {
   groupPlotAxes,
   plotAxisKey,
+  traceAxisKey,
+  plotAxisOptions,
+  type PlotAxisGroup,
   valueAxisSettings,
   MAX_CHART_AXES,
 } from '@/lib/plot-axes';
@@ -90,6 +94,7 @@ import SignalChart, {
   type ChartInteraction,
 } from './signal-chart';
 import PlotMeasurements from './plot-measurements';
+import PlotSelect from './plot-select';
 import { exportPlotImage } from '@/lib/plot-export';
 import WorkflowList from './workflow-list';
 import { stepName } from '@/lib/workflow-history';
@@ -177,10 +182,13 @@ export default function PlotScratchpad({
   const [axisEdits, setAxisEdits] = useState<
     Record<string, Pick<typeof axisDraft, 'min' | 'max' | 'log' | 'label'>>
   >({});
+  const [newAxes, setNewAxes] = useState<Record<string, PlotValueAxis>>({});
+  const [removedAxes, setRemovedAxes] = useState<string[]>([]);
   const [noteDraft, setNoteDraft] = useState<{
     id?: string;
     time: string;
     text: string;
+    clockId?: string;
   }>();
   const [helpOpen, setHelpOpen] = useState(false);
   const [styleTrace, setStyleTrace] = useState<string>();
@@ -395,20 +403,45 @@ export default function PlotScratchpad({
             referenceLine: !!value,
             style: trace.style,
             width: trace.width,
+            axisId: trace.axisId,
           },
         ]
       : [];
   });
-  const traceColors = new Map(
-    sheet.traces.map((trace) => [trace.id, trace.color]),
-  );
+  function traceUnit(id: string) {
+    return index.values.get(id)?.unit ?? index.nodes.get(id)?.unit ?? '';
+  }
+  const axisTraces = sheet.traces
+    .filter((trace) => index.nodes.has(trace.id) || index.values.has(trace.id))
+    .map((trace) => ({
+      ...trace,
+      unit: traceUnit(trace.id),
+      name: index.label(trace.id),
+    }));
   const axisGroups = groupPlotAxes(
-    visibleIds.map((id) => ({
-      unit: index.values.get(id)?.unit ?? index.nodes.get(id)?.unit ?? '',
-      name: index.label(id),
-      color: traceColors.get(id) ?? TRACE_COLORS[0],
-    })),
+    axisTraces.filter((trace) => trace.visible),
+    sheet.axes,
+    true,
   );
+  const editAxes: PlotAxes = {
+    ...sheet.axes,
+    values: Object.fromEntries(
+      Object.entries({ ...sheet.axes?.values, ...newAxes }).filter(
+        ([key]) => !removedAxes.includes(key),
+      ),
+    ),
+  };
+  const axisOptions = plotAxisOptions(
+    axisTraces,
+    settingsOpen ? editAxes : sheet.axes,
+  );
+  const axisChoices = axisOptions.map((axis, i) => ({
+    value: axis.key,
+    label: `Y${i + 1} · ${axis.label}`,
+  }));
+  const customAxisCount = Object.keys(
+    (settingsOpen ? editAxes : sheet.axes)?.values ?? {},
+  ).filter((key) => key.startsWith('axis:')).length;
   const firstTraceId =
     sheet.traces.find(
       (trace) => index.nodes.has(trace.id) || index.values.has(trace.id),
@@ -428,7 +461,7 @@ export default function PlotScratchpad({
       .map((axis) => axis.key),
   );
   const overlayTraces = traces.filter((trace) =>
-    shownAxes.has(plotAxisKey(trace.node.unit)),
+    shownAxes.has(traceAxisKey(trace.node.unit, trace.axisId, sheet.axes)),
   );
   const canOverlay = clocks.size <= 1;
   const stacked = sheet.layout === 'stacked' || !canOverlay;
@@ -441,10 +474,10 @@ export default function PlotScratchpad({
     return [range[0] + window[0] * span, range[0] + window[1] * span];
   }
   function zoom(factor: number, shift = 0) {
-    setWindow(navigatePlot(window, factor, 0.5, shift));
+    setWindow(navigatePlot(window, factor, 0.5, shift, false));
   }
   function setWindow(next: PlotRange, remember = true) {
-    const normalized = plotWindow(next);
+    const normalized = plotViewport(next);
     if (
       remember &&
       (normalized[0] !== window[0] || normalized[1] !== window[1])
@@ -518,7 +551,52 @@ export default function PlotScratchpad({
     });
     setAxisError('');
     setAxisEdits({});
+    setNewAxes({});
+    setRemovedAxes([]);
     setSettingsOpen(true);
+  }
+  function chooseAxis(key: string) {
+    const value = valueAxisSettings(editAxes, key, primaryAxisKey);
+    const next = axisEdits[key] ?? {
+      min: value.y ? String(value.y[0]) : '',
+      max: value.y ? String(value.y[1]) : '',
+      log: !!value.log,
+      label: value.label ?? '',
+    };
+    setAxisEdits({
+      ...axisEdits,
+      [axisDraft.key]: {
+        min: axisDraft.min,
+        max: axisDraft.max,
+        log: axisDraft.log,
+        label: axisDraft.label,
+      },
+    });
+    setAxisDraft({ ...axisDraft, ...next, key });
+    setAxisError('');
+  }
+  function addValueAxis(unit: string, traceId?: string) {
+    if (
+      Object.keys((traceId ? sheet.axes : editAxes)?.values ?? {}).filter(
+        (key) => key.startsWith('axis:'),
+      ).length >= MAX_CUSTOM_AXES
+    )
+      return;
+    const key = `axis:${crypto.randomUUID()}`;
+    if (traceId) {
+      update({
+        axes: {
+          ...sheet.axes,
+          values: { ...sheet.axes?.values, [key]: { unit: unit.trim() } },
+        },
+        traces: sheet.traces.map((trace) =>
+          trace.id === traceId ? { ...trace, axisId: key } : trace,
+        ),
+      });
+    } else {
+      setNewAxes({ ...newAxes, [key]: { unit: unit.trim() } });
+      chooseAxis(key);
+    }
   }
   const cursorTimes: PlotRange = cursorWindows[windowKey] ??
     sheet.cursors ?? [
@@ -529,12 +607,18 @@ export default function PlotScratchpad({
     setCursorWindows((old) => ({ ...old, [windowKey]: next }));
     update({ cursors: next });
   }
-  function interactionFor(extent: PlotRange): ChartInteraction {
+  function interactionFor(
+    extent: PlotRange,
+    valueAxes?: PlotAxisGroup[],
+    clockId = clocks.values().next().value,
+  ): ChartInteraction {
     const range = plotExtent(extent);
     return {
       mode,
       axes: sheet.axes,
       primaryAxisKey,
+      valueAxes:
+        valueAxes ?? axisGroups.filter((axis) => shownAxes.has(axis.key)),
       timeLabel: sheet.zeroTime ? 'Elapsed time (s)' : 'Time (s)',
       onValueRange: (key, range) => {
         rememberView();
@@ -544,7 +628,9 @@ export default function PlotScratchpad({
         });
       },
       cursors: measuring && clocks.size <= 1 ? cursorTimes : undefined,
-      annotations: clocks.size <= 1 ? sheet.annotations : [],
+      annotations: sheet.annotations?.filter((note) =>
+        note.clockId ? note.clockId === clockId : clocks.size <= 1,
+      ),
       onRange: (next) =>
         setWindow([
           (next[0] - range[0]) / (range[1] - range[0]),
@@ -554,11 +640,18 @@ export default function PlotScratchpad({
       onBack: back,
       onAxes: openAxes,
       onCursors: setCursors,
+      onAnnotationPosition: (id, labelPosition) =>
+        update({
+          annotations: sheet.annotations?.map((note) =>
+            note.id === id ? { ...note, labelPosition } : note,
+          ),
+        }),
       onAnnotation: (time, id) =>
         setNoteDraft({
           id,
           time: String(time),
           text: sheet.annotations?.find((note) => note.id === id)?.text ?? '',
+          clockId,
         }),
     };
   }
@@ -1081,7 +1174,7 @@ export default function PlotScratchpad({
                     </button>
                     <button
                       aria-label="Pan plot left"
-                      disabled={window[0] <= 0}
+                      disabled={!traces.length}
                       onClick={() => zoom(1, -(window[1] - window[0]) / 4)}
                     >
                       <ChevronLeft size={16} />
@@ -1097,14 +1190,14 @@ export default function PlotScratchpad({
                     </button>
                     <button
                       aria-label="Zoom out"
-                      disabled={window[1] - window[0] >= 1}
+                      disabled={!traces.length || window[1] - window[0] >= 1000}
                       onClick={() => zoom(2)}
                     >
                       <ZoomOut size={16} />
                     </button>
                     <button
                       aria-label="Pan plot right"
-                      disabled={window[1] >= 1}
+                      disabled={!traces.length}
                       onClick={() => zoom(1, (window[1] - window[0]) / 4)}
                     >
                       <ChevronRight size={16} />
@@ -1149,6 +1242,7 @@ export default function PlotScratchpad({
                               2,
                           ),
                           text: '',
+                          clockId: clocks.values().next().value,
                         })
                       }
                     >
@@ -1225,6 +1319,20 @@ export default function PlotScratchpad({
                               clocks.size > 1
                                 ? displayRange(trace.node.id)
                                 : fullRange,
+                              axisGroups.filter(
+                                (axis) =>
+                                  axis.key ===
+                                  traceAxisKey(
+                                    trace.node.unit,
+                                    trace.axisId,
+                                    sheet.axes,
+                                  ),
+                              ),
+                              sheet.zeroTime
+                                ? 'elapsed'
+                                : graph.timeReferences.get(
+                                    signalFor(trace.node.id)?.id ?? '',
+                                  )?.id,
                             )}
                           />
                         </div>
@@ -1392,6 +1500,7 @@ export default function PlotScratchpad({
                           id: note.id,
                           time: String(note.time),
                           text: note.text,
+                          clockId: note.clockId,
                         })
                       }
                     >
@@ -1667,8 +1776,9 @@ export default function PlotScratchpad({
         <DialogContent className="workflow-dialog plot-settings-dialog">
           <DialogTitle>Plot axes and limits</DialogTitle>
           <DialogDescription>
-            Y settings apply only to the selected unit. Blank limits and names
-            use automatic scaling and signal labels.
+            Each Y axis has independent limits. Add an axis in the selected
+            unit, then assign signals in Trace properties. Blank names and
+            limits use automatic labels and scaling.
           </DialogDescription>
           <form
             className="plot-settings-form"
@@ -1679,7 +1789,7 @@ export default function PlotScratchpad({
                 Number(axisDraft.end),
               ];
               const values = {
-                ...sheet.axes?.values,
+                ...editAxes.values,
                 [primaryAxisKey]: valueAxisSettings(
                   sheet.axes,
                   primaryAxisKey,
@@ -1690,6 +1800,7 @@ export default function PlotScratchpad({
                 ...axisEdits,
                 [axisDraft.key]: axisDraft,
               })) {
+                if (removedAxes.includes(key)) continue;
                 const y: PlotRange | undefined =
                   !draft.min.trim() && !draft.max.trim()
                     ? undefined
@@ -1702,11 +1813,12 @@ export default function PlotScratchpad({
                     (draft.log && y[0] <= 0))
                 ) {
                   setAxisError(
-                    `${axisGroups.find((axis) => axis.key === key)?.label ?? key}: enter increasing Y limits. Log Y requires a positive minimum.`,
+                    `${axisOptions.find((axis) => axis.key === key)?.label ?? key}: enter increasing Y limits. Log Y requires a positive minimum.`,
                   );
                   return;
                 }
                 values[key] = {
+                  ...values[key],
                   y,
                   log: draft.log,
                   label: draft.label.trim() || undefined,
@@ -1716,13 +1828,9 @@ export default function PlotScratchpad({
                 clocks.size <= 1 &&
                 (!axisDraft.start.trim() ||
                   !axisDraft.end.trim() ||
-                  !validPlotRange(range) ||
-                  range[0] < fullRange[0] ||
-                  range[1] > fullRange[1])
+                  !validPlotRange(range))
               ) {
-                setAxisError(
-                  `Enter increasing limits within ${fullRange[0]}–${fullRange[1]} s. Log Y requires a positive minimum.`,
-                );
+                setAxisError('Enter finite, increasing time limits.');
                 return;
               }
               if (clocks.size <= 1)
@@ -1744,44 +1852,54 @@ export default function PlotScratchpad({
               setSettingsOpen(false);
             }}
           >
-            <label className="plot-axis-field">
+            <label className="plot-axis-field" htmlFor="plot-axis-selection">
               Y axis
-              <select
-                aria-label="Y axis"
+              <PlotSelect
+                id="plot-axis-selection"
+                label="Y axis"
                 value={axisDraft.key}
-                onChange={(event) => {
-                  const key = event.target.value;
-                  const value = valueAxisSettings(
-                    sheet.axes,
-                    key,
-                    primaryAxisKey,
-                  );
-                  const next = axisEdits[key] ?? {
-                    min: value.y ? String(value.y[0]) : '',
-                    max: value.y ? String(value.y[1]) : '',
-                    log: !!value.log,
-                    label: value.label ?? '',
-                  };
-                  setAxisEdits({
-                    ...axisEdits,
-                    [axisDraft.key]: {
-                      min: axisDraft.min,
-                      max: axisDraft.max,
-                      log: axisDraft.log,
-                      label: axisDraft.label,
-                    },
-                  });
-                  setAxisDraft({ ...axisDraft, ...next, key });
-                  setAxisError('');
-                }}
-              >
-                {axisGroups.map((axis) => (
-                  <option key={axis.key} value={axis.key}>
-                    {axis.label}
-                  </option>
-                ))}
-              </select>
+                onChange={chooseAxis}
+                options={axisChoices}
+              />
             </label>
+            <div className="plot-axis-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={customAxisCount >= MAX_CUSTOM_AXES}
+                onClick={() =>
+                  addValueAxis(
+                    axisOptions.find((axis) => axis.key === axisDraft.key)
+                      ?.unit ?? '',
+                  )
+                }
+              >
+                <Plus size={14} />
+                Add Y axis
+              </button>
+              {axisDraft.key.startsWith('axis:') && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  title="Reassign any signals before removing their axis"
+                  disabled={axisTraces.some(
+                    (trace) =>
+                      traceAxisKey(trace.unit, trace.axisId, editAxes) ===
+                      axisDraft.key,
+                  )}
+                  onClick={() => {
+                    const key = axisDraft.key;
+                    setRemovedAxes([...removedAxes, key]);
+                    chooseAxis(
+                      axisOptions.find((axis) => axis.key !== key)?.key ??
+                        primaryAxisKey,
+                    );
+                  }}
+                >
+                  Remove Y axis
+                </button>
+              )}
+            </div>
             <div className="plot-axis-names">
               <label className="plot-axis-field">
                 Time axis name
@@ -1805,7 +1923,8 @@ export default function PlotScratchpad({
                   maxLength={160}
                   value={axisDraft.label}
                   placeholder={
-                    axisGroups.find((axis) => axis.key === axisDraft.key)?.label
+                    axisOptions.find((axis) => axis.key === axisDraft.key)
+                      ?.label
                   }
                   onChange={(event) =>
                     setAxisDraft({ ...axisDraft, label: event.target.value })
@@ -1890,7 +2009,8 @@ export default function PlotScratchpad({
             {noteDraft?.id ? 'Edit annotation' : 'Add annotation'}
           </DialogTitle>
           <DialogDescription>
-            A note at a display time. Double-click its marker to edit it.
+            Drag the label vertically to reposition it at the same time.
+            Double-click its marker to edit it.
           </DialogDescription>
           {noteDraft && (
             <form
@@ -1905,9 +2025,13 @@ export default function PlotScratchpad({
                 )
                   return;
                 const note = {
+                  ...sheet.annotations?.find(
+                    (item) => item.id === noteDraft.id,
+                  ),
                   id: noteDraft.id ?? crypto.randomUUID(),
                   time,
                   text: noteDraft.text.trim().slice(0, 160),
+                  clockId: noteDraft.clockId,
                 };
                 const existing = sheet.annotations ?? [];
                 update({
@@ -1981,6 +2105,39 @@ export default function PlotScratchpad({
           </DialogDescription>
           {styleTrace && (
             <div className="plot-settings-form">
+              <label htmlFor="plot-trace-axis">
+                Y axis
+                <PlotSelect
+                  id="plot-trace-axis"
+                  label="Trace Y axis"
+                  value={traceAxisKey(
+                    traceUnit(styleTrace),
+                    sheet.traces.find((trace) => trace.id === styleTrace)
+                      ?.axisId,
+                    sheet.axes,
+                  )}
+                  options={axisChoices.filter(
+                    (choice) =>
+                      axisOptions.find((axis) => axis.key === choice.value)
+                        ?.unit === traceUnit(styleTrace).trim(),
+                  )}
+                  onChange={(axisId) =>
+                    update({
+                      traces: sheet.traces.map((trace) =>
+                        trace.id === styleTrace ? { ...trace, axisId } : trace,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <button
+                className="secondary-button"
+                disabled={customAxisCount >= MAX_CUSTOM_AXES}
+                onClick={() => addValueAxis(traceUnit(styleTrace), styleTrace)}
+              >
+                <Plus size={14} />
+                Add Y axis
+              </button>
               <label>
                 Color
                 <input
@@ -2001,56 +2158,60 @@ export default function PlotScratchpad({
                   }
                 />
               </label>
-              <label>
+              <label htmlFor="plot-trace-rendering">
                 Rendering
-                <select
-                  aria-label="Trace rendering"
+                <PlotSelect
+                  id="plot-trace-rendering"
+                  label="Trace rendering"
                   value={
                     sheet.traces.find((trace) => trace.id === styleTrace)
                       ?.style ?? 'line'
                   }
-                  onChange={(event) =>
+                  onChange={(style) =>
                     update({
                       traces: sheet.traces.map((trace) =>
                         trace.id === styleTrace
                           ? {
                               ...trace,
-                              style: event.target.value as PlotTrace['style'],
+                              style: style as PlotTrace['style'],
                             }
                           : trace,
                       ),
                     })
                   }
-                >
-                  <option value="line">Line</option>
-                  <option value="points">Points</option>
-                  <option value="step">Step (hold previous)</option>
-                </select>
+                  options={[
+                    { value: 'line', label: 'Line' },
+                    { value: 'points', label: 'Points' },
+                    { value: 'step', label: 'Step (hold previous)' },
+                  ]}
+                />
               </label>
-              <label>
+              <label htmlFor="plot-trace-width">
                 Line width
-                <select
-                  aria-label="Trace line width"
-                  value={
+                <PlotSelect
+                  id="plot-trace-width"
+                  label="Trace line width"
+                  value={String(
                     sheet.traces.find((trace) => trace.id === styleTrace)
-                      ?.width ?? 1.45
-                  }
-                  onChange={(event) =>
+                      ?.width ?? 1.45,
+                  )}
+                  onChange={(width) =>
                     update({
                       traces: sheet.traces.map((trace) =>
                         trace.id === styleTrace
-                          ? { ...trace, width: Number(event.target.value) }
+                          ? { ...trace, width: Number(width) }
                           : trace,
                       ),
                     })
                   }
-                >
-                  <option value="1.45">Standard</option>
-                  <option value="1">Thin</option>
-                  <option value="2">Medium</option>
-                  <option value="3">Heavy</option>
-                  <option value="4">Extra heavy</option>
-                </select>
+                  options={[
+                    { value: '1.45', label: 'Standard' },
+                    { value: '1', label: 'Thin' },
+                    { value: '2', label: 'Medium' },
+                    { value: '3', label: 'Heavy' },
+                    { value: '4', label: 'Extra heavy' },
+                  ]}
+                />
               </label>
               <div className="plot-dialog-actions">
                 <button
@@ -2081,7 +2242,9 @@ export default function PlotScratchpad({
             current plot.
           </DialogDescription>
           <dl className="plot-shortcuts">
-            <dt>Drag / Shift-drag</dt>
+            <dt>Drag axis</dt>
+            <dd>Pan that axis only. Escape cancels the drag.</dd>
+            <dt>Drag plot / Shift-drag</dt>
             <dd>Pan in time; Shift always pans.</dd>
             <dt>Wheel</dt>
             <dd>
@@ -2090,7 +2253,11 @@ export default function PlotScratchpad({
             </dd>
             <dt>Zoom + drag</dt>
             <dd>Select a time band.</dd>
-            <dt>Double-click plot / Home</dt>
+            <dt>Double-click plot</dt>
+            <dd>Add an annotation at the pointer time.</dd>
+            <dt>Drag annotation</dt>
+            <dd>Move its label vertically while keeping its time fixed.</dd>
+            <dt>Fit / Home</dt>
             <dd>Fit the complete signal and automatic Y limits.</dd>
             <dt>Double-click axis / right-click</dt>
             <dd>Set time and Y limits, or logarithmic Y.</dd>

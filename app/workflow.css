@@ -2691,7 +2691,7 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   outline-offset: -1px;
 }
 .plot-annotation {
-  cursor: pointer;
+  cursor: ns-resize;
 }
 .plot-output-dock {
   border-top: 1px solid var(--border);
@@ -2894,6 +2894,41 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
 }
 .plot-time-axis {
   cursor: ew-resize;
+}
+.plot-select-trigger {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border-radius: 3px;
+  border-color: var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+.plot-select-popup {
+  color-scheme: dark;
+  background: var(--popover);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  max-height: min(300px, var(--available-height));
+}
+.plot-select-popup [role='option'] {
+  font-size: 12px;
+  border-radius: 2px;
+}
+.plot-select-popup [data-highlighted] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.plot-axis-actions {
+  display: flex;
+  gap: 8px;
+}
+.plot-measurement-tools .plot-checkbox input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
 }
 .plot-scratchpad:has(.scratchpad-traces)
   .scratchpad-canvas

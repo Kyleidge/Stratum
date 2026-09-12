@@ -88,8 +88,11 @@ There are no server API routes or cloud signal uploads.
   annotations and viewport independently of workflow history. Plot gestures use
   display time and translate per-trace offsets before viewport evaluation.
   `lib/plot-axes.ts` groups exact units into independently scaled, automatically
-  named Y axes on a shared time plot. Axis wheel zoom targets only its own scale;
-  persist settings by unit, never by a trace's display position.
+  named Y axes on a shared time plot. Additional same-unit axes use stable IDs;
+  traces choose compatible axes without implicit conversion. Axis wheel zoom and
+  drag pan target only their own scale. Persist settings by stable axis ID,
+  never by a trace's display position. Annotation label heights are normalized
+  plot positions; vertical drags never change their display time or clock.
   `lib/plot-measurement.ts` streams exact cursor samples and region statistics;
   never use envelope points as measurement samples. Boundary context points may
   extend outside a zoom window for drawing, but never enter its statistics.

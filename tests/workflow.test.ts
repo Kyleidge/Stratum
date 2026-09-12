@@ -18,6 +18,7 @@ import {
   readPlotSheets,
   navigatePlot,
   plotWindow,
+  plotViewport,
 } from '../lib/plot-scratchpad';
 import { measurePlot } from '../lib/plot-measurement';
 import {
@@ -25,6 +26,9 @@ import {
   valueAxisSettings,
   valueAxisRange,
   zoomValueAxis,
+  panValueAxis,
+  traceAxisKey,
+  plotAxisOptions,
 } from '../lib/plot-axes';
 import {
   readWorkflowDrag,
@@ -99,7 +103,7 @@ void test('plot windows preserve pointer anchors, clamp pan, and validate saved 
       },
     ]),
   )[0];
-  assert.deepEqual(saved.window, [0, 0.5]);
+  assert.deepEqual(saved.window, [-0.5, 0]);
   assert.equal(saved.axes?.y, undefined);
   assert.equal(saved.axes?.log, true);
   assert.equal(saved.traces[0].style, 'step');
@@ -188,6 +192,93 @@ void test('axis wheel zoom preserves the pointer value for linear and logarithmi
   assert.deepEqual(
     zoomValueAxis([1e-300, 1e300], 3, 0.5, true),
     [1e-300, 1e300],
+  );
+});
+
+void test('axis dragging preserves linear spans, log ratios and free time viewports', () => {
+  assert.deepEqual(panValueAxis([20, 120], 0.25), [45, 145]);
+  const log = panValueAxis([1, 100], 0.5, true);
+  assert.deepEqual(log, [10, 1000]);
+  assert.deepEqual(panValueAxis([-1, 10], 0.5, true), [-1, 10]);
+  assert.deepEqual(panValueAxis([1e-300, 1e300], 3, true), [1e-300, 1e300]);
+  assert.deepEqual(plotViewport([-0.25, 0.75]), [-0.25, 0.75]);
+  assert.deepEqual(navigatePlot([0, 1], 1, 0.5, -0.25, false), [-0.25, 0.75]);
+  assert.deepEqual(navigatePlot([-0.25, 0.75], 0.5, 0.5, 0, false), [0, 0.5]);
+});
+
+void test('extra Y axes preserve compatible assignments and independent settings across reload', () => {
+  const axes = {
+    values: {
+      'axis:speed': {
+        unit: 'rpm',
+        label: 'Filtered speed',
+        y: [10, 20] as [number, number],
+      },
+      'axis:torque': { unit: 'Nm', y: [1, 100] as [number, number], log: true },
+    },
+  };
+  const items = [
+    { name: 'Speed', unit: 'rpm', color: '#91e5ba' },
+    { name: 'Filtered', unit: 'rpm', color: '#7ebcff', axisId: 'axis:speed' },
+    { name: 'Torque', unit: 'Nm', color: '#f2c479', axisId: 'axis:torque' },
+  ];
+  assert.deepEqual(
+    groupPlotAxes(items, axes).map((axis) => axis.key),
+    ['unit:rpm', 'axis:speed', 'axis:torque'],
+  );
+  assert.equal(traceAxisKey('rpm', 'axis:torque', axes), 'unit:rpm');
+  assert.equal(traceAxisKey('rpm', 'axis:removed', axes), 'unit:rpm');
+  assert.equal(
+    plotAxisOptions(items, axes).filter((axis) => axis.unit === 'rpm').length,
+    2,
+  );
+  const saved = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:extra',
+        name: 'Extra axes',
+        axes,
+        traces: [{ id: 'speed', axisId: 'axis:speed' }],
+        annotations: [
+          { id: 'note', time: 4, text: 'Clock-local', clockId: 'clock:a' },
+        ],
+      },
+    ]),
+  )[0];
+  assert.equal(saved.traces[0].axisId, 'axis:speed');
+  assert.deepEqual(saved.axes?.values?.['axis:speed'].y, [10, 20]);
+  assert.equal(saved.axes?.values?.['axis:torque'].unit, 'Nm');
+  assert.equal(saved.annotations?.[0].clockId, 'clock:a');
+  assert.equal(
+    traceAxisKey('rpm', saved.traces[0].axisId, saved.axes),
+    'axis:speed',
+  );
+});
+
+void test('annotation label heights persist independently of time and reject invalid positions', () => {
+  const [saved] = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:notes',
+        name: 'Notes',
+        traces: [],
+        annotations: [0.65, -2, 4, '0.5', null].map((labelPosition, i) => ({
+          id: String(i),
+          time: 25,
+          text: 'Fixed time',
+          labelPosition,
+        })),
+      },
+    ]),
+  );
+  assert.deepEqual(
+    saved.annotations?.map((note) => note.labelPosition),
+    [0.65, 0, 1, undefined, undefined],
+  );
+  assert.ok(saved.annotations?.every((note) => note.time === 25));
+  assert.deepEqual(
+    readPlotSheets(JSON.stringify([saved]))[0].annotations,
+    saved.annotations,
   );
 });
 

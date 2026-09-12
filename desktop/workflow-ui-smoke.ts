@@ -29,6 +29,7 @@ export async function workflowUiSmoke() {
         (button.textContent?.trim() === text ||
           button.getAttribute('aria-label') === text) &&
         !button.disabled &&
+        !button.closest('[data-closed]') &&
         button.getAttribute('aria-disabled') !== 'true',
     );
   async function menuAction(text: string) {
@@ -507,6 +508,95 @@ export async function workflowUiSmoke() {
           .querySelector('[data-value-axis="unit:Nm"]')
           ?.textContent?.includes('Torque / Smoothed torque (Nm)'),
       'Same-unit traces did not share an automatically named axis.',
+    );
+    // A same-unit trace can move onto another independently scaled Y axis.
+    [...document.querySelectorAll<HTMLButtonElement>('.scratchpad-trace-name')]
+      .find(
+        (item) =>
+          item.querySelector('strong')?.textContent === 'Smoothed torque',
+      )!
+      .click();
+    await click('Add Y axis', await dialog());
+    const assigned = readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY))[0];
+    const extraAxis = assigned.traces.find((trace) =>
+      trace.axisId?.startsWith('axis:'),
+    )?.axisId;
+    assert(
+      extraAxis && assigned.axes?.values?.[extraAxis].unit === 'Nm',
+      'Add Y axis did not assign a compatible separate scale.',
+    );
+    await click('Trace Y axis');
+    await until(
+      () => document.querySelector('.plot-select-popup [role="option"]'),
+      'axis choices',
+    );
+    const axisChoices = [
+      ...document.querySelectorAll<HTMLElement>(
+        '.plot-select-popup [role="option"]',
+      ),
+    ];
+    assert(
+      axisChoices.length === 2 &&
+        axisChoices.every((item) => item.dataset.plotOption !== 'unit:rpm'),
+      'Axis chooser offered incompatible units.',
+    );
+    axisChoices.find((item) => item.dataset.plotOption === extraAxis)!.click();
+    await delay();
+    await click('Done');
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 3,
+      'separate axes with identical units',
+    );
+    assert(
+      document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+        .length === 1,
+      'Same-unit extra axis split the plot.',
+    );
+    // Move it back, then remove the unused extra axis through the axes dialog.
+    [...document.querySelectorAll<HTMLButtonElement>('.scratchpad-trace-name')]
+      .find(
+        (item) =>
+          item.querySelector('strong')?.textContent === 'Smoothed torque',
+      )!
+      .click();
+    await dialog();
+    await click('Trace Y axis');
+    (
+      await until(
+        () =>
+          [
+            ...document.querySelectorAll<HTMLElement>(
+              '.plot-select-popup [role="option"]',
+            ),
+          ].find((item) => item.dataset.plotOption === 'unit:Nm'),
+        'automatic Nm axis',
+      )
+    ).click();
+    await delay();
+    await click('Done');
+    await click('Plot axes and limits');
+    await click('Y axis');
+    (
+      await until(
+        () =>
+          [
+            ...document.querySelectorAll<HTMLElement>(
+              '.plot-select-popup [role="option"]',
+            ),
+          ].find((item) => item.dataset.plotOption === extraAxis),
+        'extra axis editor',
+      )
+    ).click();
+    await delay();
+    await click('Remove Y axis');
+    await click('Apply axes');
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 2,
+      'removed unused axis',
     );
     await click('Add signals');
     const thirdUnitPicker = await dialog();
