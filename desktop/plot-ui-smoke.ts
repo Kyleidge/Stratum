@@ -115,6 +115,80 @@ export async function plotUiSmoke() {
     );
     await delay();
   }
+  const holdY = () =>
+    document.querySelector<HTMLButtonElement>(
+      '[aria-label="Hold Y-axis scales"]',
+    )!;
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'initial Y scales',
+  );
+  const heldSpeed = limits('rpm'),
+    heldTorque = limits('Nm');
+  await click('Hold Y-axis scales');
+  assert(
+    holdY().getAttribute('aria-pressed') === 'true' &&
+      same(limits('rpm'), heldSpeed) &&
+      same(limits('Nm'), heldTorque),
+    'Holding Y changed the displayed limits or failed to activate.',
+  );
+  assert(
+    readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY))[0].axes?.heldY,
+    'Held Y scales were not saved.',
+  );
+  await click('Box zoom mode');
+  await pointer('pointerdown', 0.1);
+  await pointer('pointermove', 0.2);
+  await pointer('pointerup', 0.2);
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'held zoom data',
+  );
+  await wheelAt('time');
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'held wheel data',
+  );
+  await click('Pan mode');
+  await pointer('pointerdown', 0.5);
+  await pointer('pointermove', 0.3);
+  await pointer('pointerup', 0.3);
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'held pan data',
+  );
+  assert(
+    same(limits('rpm'), heldSpeed) && same(limits('Nm'), heldTorque),
+    'Time navigation changed held Y scales after detailed data arrived.',
+  );
+  await click('Stacked');
+  assert(
+    document.querySelectorAll('.scratchpad-canvas .signal-chart svg').length ===
+      2 && same(limits('rpm'), heldSpeed),
+    'Stacked panels lost their held Y scales.',
+  );
+  await click('Overlay');
+  await click('Hold Y-axis scales');
+  assert(
+    holdY().getAttribute('aria-pressed') === 'false' &&
+      !same(limits('rpm'), heldSpeed),
+    'Releasing Hold Y did not resume autoscaling.',
+  );
+  await click('Previous plot view');
+  assert(
+    holdY().getAttribute('aria-pressed') === 'true' &&
+      same(limits('rpm'), heldSpeed),
+    'Previous view lost held Y limits.',
+  );
+  await click('Fit entire plot');
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'fit after holding Y',
+  );
+  assert(
+    holdY().getAttribute('aria-pressed') === 'false',
+    'Fit did not release held Y scales.',
+  );
   const speedLimits = limits('rpm'),
     torqueLimits = limits('Nm');
   async function axisDrag(unit: string, cancel = false) {
@@ -560,7 +634,12 @@ export async function plotUiSmoke() {
   const noteLine = () =>
     chart().querySelector<SVGLineElement>('.plot-annotation line')!;
   const initialLabelY = noteLabel().y.baseVal[0].value;
-  const initialNoteX = noteLine().x1.baseVal.value;
+  // Closing the dialog may still deliver a ResizeObserver update. Compare
+  // time-axis fractions so a responsive width change is not a time change.
+  const noteFraction = () =>
+    (noteLine().x1.baseVal.value - Number(chart().dataset.plotLeft)) /
+    (Number(chart().dataset.plotRight) - Number(chart().dataset.plotLeft));
+  const initialNoteFraction = noteFraction();
   const annotationWindow = window();
   async function dragNote(deltaY: number, cancel?: 'escape' | 'pointer') {
     const svg = chart(),
@@ -608,7 +687,7 @@ export async function plotUiSmoke() {
   assert(
     movedLabelY > initialLabelY + 40 &&
       typeof labelPosition === 'number' &&
-      noteLine().x1.baseVal.value === initialNoteX &&
+      Math.abs(noteFraction() - initialNoteFraction) < 1e-7 &&
       stored()[0].annotations?.[0].time === 25 &&
       same(window(), annotationWindow),
     'Annotation drag moved time or viewport, or failed to save its label height.',

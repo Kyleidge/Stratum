@@ -18,6 +18,7 @@ import type {
 } from '@/lib/plot-scratchpad';
 import {
   groupPlotAxes,
+  heldValueAxisKey,
   traceAxisKey,
   panValueAxis,
   type PlotAxisGroup,
@@ -60,6 +61,8 @@ export type ChartInteraction = {
   mode: 'pan' | 'zoom' | 'cursor';
   axes?: PlotAxes;
   primaryAxisKey?: string;
+  /** Stable signal ID when this chart is a stacked panel. */
+  traceId?: string;
   timeLabel?: string;
   valueAxes?: PlotAxisGroup[];
   cursors?: PlotRange;
@@ -200,6 +203,8 @@ export default function SignalChart({
         group.key,
         interaction?.primaryAxisKey ?? axisGroups[0]?.key,
       );
+      const heldY = interaction?.axes?.heldY;
+      const held = heldY?.[heldValueAxisKey(group.key, interaction?.traceId)];
       const plots = traces
         .filter(
           (trace) =>
@@ -207,7 +212,13 @@ export default function SignalChart({
             traceAxisKey(trace.node.unit, trace.axisId, interaction.axes) ===
               group.key,
         )
-        .map((trace) => trace.plot);
+        .map((trace) =>
+          // Newly added axes use a stable full-signal scale until released.
+          heldY && (!held || (settings.log && held[0] <= 0))
+            ? (trace.drawingView?.overview?.plots.get(trace.node.id) ??
+              trace.plot)
+            : trace.plot,
+        );
       const range =
         gesture?.mode === 'y-pan' && gesture.axisKey === group.key
           ? panValueAxis(
@@ -215,7 +226,7 @@ export default function SignalChart({
               gesture.end - gesture.start,
               gesture.logarithmic,
             )
-          : valueAxisRange(plots, settings, includeZero);
+          : valueAxisRange(plots, settings, includeZero, held);
       return {
         ...group,
         label: settings.label || group.label,

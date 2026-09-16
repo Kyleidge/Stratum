@@ -161,6 +161,15 @@ reference when unrelated clocks are stacked. Vertical label drag changes only a
 normalized height, preserved on resize, editing, duplication and reload. The
 annotation's time and the plot viewport remain unchanged.
 
+Hold Y, beside Fit, captures the current automatic Y scales so time zooming and
+panning do not resize them as detail arrives. Clicking it again releases those
+scales; explicit manual limits still apply. Fit/Home releases the hold and resets
+limits. The hold participates in Previous view and persists with saved plots.
+Overlay axes and stacked panels retain separate snapshots keyed by stable axis
+and trace IDs. Capturing scales uses existing plot summaries and envelopes with
+no additional worker request. New axes added during a hold use their full-signal
+overview until the hold is released.
+
 ## Continuous panning
 
 The chart retains a full-domain min/max overview for immediate drawing during

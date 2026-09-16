@@ -35,6 +35,8 @@ import {
 } from '../lib/time-range-selection';
 import {
   groupPlotAxes,
+  holdPlotYAxes,
+  heldValueAxisKey,
   valueAxisSettings,
   valueAxisRange,
   zoomValueAxis,
@@ -342,6 +344,81 @@ void test('unit axes name and scale independently and retain their identity acro
   } satisfies import('../lib/signal-types').Plot;
   assert.deepEqual(valueAxisRange([plot], {}, false), [36.8, 83.2]);
   assert.deepEqual(valueAxisRange([plot], { y: [0, 100] }, false), [0, 100]);
+});
+
+void test('held Y scales survive changed viewport data, stacked panels, custom axes and storage', () => {
+  const plot = (
+    id: string,
+    min: number,
+    max: number,
+  ): import('../lib/signal-types').Plot => ({
+    id,
+    points: [
+      [0, min],
+      [1, max],
+    ],
+    summary: {
+      count: 2,
+      start: 0,
+      end: 1,
+      min,
+      max,
+      mean: (min + max) / 2,
+      integral: 0,
+    },
+  });
+  const traces = [
+    { id: 'a', unit: 'V', plot: plot('a', 1, 10) },
+    { id: 'b', unit: 'V', plot: plot('b', 100, 200) },
+    { id: 'c', unit: 'A', plot: plot('c', 10, 100) },
+    { id: 'd', unit: 'V', axisId: 'axis:custom', plot: plot('d', 2000, 3000) },
+  ];
+  const axes = {
+    values: {
+      'unit:A': { log: true },
+      'axis:custom': { unit: 'V', y: [1000, 4000] as [number, number] },
+    },
+  };
+  const heldY = holdPlotYAxes(traces, axes, 'unit:V');
+  assert.deepEqual(holdPlotYAxes(traces.toReversed(), axes, 'unit:V'), heldY);
+  assert.deepEqual(
+    heldY['unit:V'],
+    valueAxisRange(
+      traces.slice(0, 2).map((trace) => trace.plot),
+      {},
+      false,
+    ),
+  );
+  assert.deepEqual(heldY[heldValueAxisKey('unit:V', 'a')], [0.28, 10.72]);
+  assert.deepEqual(heldY[heldValueAxisKey('unit:V', 'b')], [92, 208]);
+  assert.deepEqual(heldY['axis:custom'], [1000, 4000]);
+  const changed = [plot('a', -500, 500)];
+  assert.deepEqual(
+    valueAxisRange(changed, {}, false, heldY['unit:V']),
+    heldY['unit:V'],
+  );
+  assert.notDeepEqual(valueAxisRange(changed, {}, false), heldY['unit:V']);
+  assert.deepEqual(
+    valueAxisRange(changed, { y: [-1, 1] }, false, heldY['unit:V']),
+    [-1, 1],
+  );
+  assert.deepEqual(
+    valueAxisRange(changed, { log: true }, false, heldY['unit:A']),
+    [10 / 1.1, 100 * 1.1],
+  );
+  assert.ok(valueAxisRange(changed, { log: true }, false, [-1, 1])[0] > 0);
+  const saved = readPlotSheets(
+    JSON.stringify([
+      {
+        id: 'plot:held',
+        name: 'Held',
+        traces: [],
+        axes: { ...axes, heldY: { ...heldY, 'unit:bad': [2, 1], bad: [1, 2] } },
+      },
+    ]),
+  )[0].axes!;
+  assert.deepEqual(saved.heldY, heldY);
+  assert.deepEqual(saved.values?.['axis:custom'].y, [1000, 4000]);
 });
 
 void test('axis wheel zoom preserves the pointer value for linear and logarithmic scales', () => {

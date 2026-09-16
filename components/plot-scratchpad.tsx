@@ -39,6 +39,7 @@ import {
   CircleHelp,
   ArrowUp,
   ArrowDown,
+  LockKeyhole,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -85,6 +86,7 @@ import {
 } from '@/lib/plot-scratchpad';
 import {
   groupPlotAxes,
+  holdPlotYAxes,
   plotAxisKey,
   traceAxisKey,
   plotAxisOptions,
@@ -486,7 +488,33 @@ export default function PlotScratchpad({
         primaryAxisKey,
       );
     values[key] = value;
-    update({ axes: { timeLabel: sheet.axes?.timeLabel, values } });
+    update({
+      axes: {
+        timeLabel: sheet.axes?.timeLabel,
+        heldY: sheet.axes?.heldY,
+        values,
+      },
+    });
+  }
+  function toggleHoldY() {
+    rememberView();
+    update({
+      axes: {
+        ...sheet.axes,
+        heldY: sheet.axes?.heldY
+          ? undefined
+          : holdPlotYAxes(
+              traces.map((trace) => ({
+                id: trace.node.id,
+                unit: trace.node.unit,
+                axisId: trace.axisId,
+                plot: trace.plot,
+              })),
+              sheet.axes,
+              primaryAxisKey,
+            ),
+      },
+    });
   }
   function back() {
     const history = backViews[windowKey] ?? [];
@@ -500,7 +528,8 @@ export default function PlotScratchpad({
     if (
       window[0] === 0 &&
       window[1] === 1 &&
-      (sheet.axes?.y ||
+      (sheet.axes?.heldY ||
+        sheet.axes?.y ||
         Object.values(sheet.axes?.values ?? {}).some((axis) => axis.y))
     )
       rememberView();
@@ -509,6 +538,7 @@ export default function PlotScratchpad({
       axes: {
         ...sheet.axes,
         y: undefined,
+        heldY: undefined,
         values: Object.fromEntries(
           Object.entries(sheet.axes?.values ?? {}).map(([key, value]) => [
             key,
@@ -593,12 +623,14 @@ export default function PlotScratchpad({
     extent: PlotRange,
     valueAxes?: PlotAxisGroup[],
     clockId = clocks.values().next().value,
+    traceId?: string,
   ): ChartInteraction {
     const range = plotExtent(extent);
     return {
       mode,
       axes: sheet.axes,
       primaryAxisKey,
+      traceId,
       valueAxes:
         valueAxes ?? axisGroups.filter((axis) => shownAxes.has(axis.key)),
       timeLabel: sheet.zeroTime ? 'Elapsed time (s)' : 'Time (s)',
@@ -702,6 +734,7 @@ export default function PlotScratchpad({
         ...change,
         axes: {
           timeLabel: sheet.axes.timeLabel,
+          heldY: sheet.axes.heldY,
           values: {
             ...sheet.axes.values,
             [primaryAxisKey]: valueAxisSettings(
@@ -1206,6 +1239,19 @@ export default function PlotScratchpad({
                     <button aria-label="Fit entire plot" onClick={fit}>
                       <Maximize size={15} /> Fit
                     </button>
+                    <button
+                      aria-label="Hold Y-axis scales"
+                      aria-pressed={!!sheet.axes?.heldY}
+                      disabled={!traces.length}
+                      title={
+                        sheet.axes?.heldY
+                          ? 'Release held Y scales and resume autoscaling'
+                          : 'Hold current Y scales while zooming and panning time'
+                      }
+                      onClick={toggleHoldY}
+                    >
+                      <LockKeyhole size={14} /> Hold Y
+                    </button>
                   </fieldset>
                   <fieldset
                     className="scratchpad-mode"
@@ -1335,6 +1381,7 @@ export default function PlotScratchpad({
                                 : graph.timeReferences.get(
                                     signalFor(trace.node.id)?.id ?? '',
                                   )?.id,
+                              trace.node.id,
                             )}
                           />
                         </div>
@@ -1781,7 +1828,8 @@ export default function PlotScratchpad({
           <DialogDescription>
             Each Y axis has independent limits. Add an axis in the selected
             unit, then assign signals in Trace properties. Blank names and
-            limits use automatic labels and scaling.
+            limits use automatic labels and scaling. Hold Y keeps automatic
+            scales fixed until released.
           </DialogDescription>
           <form
             className="plot-settings-form"
@@ -1849,6 +1897,7 @@ export default function PlotScratchpad({
               update({
                 axes: {
                   values,
+                  heldY: sheet.axes?.heldY,
                   timeLabel: axisDraft.timeLabel.trim() || undefined,
                 },
               });
@@ -2262,6 +2311,12 @@ export default function PlotScratchpad({
             <dd>Move its label vertically while keeping its time fixed.</dd>
             <dt>Fit / Home</dt>
             <dd>Fit the complete signal and automatic Y limits.</dd>
+            <dt>Hold Y</dt>
+            <dd>
+              Keep current Y scales while zooming and panning time. Click again
+              to resume autoscaling; manual axis limits still apply. Fit
+              releases the hold.
+            </dd>
             <dt>Double-click axis / right-click</dt>
             <dd>Set time and Y limits, or logarithmic Y.</dd>
             <dt>+ / − / arrows</dt>

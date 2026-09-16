@@ -8,6 +8,8 @@ import {
 
 export const MAX_CHART_AXES = 8;
 export const plotAxisKey = (unit: string) => `unit:${unit.trim()}`;
+export const heldValueAxisKey = (axisKey: string, traceId?: string) =>
+  traceId ? `trace:${JSON.stringify([traceId, axisKey])}` : axisKey;
 export type PlotAxisGroup = {
   key: string;
   unit: string;
@@ -131,9 +133,11 @@ export function valueAxisRange(
   plots: Plot[],
   settings: PlotValueAxis,
   includeZero: boolean,
+  held?: PlotRange,
 ): PlotRange {
   if (validPlotRange(settings.y) && (!settings.log || settings.y[0] > 0))
     return settings.y;
+  if (validPlotRange(held) && (!settings.log || held[0] > 0)) return held;
   let low = Infinity,
     high = -Infinity;
   const include = (value: number) => {
@@ -161,6 +165,35 @@ export function valueAxisRange(
         includeZero ? Math.min(0, safeLow - padding) : safeLow - padding,
         includeZero ? Math.max(0, safeHigh + padding) : safeHigh + padding,
       ];
+}
+
+/** Snapshot the displayed scales without reading or evaluating more samples. */
+export function holdPlotYAxes(
+  traces: { id: string; unit: string; axisId?: string; plot: Plot }[],
+  axes: PlotAxes | undefined,
+  primaryKey: string,
+): Record<string, PlotRange> {
+  const held: Record<string, PlotRange> = {};
+  const groups = new Map<string, Plot[]>();
+  for (const trace of traces) {
+    const key = traceAxisKey(trace.unit, trace.axisId, axes);
+    const settings = valueAxisSettings(axes, key, primaryKey);
+    held[heldValueAxisKey(key, trace.id)] = valueAxisRange(
+      [trace.plot],
+      settings,
+      false,
+    );
+    const plots = groups.get(key) ?? [];
+    plots.push(trace.plot);
+    groups.set(key, plots);
+  }
+  for (const [key, plots] of groups)
+    held[key] = valueAxisRange(
+      plots,
+      valueAxisSettings(axes, key, primaryKey),
+      false,
+    );
+  return held;
 }
 
 /** Zoom about a vertical pointer fraction, in log space for logarithmic axes. */

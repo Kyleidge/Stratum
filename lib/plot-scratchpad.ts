@@ -40,6 +40,8 @@ export type PlotValueAxis = {
 export type PlotAxes = PlotValueAxis & {
   values?: Record<string, PlotValueAxis>;
   timeLabel?: string;
+  /** Captured automatic scales, keyed by stable axis and stacked trace IDs. */
+  heldY?: Record<string, PlotRange>;
 };
 export type PlotSheet = {
   id: string;
@@ -176,6 +178,22 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
           axes: {
             ...readValueAxis(sheet.axes),
             timeLabel: readAxisLabel(sheet.axes?.timeLabel),
+            ...(sheet.axes?.heldY &&
+            typeof sheet.axes.heldY === 'object' &&
+            !Array.isArray(sheet.axes.heldY)
+              ? {
+                  heldY: Object.fromEntries(
+                    Object.entries(sheet.axes.heldY)
+                      .slice(0, MAX_PLOT_TRACES * 2 + MAX_CUSTOM_AXES)
+                      .filter(
+                        ([key, range]) =>
+                          key.length <= 1024 &&
+                          /^(unit:|axis:|trace:)/.test(key) &&
+                          validPlotRange(range),
+                      ),
+                  ),
+                }
+              : {}),
             values: Object.fromEntries(
               sheet.axes?.values && typeof sheet.axes.values === 'object'
                 ? Object.entries(sheet.axes.values)
