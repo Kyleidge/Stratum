@@ -344,6 +344,7 @@ export class SignalEngine {
       parts.push(line);
     };
     append({
+      // Stable format identifier keeps backups compatible across the rename.
       format: 'stratus-workspace',
       version: 1,
       project: withWorkflowHistory(this.project),
@@ -383,7 +384,7 @@ export class SignalEngine {
         const record = value as Record<string, unknown>;
         if (!next) {
           if (record.format !== 'stratus-workspace' || record.version !== 1)
-            throw new Error('Choose a supported Stratus workspace backup.');
+            throw new Error('Choose a supported Stratum workspace backup.');
           next = validateWorkspace(record.project);
           next.sources.forEach((source) => sourceMapping.set(source.id, uid()));
           for (const id of sourceMapping.values())

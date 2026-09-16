@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-app.setPath('userData', mkdtempSync(join(tmpdir(), 'stratus-preview-smoke-')));
+app.setPath('userData', mkdtempSync(join(tmpdir(), 'stratum-preview-smoke-')));
 
 const origin = 'http://localhost:3000';
 const timeout = setTimeout(() => {
@@ -23,7 +23,7 @@ void app
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
-        partition: `stratus-preview-test-${Date.now()}`,
+        partition: `stratum-preview-test-${Date.now()}`,
       },
     });
     const requests = [];

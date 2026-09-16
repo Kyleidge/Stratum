@@ -443,7 +443,7 @@ void test('aligned workspace signals support triggers, nested segments, existing
   );
   validateWorkspace(engine.project);
   const backup = await engine.backupWorkspace();
-  await engine.restoreWorkspace(new File([backup], 'segments.stratus'));
+  await engine.restoreWorkspace(new File([backup], 'segments.stratum'));
   assert.equal((await samples(engine, scaled.id))[0][1], 12);
 });
 

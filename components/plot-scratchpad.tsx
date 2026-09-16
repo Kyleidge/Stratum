@@ -941,14 +941,14 @@ export default function PlotScratchpad({
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = 'move';
                   event.dataTransfer.setData(
-                    'application/x-stratus-plot-tab',
+                    'application/x-stratum-plot-tab',
                     item.id,
                   );
                 }}
                 onDragOver={(event) => {
                   if (
                     event.dataTransfer.types.includes(
-                      'application/x-stratus-plot-tab',
+                      'application/x-stratum-plot-tab',
                     )
                   ) {
                     event.preventDefault();
@@ -958,7 +958,7 @@ export default function PlotScratchpad({
                 }}
                 onDrop={(event) => {
                   const id = event.dataTransfer.getData(
-                    'application/x-stratus-plot-tab',
+                    'application/x-stratum-plot-tab',
                   );
                   if (id) {
                     event.preventDefault();
@@ -1599,7 +1599,7 @@ export default function PlotScratchpad({
                               onDragStart={(event) => {
                                 event.dataTransfer.effectAllowed = 'move';
                                 event.dataTransfer.setData(
-                                  'application/x-stratus-plot-trace',
+                                  'application/x-stratum-plot-trace',
                                   JSON.stringify({
                                     sheet: sheet.id,
                                     id: trace.id,
@@ -1609,7 +1609,7 @@ export default function PlotScratchpad({
                               onDragOver={(event) => {
                                 if (
                                   event.dataTransfer.types.includes(
-                                    'application/x-stratus-plot-trace',
+                                    'application/x-stratum-plot-trace',
                                   )
                                 ) {
                                   event.preventDefault();
@@ -1621,7 +1621,7 @@ export default function PlotScratchpad({
                                 try {
                                   const item: unknown = JSON.parse(
                                     event.dataTransfer.getData(
-                                      'application/x-stratus-plot-trace',
+                                      'application/x-stratum-plot-trace',
                                     ),
                                   );
                                   if (

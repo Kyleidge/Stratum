@@ -131,13 +131,13 @@ export function reportHtml(
     .join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-    <title>Stratus analysis report</title><style>
+    <title>Stratum analysis report</title><style>
     *{box-sizing:border-box}body{font:16px/1.55 system-ui,sans-serif;color:#182b35;background:white;max-width:1050px;margin:40px auto;padding:0 30px}
     h1{font-size:28px}h2{font-size:20px;margin:0}section{padding:22px 0;border-top:1px solid #ccd5d9;break-inside:avoid}
     .muted,small{color:#52636d;font-size:13px}.result{font-size:32px;margin:12px 0}svg{width:100%;height:auto;max-height:260px}
     table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;border-bottom:1px solid #ccd5d9;padding:10px;vertical-align:top;overflow-wrap:anywhere}p{overflow-wrap:anywhere}td:last-child{max-width:280px}thead{display:table-header-group}
     @media print{body{margin:0;max-width:none;padding:0}section{break-inside:avoid}h1,h2{break-after:avoid}@page{margin:16mm}}
-    </style></head><body><header><p class="muted">STRATUS · ANALYSIS SNAPSHOT</p><h1>Workflow results</h1>
+    </style></head><body><header><p class="muted">STRATUM · ANALYSIS SNAPSHOT</p><h1>Workflow results</h1>
     <p>${ids.length} outputs · Created ${html(createdAt.toISOString())}</p><p class="muted">Original recordings remain unchanged. Signal times reflect each signal’s evaluated time axis. Open this file in a browser and use Print to save a PDF.</p></header>
     ${cards}<h2>Contributing operation history</h2><p>Chronological steps and only the outputs contributing to this report.</p>
     <table><thead><tr><th>Step</th><th>Operation</th><th>Contributing outputs</th><th>Saved settings</th></tr></thead><tbody>${history}</tbody></table></body></html>`;

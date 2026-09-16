@@ -5,7 +5,7 @@ import { createSignalWorker } from '@/lib/create-signal-worker';
 export async function smokeTest() {
   const worker = createSignalWorker();
   const timeout = setTimeout(() => {
-    console.error('STRATUS_SMOKE_FAILED: Engine timed out');
+    console.error('STRATUM_SMOKE_FAILED: Engine timed out');
     worker.terminate();
   }, 45000);
   let serial = 0;
@@ -58,11 +58,11 @@ export async function smokeTest() {
     )
       throw new Error('Invalid per-region fuel results');
     console.info(
-      `STRATUS_SMOKE_OK: Region workspace, nested windows and independent calculations passed; BSFC ${plots.plots.map((plot) => plot.summary.weightedMean?.toFixed(2)).join(', ')} g/kWh.`,
+      `STRATUM_SMOKE_OK: Region workspace, nested windows and independent calculations passed; BSFC ${plots.plots.map((plot) => plot.summary.weightedMean?.toFixed(2)).join(', ')} g/kWh.`,
     );
   } catch (error) {
     console.error(
-      `STRATUS_SMOKE_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+      `STRATUM_SMOKE_FAILED: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     clearTimeout(timeout);

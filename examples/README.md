@@ -1,6 +1,6 @@
 # Example recordings
 
-These are deterministic **synthetic** signals created for exploring Stratus.
+These are deterministic **synthetic** signals created for exploring Stratum.
 They are not measurements from real equipment. Import each CSV with **Import CSV**;
 the first column is time in seconds and blank cells mean missing samples.
 

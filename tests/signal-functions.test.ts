@@ -136,7 +136,7 @@ void test('every arithmetic operation evaluates samples, units and missing value
       [4, 16, 100, 36, NaN, 9, NaN],
     );
     const backup = await engine.backupWorkspace();
-    await restored.restoreWorkspace(new File([backup], 'math.stratus'));
+    await restored.restoreWorkspace(new File([backup], 'math.stratum'));
     for (const id of ids)
       assert.deepEqual(await collect(restored, id), await collect(engine, id));
     const invalid = structuredClone(engine.project);

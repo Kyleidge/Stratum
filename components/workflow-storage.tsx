@@ -54,7 +54,7 @@ export default function WorkflowStorage({
       const link = document.createElement('a'),
         url = URL.createObjectURL(response.blob);
       link.href = url;
-      link.download = `Stratus-workspace-${new Date().toISOString().slice(0, 10)}.stratus`;
+      link.download = `Stratum-workspace-${new Date().toISOString().slice(0, 10)}.stratum`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       setError(
@@ -173,7 +173,7 @@ export default function WorkflowStorage({
             className="sr-only"
             ref={file}
             type="file"
-            accept=".stratus"
+            accept=".stratum,.stratus"
             aria-label="Workspace backup file"
             onChange={(event) => {
               setError('');

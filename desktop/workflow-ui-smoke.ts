@@ -300,7 +300,7 @@ export async function workflowUiSmoke() {
       }),
     );
     assert(
-      dataTransfer.types.includes('application/x-stratus-workflow'),
+      dataTransfer.types.includes('application/x-stratum-workflow'),
       'History drag has no structured payload.',
     );
     await delay();
@@ -989,7 +989,7 @@ export async function workflowUiSmoke() {
     );
     const invalid = new DataTransfer();
     invalid.setData(
-      'application/x-stratus-workflow',
+      'application/x-stratum-workflow',
       JSON.stringify({ kind: 'output', id: 'foreign' }),
     );
     document.querySelector('[data-action="derive"]')!.dispatchEvent(
@@ -1979,11 +1979,11 @@ export async function workflowUiSmoke() {
     root.unmount();
     host.remove();
     console.info(
-      'STRATUS_SMOKE_OK: Workflow UI passed the compact labeled toolbar, keyboard inspection menu, checked-input review, context actions, signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
+      'STRATUM_SMOKE_OK: Workflow UI passed the compact labeled toolbar, keyboard inspection menu, checked-input review, context actions, signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
     );
   } catch (error) {
     console.error(
-      `STRATUS_SMOKE_FAILED: ${error instanceof Error ? error.stack : String(error)}`,
+      `STRATUM_SMOKE_FAILED: ${error instanceof Error ? error.stack : String(error)}`,
     );
   }
 }

@@ -2,7 +2,7 @@
 
 ## Current purpose and scope
 
-Stratus is a local desktop signal-workflow application with a Sites browser preview.
+Stratum is a local desktop signal-workflow application with a Sites browser preview.
 It imports immutable CSV signals. Derivations and segments create ordinary derived
 signals, which can feed further derivations, segmentation, and scalar values.
 The primary navigation is chronological operation history with explicit output

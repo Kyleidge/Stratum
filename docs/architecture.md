@@ -1,4 +1,4 @@
-# Stratus architecture
+# Stratum architecture
 
 The same React workspace runs inside Electron and the Sites browser preview.
 Desktop builds bundle the renderer and worker locally and need no web server or

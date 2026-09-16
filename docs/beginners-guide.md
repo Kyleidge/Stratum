@@ -1,4 +1,4 @@
-# Stratus: illustrated beginner's guide
+# Stratum: illustrated beginner's guide
 
 ## 1. Get to know the workspace
 
@@ -7,11 +7,11 @@ Original samples stay unchanged; each operation creates new signals or values.
 
 ### Start with the example
 
-Launch Stratus and choose **Workspace > Open example workflow**, or choose
+Launch Stratum and choose **Workspace > Open example workflow**, or choose
 **Open example workflow** in an empty workspace. The motor-test example loads
 seven completed steps, from original signals to smoothing, segments and values.
 
-![Stratus showing the motor-test example, chronological history and the Motor speed plot.](images/beginners-guide/00-example.png)
+![Stratum showing the motor-test example, chronological history and the Motor speed plot.](images/beginners-guide/00-example.png)
 
 _Figure 1. History is on the left; processing tools run across the top. Active
 shows the selected signal, and Operation outputs sits below the plot._
@@ -195,8 +195,8 @@ downloading so you get the intended output or batch._
 
 ### Save the whole workspace
 
-Choose **Workspace > Download workspace backup** and keep the **.stratus**
-file somewhere safe.
+Choose **Workspace > Download workspace backup** and keep the **.stratum**
+file somewhere safe. Older **.stratus** backups can still be restored.
 
 ![The Workspace dialog showing Download workspace backup, Restore workspace backup and the example controls.](images/beginners-guide/07-workspace.png)
 

@@ -78,7 +78,7 @@ function ExportForm({
     format === 'csv' ? (allValues ? 'values' : 'samples') : format;
   const [error, setError] = useState('');
   const cancelled = useRef(false);
-  const filename = `Stratus-${resolvedFormat}-${ids.length}.${format === 'report' ? 'html' : 'csv'}`;
+  const filename = `Stratum-${resolvedFormat}-${ids.length}.${format === 'report' ? 'html' : 'csv'}`;
   const description =
     resolvedFormat === 'values'
       ? 'One row per calculated value, with its input, unit, calculation and sample coverage.'

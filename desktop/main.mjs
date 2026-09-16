@@ -13,7 +13,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 
-app.setName('Stratus');
+app.setName('Stratum');
+// Keep the original profile and origin: both own existing IndexedDB and layouts.
+app.setPath('userData', resolve(app.getPath('appData'), 'Stratus'));
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'stratus',
@@ -31,7 +33,7 @@ const smoke = process.argv.includes('--smoke') || uiSmoke;
 if (smoke)
   app.setPath(
     'userData',
-    mkdtempSync(resolve(tmpdir(), 'stratus-native-smoke-')),
+    mkdtempSync(resolve(tmpdir(), 'stratum-native-smoke-')),
   );
 // A running user app must not cause a smoke test to exit without testing.
 const singleInstance = smoke || app.requestSingleInstanceLock();
@@ -56,7 +58,7 @@ async function createWindow() {
     minHeight: 720,
     show: !smoke,
     backgroundColor: '#13191d',
-    title: 'Stratus · Signal Workbench',
+    title: 'Stratum · Signal Workbench',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -74,7 +76,7 @@ async function createWindow() {
       recovering = true;
       const choice = await dialog.showMessageBox(window, {
         type: 'error',
-        title: 'Stratus workspace recovery',
+        title: 'Stratum workspace recovery',
         message: 'The workspace stopped responding or could not load.',
         detail: `${detail}\nThe last committed workspace is still saved.`,
         buttons: ['Reload workspace', 'Quit'],
@@ -102,16 +104,16 @@ async function createWindow() {
     window.webContents.on('console-message', async ({ message }) => {
       if (message.startsWith('TypeError') || message.startsWith('Error:'))
         process.stderr.write(`${message}\n`);
-      if (message.startsWith('STRATUS_SMOKE_OK')) {
+      if (message.startsWith('STRATUM_SMOKE_OK')) {
         process.stdout.write(`${message}\n`);
         if (uiSmoke) {
           try {
             await Promise.all(downloads);
             for (const name of [
-              'Stratus-values-1.csv',
-              'Stratus-values-40.csv',
-              'Stratus-samples-1.csv',
-              'Stratus-report-1.html',
+              'Stratum-values-1.csv',
+              'Stratum-values-40.csv',
+              'Stratum-samples-1.csv',
+              'Stratum-report-1.html',
               'Motor comparison.svg',
               'Motor comparison.png',
             ])
@@ -133,14 +135,14 @@ async function createWindow() {
               'PNG',
             );
             assert.equal(
-              contents('Stratus-values-1.csv').split('\r\n').length,
+              contents('Stratum-values-1.csv').split('\r\n').length,
               2,
             );
             assert.equal(
-              contents('Stratus-values-40.csv').split('\r\n').length,
+              contents('Stratum-values-40.csv').split('\r\n').length,
               41,
             );
-            const sampleLines = contents('Stratus-samples-1.csv')
+            const sampleLines = contents('Stratum-samples-1.csv')
               .trim()
               .split('\r\n');
             assert.ok(sampleLines.length > 2);
@@ -152,12 +154,12 @@ async function createWindow() {
               );
             }
             assert.ok(
-              contents('Stratus-report-1.html').includes(
+              contents('Stratum-report-1.html').includes(
                 'Contributing operation history',
               ),
             );
             const backupName = [...downloaded].find((name) =>
-              name.endsWith('.stratus'),
+              name.endsWith('.stratum'),
             );
             assert.ok(backupName, 'Missing workspace backup download');
             const archive = contents(backupName).trimEnd().split('\n');
@@ -306,7 +308,7 @@ async function createWindow() {
         }
         app.exit(0);
       }
-      if (message.startsWith('STRATUS_SMOKE_FAILED')) {
+      if (message.startsWith('STRATUM_SMOKE_FAILED')) {
         process.stderr.write(`${message}\n`);
         app.exit(1);
       }
@@ -397,7 +399,7 @@ if (singleInstance) {
     .catch((error) => {
       if (!smoke)
         dialog.showErrorBox(
-          'Stratus could not start',
+          'Stratum could not start',
           error instanceof Error ? error.message : String(error),
         );
       process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);

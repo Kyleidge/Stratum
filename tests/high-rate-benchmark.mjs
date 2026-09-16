@@ -30,7 +30,7 @@ const output = resolve(
   `outputs/high-rate-benchmark${variant === 'baseline' ? '' : `-${variant}`}`,
 );
 mkdirSync(output, { recursive: true });
-const profile = mkdtempSync(resolve(tmpdir(), 'stratus-high-rate-'));
+const profile = mkdtempSync(resolve(tmpdir(), 'stratum-high-rate-'));
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
 protocol.registerSchemesAsPrivileged([

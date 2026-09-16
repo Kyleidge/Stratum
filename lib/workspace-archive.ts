@@ -16,7 +16,7 @@ function archiveRecord(line: string): unknown {
     return JSON.parse(line) as unknown;
   } catch {
     throw new Error(
-      'This file is not a valid workspace backup. Choose a complete .stratus archive.',
+      'This file is not a valid workspace backup. Choose a complete .stratum archive.',
     );
   }
 }

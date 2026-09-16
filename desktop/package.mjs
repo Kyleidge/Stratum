@@ -28,8 +28,8 @@ await copyFile(
 await writeFile(
   `${staging}/package.json`,
   JSON.stringify({
-    name: 'stratus',
-    productName: 'Stratus',
+    name: 'stratum',
+    productName: 'Stratum',
     version: manifest.version,
     type: 'module',
     main: 'desktop/main.mjs',
@@ -37,7 +37,7 @@ await writeFile(
 );
 const paths = await packager({
   dir: staging,
-  name: 'Stratus',
+  name: 'Stratum',
   out: fileURLToPath(new URL('../build/releases/', import.meta.url)),
   overwrite: true,
   asar: true,

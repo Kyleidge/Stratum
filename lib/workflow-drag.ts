@@ -1,7 +1,7 @@
 import type { WorkflowIndex } from './workflow-history';
 
 export type WorkflowTarget = { kind: 'step' | 'output'; id: string };
-export const WORKFLOW_DRAG_TYPE = 'application/x-stratus-workflow';
+export const WORKFLOW_DRAG_TYPE = 'application/x-stratum-workflow';
 
 export function readWorkflowDrag(
   raw: string,

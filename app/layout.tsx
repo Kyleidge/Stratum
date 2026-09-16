@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Stratus · Signal Workbench',
+  title: 'Stratum · Signal Workbench',
   description: 'Immutable signals. Traceable engineering analysis.',
 };
 

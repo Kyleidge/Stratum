@@ -357,7 +357,7 @@ export default function RegionWorkbench() {
         const url = URL.createObjectURL(response.blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'Stratus_results.csv';
+        link.download = 'Stratum_results.csv';
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 10000);
       }
@@ -403,7 +403,7 @@ export default function RegionWorkbench() {
       <header className="region-header">
         <div className="region-brand">
           <Layers3 size={22} />
-          stratus.
+          stratum.
         </div>
         <span className="region-path">
           Signal analysis <ChevronRight size={13} />

@@ -1,12 +1,12 @@
-# Stratus
+# Stratum
 
 A desktop workbench for workflows built from immutable time-series signals.
 Derive signals, segment them into reusable signal chunks, and calculate scalar
 values. Each operation keeps exact links to its inputs and outputs in chronological
 history. The included motor-test example demonstrates the complete signal workflow.
 
-New to Stratus? Read the illustrated
-[beginner's guide (PDF)](output/pdf/stratus-beginners-guide.pdf), with an
+New to Stratum? Read the illustrated
+[beginner's guide (PDF)](output/pdf/stratum-beginners-guide.pdf), with an
 [editable text version](docs/beginners-guide.md).
 
 See [the workflow proposal](docs/workflow-proposal.md) for the design and migration
@@ -26,8 +26,13 @@ For a browser preview, run `pnpm dev` and open its printed local URL. The deskto
 build uses bundled assets and works offline. Browser and desktop workspaces have
 separate local storage.
 
+Stratum keeps the original desktop profile, storage keys and internal origin so
+existing workspaces, Undo/Redo and saved plots remain available after the rename.
+New workspace backups use `.stratum`; existing `.stratus` backups still restore.
+The archive format and version are unchanged.
+
 Create a portable desktop build with `pnpm desktop:package`. On Windows, launch
-`build/releases/Stratus-win32-x64/Stratus.exe`. Keep the entire output folder
+`build/releases/Stratum-win32-x64/Stratum.exe`. Keep the entire output folder
 alongside the executable. Packaging on macOS/Linux produces the corresponding
 native bundle. Packages are unsigned development builds.
 
@@ -204,7 +209,7 @@ are processed locally in chunks and saved in IndexedDB. An empty workspace offer
 CSV import or an explicit example recording; examples are never inserted automatically.
 
 Use **Workspace → Download workspace backup** to save original samples, recipes,
-names, results and history in a versioned `.stratus` archive. Restore validates
+names, results and history in a versioned `.stratum` archive. Restore validates
 the entire archive before replacing the workspace; the prior workspace remains
 available through Undo. Keep backups outside the app's profile. Clearing local
 storage deletes the local workspace and its Undo history.

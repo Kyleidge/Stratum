@@ -650,7 +650,7 @@ export default function WorkflowWorkbench() {
         <div className="workflow-brand">
           <Waves size={23} />
           <strong>
-            Stratus<span>.</span>
+            Stratum<span>.</span>
           </strong>
           <span>Signal Workbench</span>
         </div>

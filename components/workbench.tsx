@@ -571,7 +571,7 @@ export default function Workbench() {
         const url = URL.createObjectURL(r.blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'Stratus_analysis_summary.csv';
+        a.download = 'Stratum_analysis_summary.csv';
         a.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 10000);
         setStatus('Analysis summary exported');
@@ -611,7 +611,7 @@ export default function Workbench() {
         <div className="brand">
           <Layers3 size={23} strokeWidth={1.7} />
           <span>
-            stratus<span className="brand-period">.</span>
+            stratum<span className="brand-period">.</span>
           </span>
           <span className="preview-label">PREVIEW</span>
         </div>
@@ -1566,7 +1566,7 @@ export default function Workbench() {
           {project.nodes.filter((n) => n.operation !== 'raw').length} derived
           signals<span className="separator">|</span>
           <Database size={12} />
-          Local processing<span className="separator">|</span>Stratus 0.1
+          Local processing<span className="separator">|</span>Stratum 0.1
         </span>
       </footer>
       <Dialog
@@ -1791,7 +1791,7 @@ export default function Workbench() {
             </>
           ) : (
             <>
-              <DialogTitle>Stratus signal workbench</DialogTitle>
+              <DialogTitle>Stratum signal workbench</DialogTitle>
               <DialogDescription>
                 An initial engineering workspace for reproducible time-series
                 analysis.

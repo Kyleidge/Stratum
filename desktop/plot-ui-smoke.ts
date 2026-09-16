@@ -744,7 +744,7 @@ export async function plotUiSmoke() {
     new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }),
   );
   assert(
-    transfer.types.includes('application/x-stratus-plot-trace'),
+    transfer.types.includes('application/x-stratum-plot-trace'),
     'Trace reorder payload is absent.',
   );
   rows[0].dispatchEvent(
