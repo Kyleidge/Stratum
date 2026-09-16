@@ -21,6 +21,12 @@ import {
   plotViewport,
 } from '../lib/plot-scratchpad';
 import { measurePlot } from '../lib/plot-measurement';
+import {
+  createPlotLoader,
+  plotDrawing,
+  type PlotJob,
+  type PlotView,
+} from '../lib/plot-view';
 import { SignalGraph } from '../lib/signal-graph';
 import {
   dragTimeRange,
@@ -88,6 +94,163 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
   );
   assert.equal(large[0].traces.length, 5000);
   assert.equal(large[0].zeroTime, false);
+});
+
+void test('live plots retain full coverage and coalesce slow pan reads without starving them', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const jobs = (start: number, end: number): PlotJob[] => [
+    { id: 'trace', range: [start, end] },
+  ];
+  const calls: {
+    message: Extract<EngineRequest, { type: 'view' }>;
+    resolve: (response: EngineResponse) => void;
+  }[] = [];
+  let view: PlotView = {};
+  const loader = createPlotLoader(
+    jobs(0, 100),
+    (message) => {
+      assert.equal(message.type, 'view');
+      return new Promise((resolve) =>
+        calls.push({
+          message: message as Extract<EngineRequest, { type: 'view' }>,
+          resolve,
+        }),
+      );
+    },
+    (next) => {
+      view = next;
+    },
+  );
+  t.after(() => loader.dispose());
+  async function finish(i: number) {
+    const [start, end] = calls[i].message.ranges!.trace;
+    calls[i].resolve({
+      type: 'plots',
+      requestId: i,
+      plots: [
+        {
+          id: 'trace',
+          points: [
+            [start, 1],
+            [(start + end) / 2, NaN],
+            [end, 2],
+          ],
+          summary: {
+            count: 2,
+            start,
+            end,
+            min: 1,
+            max: 2,
+            mean: 1.5,
+            integral: 0,
+          },
+        },
+      ],
+    });
+    await Promise.resolve();
+  }
+  loader.update(jobs(20, 30));
+  t.mock.timers.tick(1);
+  assert.deepEqual(calls[0].message.ranges!.trace, [0, 100]);
+  await finish(0);
+  t.mock.timers.tick(100);
+  assert.deepEqual(calls[1].message.ranges!.trace, [20, 30]);
+  await finish(1);
+  const exact = view.detail;
+  loader.update(jobs(31, 41), true);
+  t.mock.timers.tick(100);
+  assert.deepEqual(calls[2].message.ranges!.trace, [26, 46]);
+  // A slow derived read must finish even while many new pointer targets arrive.
+  for (let start = 40; start <= 80; start++) {
+    loader.update(jobs(start, start + 10), true);
+    t.mock.timers.tick(20);
+    assert.equal(calls.length, 3);
+    assert.equal(
+      plotDrawing('trace', [start, start + 10], view),
+      view.overview!.plots.get('trace'),
+    );
+  }
+  await finish(2);
+  assert.equal(
+    view.detail,
+    exact,
+    'drawing buffer must not replace exact statistics',
+  );
+  t.mock.timers.tick(1);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[3].message.ranges!.trace, [75, 95]);
+  await finish(3);
+  assert.equal(
+    plotDrawing('trace', [80, 90], view),
+    view.buffer!.plots.get('trace'),
+  );
+  assert.ok(
+    Number.isNaN(plotDrawing('trace', [80, 90], view)!.points[1][1]),
+    'missing-data breaks must survive',
+  );
+  loader.update(jobs(82, 92), true);
+  t.mock.timers.tick(500);
+  assert.equal(
+    calls.length,
+    4,
+    'movement inside the buffer must not read again',
+  );
+  loader.update(jobs(82, 92));
+  t.mock.timers.tick(1);
+  assert.deepEqual(
+    calls[4].message.ranges!.trace,
+    [82, 92],
+    'release must refine the exact viewport',
+  );
+  await finish(4);
+  assert.equal(view.detail!.key, JSON.stringify(jobs(82, 92)));
+  assert.equal(view.overview!.plots.size, 1);
+  assert.equal(view.buffer!.plots.size, 1);
+  loader.update(jobs(10, 20), true);
+  t.mock.timers.tick(100);
+  const final = view;
+  loader.dispose();
+  await finish(5);
+  t.mock.timers.tick(1000);
+  assert.equal(view, final, 'disposed plot must ignore outstanding data');
+  assert.equal(calls.length, 6);
+});
+
+void test('live plot throttling runs during continuous movement and cancellation restores exact data', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const jobs = (start: number): PlotJob[] => [
+    { id: 'shifted', range: [start, start + 10] },
+  ];
+  const times: number[] = [];
+  let view: PlotView = {};
+  const loader = createPlotLoader(
+    jobs(1000),
+    async (message) => {
+      assert.equal(message.type, 'view');
+      times.push(Date.now());
+      return { type: 'plots', requestId: times.length, plots: [] };
+    },
+    (next) => {
+      view = next;
+    },
+  );
+  t.after(() => loader.dispose());
+  loader.update(jobs(1000));
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  for (let i = 1; i <= 100; i++) {
+    loader.update(jobs(1000 + i * 2), true);
+    t.mock.timers.tick(10);
+    await Promise.resolve();
+  }
+  assert.ok(times.length >= 5 && times.length <= 11);
+  assert.ok(times.slice(1).every((time, i) => time - times[i] >= 100));
+  const count = times.length;
+  loader.update(jobs(1000));
+  t.mock.timers.tick(500);
+  await Promise.resolve();
+  assert.equal(times.length, count, 'cancel uses the retained exact view');
+  assert.deepEqual(view.detail!.ranges.get('shifted'), [1000, 1010]);
 });
 
 void test('plot windows preserve pointer anchors, clamp pan, and validate saved engineering settings', () => {

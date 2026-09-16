@@ -298,10 +298,37 @@ export async function plotUiSmoke() {
     'Box zoom did not select the dragged interval.',
   );
   await click('Pan mode');
+  await until(
+    () => !document.querySelector('.scratchpad-axis-footer output'),
+    'zoomed detail before live pan',
+  );
   const before = window();
+  const savedBeforePan = localStorage.getItem(PLOT_STORAGE_KEY);
   await pointer('pointerdown', 0.5);
-  await pointer('pointermove', 0.3);
-  await pointer('pointerup', 0.3);
+  // Hold the gesture open: both edges must have curves before pointer release,
+  // including across several live data refreshes.
+  for (let i = 0; i < 8; i++) {
+    await pointer('pointermove', 0.3 - i * 0.02);
+    const paths = [
+      ...chart().querySelectorAll<SVGPathElement>('g[clip-path] path'),
+    ];
+    assert(paths.length >= 2, 'Live pan lost comparison traces.');
+    assert(
+      paths.every((path) => {
+        const bounds = path.getBBox();
+        return (
+          bounds.x <= Number(chart().dataset.plotLeft) + 1 &&
+          bounds.x + bounds.width >= Number(chart().dataset.plotRight) - 1
+        );
+      }),
+      'Panning left a newly exposed part of the curve blank.',
+    );
+    assert(
+      localStorage.getItem(PLOT_STORAGE_KEY) === savedBeforePan,
+      'Transient pan persisted intermediate views.',
+    );
+  }
+  await pointer('pointerup', 0.16);
   assert(window()[0] > before[0], 'Drag pan did not move the time window.');
   await click('Previous plot view');
   assert(

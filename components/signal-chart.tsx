@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
+import { plotDrawing, type PlotView } from '@/lib/plot-view';
 import type {
   PlotAnnotation,
   PlotAxes,
@@ -37,6 +38,7 @@ export function formatValue(value: number, digits = 1): string {
 type Trace = {
   node: SignalNode;
   plot: Plot;
+  drawingView?: PlotView;
   offset?: number;
   color?: string;
   label?: string;
@@ -63,6 +65,8 @@ export type ChartInteraction = {
   cursors?: PlotRange;
   annotations?: PlotAnnotation[];
   onRange: (range: PlotRange) => void;
+  /** Transient drawing requests; never persist or enter navigation history. */
+  onPreviewRange?: (range?: PlotRange) => void;
   onCursors: (range: PlotRange) => void;
   onFit: () => void;
   onBack: () => void;
@@ -120,6 +124,25 @@ export default function SignalChart({
     axisKey?: string;
     logarithmic?: boolean;
   }>();
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const previewRange = useRef<PlotRange | undefined>(undefined);
+  function previewPan(next?: PlotRange) {
+    previewRange.current = next;
+    if (!next) {
+      clearTimeout(previewTimer.current);
+      previewTimer.current = undefined;
+      interaction?.onPreviewRange?.();
+    } else if (previewTimer.current === undefined) {
+      // Keep pointer rendering local; notify the loader at a bounded rate.
+      previewTimer.current = setTimeout(() => {
+        previewTimer.current = undefined;
+        interaction?.onPreviewRange?.(previewRange.current);
+      }, 80);
+    }
+  }
+  useEffect(() => () => clearTimeout(previewTimer.current), []);
   const range = useMemo<PlotRange>(
     () =>
       gesture?.mode === 'pan'
@@ -225,6 +248,14 @@ export default function SignalChart({
       }
     >();
     for (const trace of traces) {
+      const offset = trace.offset ?? 0;
+      const drawing = trace.drawingView
+        ? (plotDrawing(
+            trace.node.id,
+            [range[0] + offset, range[1] + offset],
+            trace.drawingView,
+          ) ?? trace.plot)
+        : trace.plot;
       const scale = scales.find(
         (axis) =>
           !interaction ||
@@ -236,7 +267,7 @@ export default function SignalChart({
       const dots =
         trace.style === 'points' ||
         trace.node.operation === 'min-max' ||
-        trace.plot.points.length === 1;
+        drawing.points.length === 1;
       const reference = !!trace.referenceLine;
       const strokeWidth = trace.width ?? 1.45;
       const key = `${scale.key}:${color}:${dots}:${reference}:${trace.style ?? 'line'}:${strokeWidth}`;
@@ -248,11 +279,11 @@ export default function SignalChart({
         dots,
         width: strokeWidth,
       };
-      let drawing = false;
+      let connected = false;
       const parts: string[] = [];
-      for (const [time, value] of trace.plot.points) {
+      for (const [time, value] of drawing.points) {
         if (!Number.isFinite(value) || (logarithmic && value <= 0)) {
-          drawing = false;
+          connected = false;
           continue;
         }
         const px =
@@ -271,11 +302,11 @@ export default function SignalChart({
           );
         } else {
           parts.push(
-            drawing && trace.style === 'step'
+            connected && trace.style === 'step'
               ? `H${px.toFixed(2)}V${py.toFixed(2)}`
-              : `${drawing ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`,
+              : `${connected ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`,
           );
-          drawing = true;
+          connected = true;
         }
       }
       group.d.push(parts.join(' '));
@@ -452,6 +483,7 @@ export default function SignalChart({
                 const width = inputRange[1] - inputRange[0];
                 let next: PlotRange | undefined;
                 if (event.key === 'Escape') {
+                  previewPan();
                   setGesture(undefined);
                   setAnnotationDrag(undefined);
                 } else if (event.key === 'Home') interaction.onFit();
@@ -507,6 +539,7 @@ export default function SignalChart({
                         ? 'zoom'
                         : 'pan';
                 setGesture({ start: time, end: time, range: inputRange, mode });
+                if (mode === 'pan') previewPan(inputRange);
               }
             : undefined
         }
@@ -524,6 +557,7 @@ export default function SignalChart({
                   return;
                 }
                 if (!gesture) return;
+                if (gesture.mode === 'pan') previewPan();
                 if (gesture.mode === 'y-pan') {
                   const delta = verticalPosition(event.clientY) - gesture.start;
                   if (delta && gesture.axisKey)
@@ -566,6 +600,7 @@ export default function SignalChart({
             : undefined
         }
         onPointerCancel={() => {
+          previewPan();
           setGesture(undefined);
           setAnnotationDrag(undefined);
         }}
@@ -577,14 +612,21 @@ export default function SignalChart({
             });
             return;
           }
-          if (gesture)
+          if (gesture) {
+            const end =
+              gesture.mode === 'y-pan'
+                ? verticalPosition(event.clientY)
+                : eventTime(event.clientX, gesture.mode !== 'pan');
             setGesture({
               ...gesture,
-              end:
-                gesture.mode === 'y-pan'
-                  ? verticalPosition(event.clientY)
-                  : eventTime(event.clientX, gesture.mode !== 'pan'),
+              end,
             });
+            if (gesture.mode === 'pan')
+              previewPan([
+                gesture.range[0] + gesture.start - end,
+                gesture.range[1] + gesture.start - end,
+              ]);
+          }
           if (interaction && !gesture) {
             const hit = hitAxis(event.clientX, event.clientY);
             if (hit.axis || hit.time) {

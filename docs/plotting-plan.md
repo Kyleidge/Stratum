@@ -160,3 +160,29 @@ Fit remains available through the toolbar and Home. Notes retain their time
 reference when unrelated clocks are stacked. Vertical label drag changes only a
 normalized height, preserved on resize, editing, duplication and reload. The
 annotation's time and the plot viewport remain unchanged.
+
+## Continuous panning
+
+The chart retains a full-domain min/max overview for immediate drawing during
+gestures. When a pan leaves the detailed viewport, it uses that overview until
+a buffered view arrives. The buffer extends half a viewport beyond each edge;
+movement within it reuses the same points. New buffer reads run while the pointer
+is moving, at most once per 100 ms, with one read in flight and only the latest
+pending target. Slow derived evaluations finish instead of being repeatedly
+cancelled by pointer events.
+
+The renderer retains at most three envelopes per visible signal: overview,
+committed viewport and current buffer. Each uses the existing bounded envelope
+(up to 3,502 points including boundary context); only one is drawn per trace.
+Overviews may look coarser during a fast pan. Releasing the pointer requests the
+exact final viewport and saves one navigation entry. Escape and pointer
+cancellation return to the previous view. Buffer points never replace exact
+summary, measurement or sample-export data, and elapsed-time offsets are
+translated back into each signal's evaluated time before requesting points.
+
+The loader tests exercise rapid input, delayed reads, rate limits, buffer reuse,
+missing-data breaks, cancellation and stale responses after disposal. The native
+UI regression checks both curve edges throughout an open drag, and verifies that
+intermediate positions do not reach persisted plot settings. Full-domain derived
+overviews still require their normal initial evaluation; no new throughput claim
+is made for large stateful derivations.

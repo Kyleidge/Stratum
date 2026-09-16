@@ -59,12 +59,13 @@ import {
 import type {
   EngineRequest,
   EngineResponse,
-  Plot,
   Point,
   Project,
 } from '@/lib/signal-types';
 import type { SignalGraph } from '@/lib/signal-graph';
 import type { WorkflowIndex } from '@/lib/workflow-history';
+import { usePlotView } from '@/hooks/use-plot-view';
+import type { PlotJob } from '@/lib/plot-view';
 import {
   MAX_PLOT_TABS,
   MAX_PLOT_TRACES,
@@ -259,30 +260,42 @@ export default function PlotScratchpad({
         : (graph.timeReferences.get(signalFor(id)?.id ?? '')?.id ?? id),
     ),
   );
-  const idsKey = JSON.stringify(
-    visibleIds
+  function plotJobs(viewport: PlotRange): PlotJob[] {
+    return visibleIds
       .filter((id) => index.nodes.has(id))
       .map((id) => {
         const source = timeRange(id);
         const display = plotExtent(
           clocks.size > 1 ? displayRange(id) : fullRange,
         );
-        const zoomed = zoomRange(display);
+        const span = display[1] - display[0];
+        const zoomed = [
+          display[0] + viewport[0] * span,
+          display[0] + viewport[1] * span,
+        ];
         const offset = sheet.zeroTime ? source[0] : 0;
         return {
           id,
           range: [zoomed[0] + offset, zoomed[1] + offset] as PlotRange,
         };
-      }),
+      });
+  }
+  const idsKey = JSON.stringify(plotJobs(window));
+  const sourceKey = JSON.stringify(
+    visibleIds
+      .filter((id) => index.nodes.has(id))
+      .map((id) => ({ id, range: timeRange(id) })),
   );
   const hasSignals = visibleIds.some((id) => index.nodes.has(id));
-  const [result, setResult] = useState<{
-    key: string;
-    project: Project;
-    plots?: Plot[];
-    error?: string;
-  }>();
   const [retry, setRetry] = useState(0);
+  const { view: plotView, preview: previewPlot } = usePlotView(
+    project,
+    sourceKey,
+    idsKey,
+    request,
+    retry,
+    windowKey,
+  );
   const [over, setOver] = useState<string | null>(null);
   const [stackPage, setStackPage] = useState(0);
   const [axisPage, setAxisPage] = useState(0);
@@ -310,47 +323,7 @@ export default function PlotScratchpad({
       );
     }
   }, [sheets, loaded]);
-  useEffect(() => {
-    const jobs = JSON.parse(idsKey) as { id: string; range: PlotRange }[];
-    if (!jobs.length) return;
-    let alive = true;
-    const timer = setTimeout(() => {
-      void request({
-        type: 'view',
-        ids: jobs.map((job) => job.id),
-        ranges: Object.fromEntries(jobs.map((job) => [job.id, job.range])),
-        inspection: true,
-      })
-        .then((response) => {
-          if (alive && response.type === 'plots')
-            setResult({ key: idsKey, project, plots: response.plots });
-        })
-        .catch((error: unknown) => {
-          if (alive)
-            setResult({
-              key: idsKey,
-              project,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : 'Unable to load this plot.',
-            });
-        });
-    }, 120);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [idsKey, project, request, retry]);
-  const current =
-    result?.project === project &&
-    (result.key === idsKey ||
-      visibleIds
-        .filter((id) => index.nodes.has(id))
-        .every((id) => result.plots?.some((plot) => plot.id === id)))
-      ? result
-      : undefined;
-  const plots = new Map(current?.plots?.map((plot) => [plot.id, plot]));
+  const plots = new Map(plotView?.detail?.plots ?? plotView?.overview?.plots);
   function signalFor(id: string) {
     return (
       index.nodes.get(id) ??
@@ -405,6 +378,7 @@ export default function PlotScratchpad({
           {
             node,
             plot,
+            drawingView: value ? undefined : plotView,
             color: trace.color,
             label: index.label(trace.id),
             offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
@@ -644,6 +618,15 @@ export default function PlotScratchpad({
           (next[0] - range[0]) / (range[1] - range[0]),
           (next[1] - range[0]) / (range[1] - range[0]),
         ]),
+      onPreviewRange: (next) =>
+        previewPlot(
+          next
+            ? plotJobs([
+                (next[0] - range[0]) / (range[1] - range[0]),
+                (next[1] - range[0]) / (range[1] - range[0]),
+              ])
+            : undefined,
+        ),
       onFit: fit,
       onBack: back,
       onAxes: openAxes,
@@ -1292,9 +1275,9 @@ export default function PlotScratchpad({
                   </fieldset>
                 </div>
                 {visibleIds.length ? (
-                  current?.error ? (
+                  plotView?.error ? (
                     <div className="scratchpad-empty" role="alert">
-                      <p>{current.error}</p>
+                      <p>{plotView.error}</p>
                       <button
                         className="secondary-button"
                         onClick={() => setRetry((n) => n + 1)}
@@ -1302,7 +1285,7 @@ export default function PlotScratchpad({
                         Retry plot
                       </button>
                     </div>
-                  ) : hasSignals && !current?.plots ? (
+                  ) : hasSignals && !plotView?.overview ? (
                     <output className="scratchpad-empty">Loading plot…</output>
                   ) : stacked ? (
                     traces
@@ -1319,6 +1302,7 @@ export default function PlotScratchpad({
                             </span>
                           </div>
                           <SignalChart
+                            key={windowKey}
                             traces={[trace]}
                             segments={[]}
                             range={zoomRange(
@@ -1367,6 +1351,7 @@ export default function PlotScratchpad({
                         </span>
                       </div>
                       <SignalChart
+                        key={windowKey}
                         traces={overlayTraces}
                         segments={[]}
                         range={zoomRange(fullRange)}
@@ -1480,7 +1465,7 @@ export default function PlotScratchpad({
                       ? `${formatValue(zoomRange(fullRange)[0], 4)}–${formatValue(zoomRange(fullRange)[1], 4)} s`
                       : 'Independent time ranges'}
                   </span>
-                  {hasSignals && result?.key !== idsKey && (
+                  {hasSignals && plotView?.detail?.key !== idsKey && (
                     <output>Refining view…</output>
                   )}
                 </div>
