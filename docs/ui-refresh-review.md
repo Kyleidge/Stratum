@@ -1,8 +1,8 @@
 # UI review and refresh mockup — September 2026
 
-Branch: `claude/ui-refresh-mockup`, from `main` at `e6fe85d`. The branch adds a
-static mockup of a refreshed workbench beside the active UI; it does not change
-the workbench, engine, storage or any workflow behavior.
+Branch: `claude/ui-refresh-mockup`, from `main` at `e6fe85d`. The branch adds an
+interactive prototype of a refreshed workbench beside the active UI; it does
+not change the workbench, engine, storage or any workflow behavior.
 
 ## How to open the mockup
 
@@ -12,9 +12,22 @@ the workbench, engine, storage or any workflow behavior.
 - Browser: `pnpm dev`, then open `/mockup`. With the desktop renderer's Vite
   server, use `/?mockup=1`.
 
-The mockup uses in-memory data that mirrors the seven-step motor-test example
-(`lib/mockup-data.ts`). Commands, Import, Edit, Delete and Export show a status
-note instead of acting.
+The prototype runs on an in-memory workspace (`lib/mockup-data.ts`) that starts
+from the seven-step motor-test example and implements its own small set of
+operations. Every control works against that workspace, and nothing is saved:
+reloading, or Reset example workspace, starts over.
+
+- Derive (moving average, scale, offset, absolute value, derivative, A × B),
+  Segment (time ranges or windows), Value (time average, maximum, minimum) and
+  Compare (time shift) open dialogs with a live preview and create steps.
+- Edit settings rebuilds the step and replays every dependent step; Duplicate,
+  Rename (F2) and Delete work too. Delete lists every dependent step it removes.
+- Undo/Redo (Ctrl+Z / Ctrl+Y, 20 steps) and a toast Undo cover every change.
+- Import CSV reads `Time,Name [unit],…` files; the recording menu scopes History.
+- Keep plot and + create saved plots; drag signals from History onto a plot or
+  tab to add them. Export writes an SVG of the plot, exact samples CSV, or the
+  outputs table as CSV.
+- Ctrl+K opens a command and output search; the ? button opens the guide.
 
 ## Method
 
@@ -70,13 +83,14 @@ menu and Signals & values. Findings cite the code responsible.
 - **Responsive**: under 1240 px the inspector becomes a drawer; under 820 px the
   history does too. Phone width keeps one row of icon commands.
 
-## Not in the mockup
+## Not in the prototype
 
-Dialog redesigns (Derive, Segment, Compare, Export), saved-plot tabs, real
-command search, annotation tools, virtualization of large histories, and
-keyboard tree navigation. The active workbench already implements the
-behavioral rules in AGENTS.md (virtualized history, bounded lists, atomic Edit,
-exact samples); a production refresh must keep them while adopting the layout.
+The real engine, worker and storage; trigger segmentation; the full function
+catalog; multi-recording alignment by events; plot annotations; printable
+reports; virtualization of large histories; and keyboard tree navigation. The
+active workbench already implements the behavioral rules in AGENTS.md
+(virtualized history, bounded lists, atomic Edit, exact samples); a production
+refresh must keep them while adopting the layout.
 
 ## Suggested order for adopting it
 
@@ -92,3 +106,6 @@ TypeScript, oxlint on the changed files and oxfmt pass. Full-repository lint
 reports only the 19 documented starter-component issues. `pnpm test` passes
 134/134. The desktop renderer build and the web build (including `/mockup`)
 compile. The mockup was exercised at 1007 px, 1540 px and 375 px in both themes.
+A scripted click-through (32 checks covering every command, dialog, undo/redo,
+edit replay, delete impact, saved plots, drag and drop, import, exports, search
+and theme) passes in the browser renderer and in the Electron window.

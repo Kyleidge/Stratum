@@ -79,7 +79,10 @@ function visibleRange(trace: ChartTrace, d0: number, d1: number) {
   return [first, last] as const;
 }
 
-/** Min/max envelope per pixel column once samples outnumber pixels. */
+/**
+ * Min/max envelope per pixel column once samples outnumber pixels. Missing
+ * samples break the line rather than being bridged.
+ */
 function tracePath(
   trace: ChartTrace,
   d0: number,
@@ -90,30 +93,43 @@ function tracePath(
 ) {
   const [first, last] = visibleRange(trace, d0, d1);
   const parts: string[] = [];
-  const point = (i: number) =>
-    `${x(trace.t[i] - trace.offset).toFixed(1)} ${y(trace.v[i]).toFixed(1)}`;
+  let gap = true;
+  const point = (i: number) => {
+    parts.push(
+      `${gap ? 'M' : 'L'}${x(trace.t[i] - trace.offset).toFixed(1)} ${y(trace.v[i]).toFixed(1)}`,
+    );
+    gap = false;
+  };
   if (last - first <= width * 2) {
     for (let i = first; i < last; i++)
-      parts.push(`${i === first ? 'M' : 'L'}${point(i)}`);
+      if (Number.isFinite(trace.v[i])) point(i);
+      else gap = true;
     return parts.join('');
   }
   let column = NaN;
-  let low = first;
-  let high = first;
+  let low = -1;
+  let high = -1;
   const flush = () => {
+    if (low < 0) return;
     const [a, b] = low < high ? [low, high] : [high, low];
-    parts.push(`${parts.length ? 'L' : 'M'}${point(a)}`, `L${point(b)}`);
+    point(a);
+    point(b);
   };
   for (let i = first; i < last; i++) {
     const next = Math.floor(x(trace.t[i] - trace.offset));
     if (next !== column) {
-      if (!Number.isNaN(column)) flush();
+      flush();
       column = next;
-      low = high = i;
-    } else {
-      if (trace.v[i] < trace.v[low]) low = i;
-      if (trace.v[i] > trace.v[high]) high = i;
+      low = high = -1;
     }
+    if (!Number.isFinite(trace.v[i])) {
+      flush();
+      low = high = -1;
+      gap = true;
+      continue;
+    }
+    if (low < 0 || trace.v[i] < trace.v[low]) low = i;
+    if (high < 0 || trace.v[i] > trace.v[high]) high = i;
   }
   flush();
   return parts.join('');
@@ -129,7 +145,9 @@ function sampleAt(trace: ChartTrace, time: number) {
     return undefined;
   const i = Math.min(trace.t.length - 1, lowerBound(trace.t, target));
   const j = i > 0 && target - trace.t[i - 1] < trace.t[i] - target ? i - 1 : i;
-  return { time: trace.t[j] - trace.offset, value: trace.v[j] };
+  return Number.isFinite(trace.v[j])
+    ? { time: trace.t[j] - trace.offset, value: trace.v[j] }
+    : undefined;
 }
 
 type Label = {
@@ -217,13 +235,17 @@ export default function MockupChart({
       const [first, last] = holdY
         ? [0, trace.t.length]
         : visibleRange(trace, d0, d1);
-      for (let i = first; i < last; i++) {
-        lo = Math.min(lo, trace.v[i]);
-        hi = Math.max(hi, trace.v[i]);
-      }
+      for (let i = first; i < last; i++)
+        if (Number.isFinite(trace.v[i])) {
+          lo = Math.min(lo, trace.v[i]);
+          hi = Math.max(hi, trace.v[i]);
+        }
     }
     for (const reference of references)
-      if (lane.traces.some((trace) => trace.id === reference.traceId)) {
+      if (
+        Number.isFinite(reference.value) &&
+        lane.traces.some((trace) => trace.id === reference.traceId)
+      ) {
         lo = Math.min(lo, reference.value);
         hi = Math.max(hi, reference.value);
       }
@@ -429,9 +451,14 @@ export default function MockupChart({
                     const [first, last] = visibleRange(trace, d0, d1);
                     if (last - first < 2) return [];
                     // Label each trace at its visible peak, clear of the data.
-                    let i = first;
+                    let i = -1;
                     for (let j = first; j < last; j++)
-                      if (trace.v[j] > trace.v[i]) i = j;
+                      if (
+                        Number.isFinite(trace.v[j]) &&
+                        (i < 0 || trace.v[j] > trace.v[i])
+                      )
+                        i = j;
+                    if (i < 0) return [];
                     return [
                       {
                         key: trace.id,

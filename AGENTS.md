@@ -81,10 +81,11 @@ There are no server API routes or cloud signal uploads.
   which includes `tests/regions.test.ts` and the earlier numerical suites.
 - `components/region-editor.tsx`, `region-function-editor.tsx`, `region-history.tsx`:
   saved settings, explicit scopes and a virtualized chronological history.
-- `components/ui-refresh-mockup.tsx`, `mockup-chart.tsx`, `lib/mockup-data.ts`
-  and `app/ui-refresh-mockup.css`: static refreshed-layout mockup with in-memory
-  sample data, opened at `/mockup` or with `pnpm desktop:mockup`. It never uses
-  the engine or workspace storage. See `docs/ui-refresh-review.md`.
+- `components/ui-refresh-mockup.tsx`, `mockup-chart.tsx`, `mockup-dialogs.tsx`,
+  `lib/mockup-data.ts` and `app/ui-refresh-mockup.css`: interactive prototype of
+  a refreshed layout on an in-memory workspace, opened at `/mockup` or with
+  `pnpm desktop:mockup`. It never uses the engine or workspace storage, and its
+  operations are illustrative, not the engine's. See `docs/ui-refresh-review.md`.
 - `components/workbench.tsx`: retained legacy workspace for compatibility.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
 - `components/plot-scratchpad.tsx` and `lib/plot-scratchpad.ts`: Active combines
