@@ -16,6 +16,7 @@
     "test:preview": "electron tests/preview-worker-smoke.mjs",
     "desktop:build": "vite build --config desktop/vite.config.ts",
     "desktop": "pnpm desktop:build && electron desktop/main.mjs",
+    "desktop:mockup": "pnpm desktop:build && electron desktop/main.mjs --mockup",
     "desktop:smoke": "electron desktop/main.mjs --smoke",
     "desktop:ui-smoke": "electron desktop/main.mjs --ui-smoke",
     "desktop:package": "pnpm desktop:build && node desktop/package.mjs"

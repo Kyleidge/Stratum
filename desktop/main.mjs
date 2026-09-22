@@ -30,13 +30,17 @@ protocol.registerSchemesAsPrivileged([
 const root = fileURLToPath(new URL('../dist-desktop/', import.meta.url));
 const uiSmoke = process.argv.includes('--ui-smoke');
 const smoke = process.argv.includes('--smoke') || uiSmoke;
-if (smoke)
+// The UI refresh mockup uses static sample data and never opens the workspace.
+const mockup = !smoke && process.argv.includes('--mockup');
+if (smoke || mockup)
   app.setPath(
     'userData',
-    mkdtempSync(resolve(tmpdir(), 'stratum-native-smoke-')),
+    mkdtempSync(
+      resolve(tmpdir(), mockup ? 'stratum-mockup-' : 'stratum-native-smoke-'),
+    ),
   );
 // A running user app must not cause a smoke test to exit without testing.
-const singleInstance = smoke || app.requestSingleInstanceLock();
+const singleInstance = smoke || mockup || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 let window;
 const downloads = [];
@@ -320,7 +324,7 @@ async function createWindow() {
   }
   try {
     await window.loadURL(
-      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
+      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : mockup ? '?mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
     );
   } catch (error) {
     // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.
