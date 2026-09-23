@@ -93,24 +93,51 @@ export function lowerBound(t: Float64Array, time: number) {
   return lo;
 }
 
+/** Match an exact displayed timestamp without rounding into a nearby sample. */
+export function sampleAtDisplayTime(
+  signal: Pick<MockSignal, 't' | 'v'>,
+  displayTime: number,
+  offset = 0,
+): number | undefined {
+  let lo = 0;
+  let hi = signal.t.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (signal.t[mid] - offset < displayTime) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < signal.t.length &&
+    signal.t[lo] - offset === displayTime &&
+    Number.isFinite(signal.v[lo])
+    ? signal.v[lo]
+    : undefined;
+}
+
 // Numerical helpers. Missing samples are NaN and stay missing.
 
 function smooth(v: Float64Array, width: number) {
   const out = new Float64Array(v.length);
   const half = Math.floor(width / 2);
+  let sum = 0;
+  let count = 0;
+  for (let j = 0; j <= Math.min(v.length - 1, half); j++) {
+    if (Number.isFinite(v[j])) {
+      sum += v[j];
+      count++;
+    }
+  }
   for (let i = 0; i < v.length; i++) {
-    let sum = 0;
-    let n = 0;
-    for (
-      let j = Math.max(0, i - half);
-      j <= Math.min(v.length - 1, i + half);
-      j++
-    )
-      if (Number.isFinite(v[j])) {
-        sum += v[j];
-        n++;
-      }
-    out[i] = Number.isFinite(v[i]) && n ? sum / n : NaN;
+    out[i] = Number.isFinite(v[i]) && count ? sum / count : NaN;
+    const leaving = i - half;
+    const entering = i + half + 1;
+    if (leaving >= 0 && Number.isFinite(v[leaving])) {
+      sum -= v[leaving];
+      count--;
+    }
+    if (entering < v.length && Number.isFinite(v[entering])) {
+      sum += v[entering];
+      count++;
+    }
   }
   return out;
 }
@@ -120,7 +147,8 @@ function derivative(t: Float64Array, v: Float64Array) {
   for (let i = 0; i < v.length; i++) {
     const a = Math.max(0, i - 1);
     const b = Math.min(v.length - 1, i + 1);
-    out[i] = b > a ? (v[b] - v[a]) / (t[b] - t[a]) : NaN;
+    out[i] =
+      Number.isFinite(v[i]) && b > a ? (v[b] - v[a]) / (t[b] - t[a]) : NaN;
   }
   return out;
 }
@@ -141,10 +169,9 @@ function crop(
   end: number,
   inclusiveEnd: boolean,
 ) {
-  const first = lowerBound(t, start - 1e-9);
-  const last = inclusiveEnd
-    ? lowerBound(t, end + 1e-9)
-    : lowerBound(t, end - 1e-9);
+  const first = lowerBound(t, start);
+  const boundary = lowerBound(t, end);
+  const last = boundary + Number(inclusiveEnd && t[boundary] === end);
   return { t: t.slice(first, last), v: v.slice(first, last) };
 }
 
@@ -180,12 +207,84 @@ function reduce(t: Float64Array, v: Float64Array, fn: ValueFn) {
 const trim = (value: number) =>
   value.toLocaleString('en-US', { maximumFractionDigits: 3 });
 
+/** Inputs must precede the edited operation so replay stays chronological. */
+export function eligibleSignals(ws: Workspace, stepId?: string): MockSignal[] {
+  const limit = stepId
+    ? ws.steps.find((step) => step.id === stepId)?.sequence
+    : Infinity;
+  const owners = new Set(
+    ws.steps
+      .filter((step) => step.sequence < (limit ?? -Infinity))
+      .map((step) => step.id),
+  );
+  return [...ws.outputs.values()].filter(
+    (output): output is MockSignal =>
+      output.kind !== 'value' && owners.has(output.stepId),
+  );
+}
+
+function validateRecipe(recipe: Recipe) {
+  switch (recipe.op) {
+    case 'smooth':
+      if (
+        !Number.isInteger(recipe.width) ||
+        recipe.width < 1 ||
+        recipe.width % 2 === 0
+      )
+        throw new Error(
+          'The centred window must be an odd whole number of samples.',
+        );
+      break;
+    case 'scale':
+      if (!Number.isFinite(recipe.factor))
+        throw new Error('Enter a finite scale factor.');
+      break;
+    case 'offset':
+      if (!Number.isFinite(recipe.amount))
+        throw new Error('Enter a finite offset.');
+      break;
+    case 'shift':
+      if (!Number.isFinite(recipe.seconds))
+        throw new Error('Enter a finite time shift.');
+      break;
+    case 'windows':
+      if (!Number.isFinite(recipe.length) || recipe.length <= 0)
+        throw new Error('Enter a finite, positive window length.');
+      break;
+    case 'ranges':
+      if (
+        !recipe.ranges.length ||
+        recipe.ranges.some(
+          ([start, end]) =>
+            !Number.isFinite(start) || !Number.isFinite(end) || end <= start,
+        )
+      )
+        throw new Error('Each range needs a finite start and a later end.');
+      break;
+  }
+}
+
+function validateInputs(
+  ws: Workspace,
+  recipe: Recipe,
+  inputs: string[],
+  stepId?: string,
+) {
+  const allowed = new Set(
+    eligibleSignals(ws, stepId).map((output) => output.id),
+  );
+  const used = [...inputs, ...(recipe.op === 'multiply' ? [recipe.by] : [])];
+  if (!inputs.length || used.some((id) => !allowed.has(id)))
+    throw new Error('Choose signal inputs from steps before this operation.');
+}
+
 /** Outputs of `recipe` applied to `inputs`, in input-major order. */
 export function compute(
   ws: Workspace,
   recipe: Recipe,
   inputs: string[],
 ): Draft[] {
+  validateRecipe(recipe);
   const drafts: Draft[] = [];
   for (const id of inputs) {
     const input = ws.outputs.get(id);
@@ -251,6 +350,7 @@ export function compute(
           other.t[other.t.length - 1],
         );
         const part = crop(input.t, input.v, start, end, true);
+        if (part.t.length < 2) break;
         derived(
           part.v.map(
             (value, i) => value * interpolate(other.t, other.v, part.t[i]),
@@ -285,20 +385,29 @@ export function compute(
         }
         break;
       case 'windows': {
+        const first = input.t[0];
         const last = input.t[input.t.length - 1];
-        let n = 1;
-        for (
-          let start = input.t[0];
-          start < last - 1e-9 && n <= 200;
-          start += recipe.length, n++
-        ) {
-          const end = Math.min(last, start + recipe.length);
-          const part = crop(input.t, input.v, start, end, end >= last);
+        const ratio = (last - first) / recipe.length;
+        const count = Math.max(
+          1,
+          Math.ceil(ratio - Number.EPSILON * Math.max(1, ratio) * 4),
+        );
+        if (count > 200)
+          throw new Error(
+            'The prototype supports at most 200 windows per input. Increase the window length.',
+          );
+        for (let n = 0; n < count; n++) {
+          const start = first + n * recipe.length;
+          const final = n === count - 1;
+          const end = final
+            ? last
+            : Math.min(last, first + (n + 1) * recipe.length);
+          const part = crop(input.t, input.v, start, end, final);
           if (part.t.length > 1)
             derived(
               part.v,
-              `Window ${n} · ${input.label}`,
-              `Window ${n}`,
+              `Window ${n + 1} · ${input.label}`,
+              `Window ${n + 1}`,
               input.unit,
               part.t,
             );
@@ -344,8 +453,15 @@ export function apply(
   inputs: string[],
   name: string,
 ) {
+  if (recipe.op === 'import')
+    throw new Error('Use CSV import to create a recording.');
+  validateInputs(ws, recipe, inputs);
   const next = copy(ws);
   const drafts = compute(ws, recipe, inputs);
+  if (!drafts.length)
+    throw new Error(
+      'These settings produce no outputs for the chosen signals.',
+    );
   const step: MockStep = {
     id: `s${next.nextId++}`,
     sequence: Math.max(0, ...ws.steps.map((item) => item.sequence)) + 1,
@@ -399,21 +515,35 @@ export function remove(ws: Workspace, stepId: string) {
  * order. Output IDs and names are kept while the output count matches.
  */
 export function edit(ws: Workspace, stepId: string, recipe: Recipe) {
+  const original = ws.steps.find((step) => step.id === stepId);
+  if (!original) throw new Error('The operation no longer exists.');
+  if (original.recipe.op === 'import' || recipe.op === 'import')
+    throw new Error(
+      'Recordings are immutable. Import creates a new recording step.',
+    );
+  validateInputs(ws, recipe, original.inputs, stepId);
   const next = copy(ws);
   const changed = new Set<string>();
-  const start = next.steps.findIndex((step) => step.id === stepId);
-  for (let i = start; i < next.steps.length; i++) {
-    const step = i === start ? { ...next.steps[i], recipe } : next.steps[i];
+  next.steps = [];
+  for (const current of ws.steps) {
+    const step = current.id === stepId ? { ...current, recipe } : current;
     const uses = [
       ...step.inputs,
       ...(step.recipe.op === 'multiply' ? [step.recipe.by] : []),
     ];
-    if (i !== start && !uses.some((id) => changed.has(id))) continue;
+    if (step.id !== stepId && !uses.some((id) => changed.has(id))) {
+      next.steps.push(step);
+      continue;
+    }
     const inputs = step.inputs.filter((id) => next.outputs.has(id));
     const drafts =
       step.recipe.op === 'multiply' && !next.outputs.has(step.recipe.by)
         ? []
         : compute(next, step.recipe, inputs);
+    if (step.id === stepId && !drafts.length)
+      throw new Error(
+        'These settings produce no outputs for the chosen signals.',
+      );
     for (const id of step.outputs.slice(drafts.length)) {
       next.outputs.delete(id);
       changed.add(id);
@@ -430,16 +560,13 @@ export function edit(ws: Workspace, stepId: string, recipe: Recipe) {
       } as MockOutput);
       changed.add(ids[k]);
     });
-    if (!ids.length) {
-      next.steps.splice(i--, 1);
-      continue;
-    }
-    next.steps[i] = {
+    if (!ids.length) continue;
+    next.steps.push({
       ...step,
       inputs,
       outputs: ids,
-      revision: i === start ? step.revision + 1 : step.revision,
-    };
+      revision: step.revision + 1,
+    });
   }
   return next;
 }
@@ -460,18 +587,75 @@ export function rename(ws: Workspace, id: string, name: string) {
   return next;
 }
 
+function csvRows(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  let closed = false;
+  const finishCell = () => {
+    row.push(cell.trim());
+    cell = '';
+    closed = false;
+  };
+  const finishRow = () => {
+    finishCell();
+    if (row.some((value) => value !== '')) rows.push(row);
+    row = [];
+    if (rows.length > 200_001)
+      throw new Error('The prototype supports at most 200,000 CSV data rows.');
+  };
+  const source = text.replace(/^\uFEFF/, '');
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quoted) {
+      if (char === '"') {
+        if (source[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          quoted = false;
+          closed = true;
+        }
+      } else cell += char;
+    } else if (char === ',') finishCell();
+    else if (char === '\r' || char === '\n') {
+      finishRow();
+      if (char === '\r' && source[i + 1] === '\n') i++;
+    } else if (char === '"' && !closed && !cell.trim()) {
+      cell = '';
+      quoted = true;
+    } else if (char === '"' || (closed && char.trim())) {
+      throw new Error('Malformed CSV quoting.');
+    } else cell += char;
+  }
+  if (quoted) throw new Error('The CSV contains an unclosed quoted field.');
+  finishRow();
+  return rows;
+}
+
 /** Parses `Time,Name [unit],…` CSV text into a new recording operation. */
 export function importCsv(ws: Workspace, file: string, text: string) {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length < 3) throw new Error('The file needs a header and rows.');
-  const header = lines[0]
-    .split(',')
-    .map((cell) => cell.trim().replace(/^"|"$/g, ''));
+  const parsed = csvRows(text);
+  if (parsed.length < 3)
+    throw new Error('The file needs a header and at least two data rows.');
+  const [header, ...data] = parsed;
   if (header.length < 2) throw new Error('Expected time plus a channel.');
-  const rows = lines
-    .slice(1, 200_001)
-    .map((line) => line.split(',').map((cell) => Number.parseFloat(cell)))
-    .filter((row) => Number.isFinite(row[0]));
+  const rows = data.map((row, index) => {
+    if (row.length !== header.length)
+      throw new Error(
+        `CSV row ${index + 2} has ${row.length} columns; expected ${header.length}.`,
+      );
+    return row.map((cell, column) => {
+      if (!cell && column > 0) return NaN;
+      const value = cell ? Number(cell) : NaN;
+      if (!Number.isFinite(value))
+        throw new Error(
+          `CSV row ${index + 2}, column ${column + 1} needs a finite number.`,
+        );
+      return value;
+    });
+  });
   const t = Float64Array.from(rows, (row) => row[0]);
   for (let i = 1; i < t.length; i++)
     if (!(t[i] > t[i - 1])) throw new Error('Time must increase on every row.');
@@ -486,7 +670,7 @@ export function importCsv(ws: Workspace, file: string, text: string) {
     recipe: { op: 'import', file },
   };
   header.slice(1).forEach((cell, column) => {
-    const match = /^(.*?)\s*[[(]([^\])]*)[\])]\s*$/.exec(cell);
+    const match = /^([\s\S]*?)\s*[[(]([^\])]*)[\])]\s*$/.exec(cell);
     const label = (match?.[1] ?? cell) || `Channel ${column + 1}`;
     const id = `o${next.nextId++}`;
     next.outputs.set(id, {
@@ -808,12 +992,23 @@ export function usedBy(ws: Workspace, ids: string[]) {
  * to whole steps, and ties prefer the tighter domain.
  */
 function tickStep(min: number, max: number, target: number, expand: boolean) {
-  const magnitude =
-    10 ** Math.floor(Math.log10((max - min) / Math.max(1, target - 1)));
+  const tickTarget = Number.isFinite(target)
+    ? Math.max(3, Math.min(20, target))
+    : 6;
+  const intervals = tickTarget - 1;
+  const span = (max - min) / intervals;
+  const rough = Number.isFinite(span)
+    ? span
+    : max / intervals - min / intervals;
+  const magnitude = Math.max(
+    Number.MIN_VALUE,
+    10 ** Math.floor(Math.log10(rough)),
+  );
   let step = magnitude;
   let best = [Infinity, Infinity];
   for (const factor of [0.5, 1, 2, 5, 10, 20]) {
     const candidate = factor * magnitude;
+    if (!Number.isFinite(candidate) || candidate <= 0) continue;
     const first = expand
       ? Math.floor(min / candidate + 1e-9)
       : Math.ceil(min / candidate - 1e-9);
@@ -822,7 +1017,7 @@ function tickStep(min: number, max: number, target: number, expand: boolean) {
       : Math.floor(max / candidate + 1e-9);
     const count = last - first + 1;
     const score = [
-      Math.abs(count - target) + (count < 3 ? 100 : 0),
+      Math.abs(count - tickTarget) + (count < 3 ? 100 : 0),
       expand ? (last - first) * candidate : -candidate,
     ];
     if (score[0] < best[0] || (score[0] === best[0] && score[1] < best[1])) {
@@ -834,19 +1029,39 @@ function tickStep(min: number, max: number, target: number, expand: boolean) {
 }
 
 function padded(min: number, max: number) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
   if (max > min) return [min, max];
   const pad = Math.abs(min) * 0.1 || 1;
-  return [min - pad, max + pad];
+  const lo = min - pad;
+  const hi = min + pad;
+  return [Number.isFinite(lo) ? lo : min, Number.isFinite(hi) ? hi : min];
+}
+
+/** An axis index can exceed 2^53; increment a bounded local count instead. */
+function tickValues(first: number, last: number, step: number) {
+  const count = Math.max(0, Math.min(100, Math.floor(last - first) + 1));
+  const ticks: number[] = [];
+  for (let offset = 0; offset < count; offset++) {
+    const index = first + offset;
+    const value = index === 0 ? 0 : index * step;
+    if (
+      Number.isFinite(value) &&
+      (!ticks.length || value > ticks[ticks.length - 1])
+    )
+      ticks.push(value);
+  }
+  return ticks;
 }
 
 /** Round-number ticks inside [min, max], about `target` of them. */
 export function niceTicks(low: number, high: number, target = 6) {
   const [min, max] = padded(low, high);
   const step = tickStep(min, max, target, false);
-  const ticks: number[] = [];
   const first = Math.ceil(min / step - 1e-9);
-  for (let i = first; i * step <= max + step * 1e-9; i++)
-    ticks.push(i === 0 ? 0 : i * step);
+  const last = Math.floor(max / step + 1e-9);
+  const ticks = tickValues(first, last, step).filter(
+    (value) => value >= min - step * 1e-9 && value <= max + step * 1e-9,
+  );
   return { ticks, step };
 }
 
@@ -856,9 +1071,18 @@ export function niceDomain(low: number, high: number, target = 5) {
   const step = tickStep(min, max, target, true);
   const first = Math.floor(min / step + 1e-9);
   const last = Math.max(first + 1, Math.ceil(max / step - 1e-9));
-  const ticks: number[] = [];
-  for (let i = first; i <= last; i++) ticks.push(i === 0 ? 0 : i * step);
-  return { lo: first * step, hi: last * step, ticks, step };
+  const roundedLo = first * step;
+  const roundedHi = last * step;
+  const lo = Number.isFinite(roundedLo) ? Math.min(min, roundedLo) : min;
+  const hi = Number.isFinite(roundedHi) ? Math.max(max, roundedHi) : max;
+  const ticks = [
+    lo,
+    ...tickValues(first, last, step).filter(
+      (value) => value > lo && value < hi,
+    ),
+    hi,
+  ];
+  return { lo, hi, ticks, step };
 }
 
 export function formatTick(value: number, step: number) {
@@ -879,6 +1103,4 @@ export function formatNumber(value: number, digits = 3) {
 
 /** Full-precision value for properties and tables. */
 export const formatExact = (value: number) =>
-  Number.isFinite(value)
-    ? value.toLocaleString('en-US', { maximumFractionDigits: 3 })
-    : '—';
+  Number.isFinite(value) ? String(value) : '—';

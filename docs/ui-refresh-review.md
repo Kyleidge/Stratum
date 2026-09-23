@@ -109,3 +109,42 @@ compile. The mockup was exercised at 1007 px, 1540 px and 375 px in both themes.
 A scripted click-through (32 checks covering every command, dialog, undo/redo,
 edit replay, delete impact, saved plots, drag and drop, import, exports, search
 and theme) passes in the browser renderer and in the Electron window.
+
+## Merge review — 23 September 2026
+
+The merge review covers the prototype, its browser/desktop entry points and
+isolation from the production workspace. The prototype remains in memory;
+merging it does not replace the active workbench or integrate its illustrative
+operations with the signal engine.
+
+The review corrected the following defects:
+
+- Editing could select the operation's own output or a later output as a
+  Multiply input, creating cyclic or stale dependencies. Both the picker and
+  model now require earlier inputs, replay increments dependent revisions, and
+  failed replay leaves the workspace intact with an error inside the dialog.
+- CSV parsing could misread quoted fields, skip malformed rows and silently
+  truncate oversized recordings. Imports now validate complete rows and quoting,
+  reject the 200,000-row limit explicitly and preserve intervening edits when
+  asynchronous file reads finish. CSV exports neutralize formula-like labels.
+- Window segmentation silently stopped after 200 windows; it now reports that
+  limit. Centred smoothing rejects even widths and uses a rolling calculation
+  for large inputs. Missing derivative samples stay missing, and multiplication
+  rejects an overlap too short to form a signal.
+- The Samples table rounded small timestamps and used a fixed matching tolerance
+  that could omit or repeat nearby samples. It now preserves numeric precision
+  and matches actual display times. Crop boundaries also use exact comparisons.
+- Simultaneous plots shared SVG clipping IDs, stacked lanes could collapse, and
+  large-offset axes could hang while generating ticks. Clips are unique, lanes
+  have a minimum height and tick generation is bounded.
+- F2 could focus a hidden rename field on narrow layouts; it now opens the
+  inspector. Drawers can be dismissed with Escape and the inspector has a close
+  control. Compact Import and Export controls now have accessible names.
+
+All 152 tests pass, including 18 new model and axis regressions in the normal
+test command. Validation
+also includes TypeScript, formatting, scoped lint, browser and desktop builds,
+the native production UI smoke test and live browser checks of the prototype.
+The full lint baseline remains the same 19 starter-component issues. In this
+environment, checks used the installed executables behind the package scripts
+because the bundled pnpm launcher attempted an unnecessary dependency reinstall.

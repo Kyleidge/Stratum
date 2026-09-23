@@ -1099,6 +1099,12 @@
 }
 
 /* Inspector */
+.mk-inspector-drawer-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--mk-line);
+}
 .mk-inspector-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -1,6 +1,7 @@
 'use client';
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -51,6 +52,7 @@ type Props = {
 };
 
 const MARGIN = { left: 72, right: 24, top: 14, gap: 22, axis: 40 };
+const MIN_LANE_HEIGHT = 120;
 
 function useSize() {
   const ref = useRef<HTMLDivElement>(null);
@@ -186,9 +188,9 @@ export default function MockupChart({
   onCursor,
 }: Props) {
   const [box, size] = useSize();
+  const clipPrefix = useId();
   const svg = useRef<SVGSVGElement>(null);
   const width = Math.max(320, size.width);
-  const height = Math.max(220, size.height);
   const plotWidth = width - MARGIN.left - MARGIN.right;
 
   const extent = useMemo(() => {
@@ -225,6 +227,14 @@ export default function MockupChart({
     return groups;
   }, [traces, layout]);
 
+  const minHeight = Math.max(
+    220,
+    MARGIN.top +
+      MARGIN.axis +
+      MIN_LANE_HEIGHT * lanes.length +
+      MARGIN.gap * Math.max(0, lanes.length - 1),
+  );
+  const height = Math.max(minHeight, size.height);
   const laneHeight =
     (height - MARGIN.top - MARGIN.axis - MARGIN.gap * (lanes.length - 1)) /
     Math.max(1, lanes.length);
@@ -257,7 +267,7 @@ export default function MockupChart({
       top +
       laneHeight -
       ((value - domain.lo) / (domain.hi - domain.lo)) * laneHeight;
-    return { ...lane, domain, top, y };
+    return { ...lane, domain, top, y, clipId: `${clipPrefix}-${index}` };
   });
   const bottom = height - MARGIN.axis;
   const timeTicks = niceTicks(
@@ -373,7 +383,7 @@ export default function MockupChart({
   );
 
   return (
-    <div className="mk-chart" ref={box} data-tool={tool}>
+    <div className="mk-chart" ref={box} data-tool={tool} style={{ minHeight }}>
       {/* Keyboard and screen-reader access: the cursor is a time slider. */}
       <input
         type="range"
@@ -412,7 +422,7 @@ export default function MockupChart({
       >
         <defs>
           {scaled.map((lane) => (
-            <clipPath id={`mk-clip-${lane.key}`} key={lane.key}>
+            <clipPath id={lane.clipId} key={lane.key}>
               <rect
                 x={MARGIN.left}
                 y={lane.top - 2}
@@ -516,7 +526,7 @@ export default function MockupChart({
                 y1={lane.top}
                 y2={lane.top + laneHeight}
               />
-              <g clipPath={`url(#mk-clip-${lane.key})`}>
+              <g clipPath={`url(#${lane.clipId})`}>
                 {references.map((reference) => {
                   const trace = lane.traces.find(
                     (item) => item.id === reference.traceId,

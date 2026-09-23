@@ -18,11 +18,11 @@ import MockupChart, {
 import {
   compute,
   dependents,
+  eligibleSignals,
   formatExact,
   formatNumber,
   stepRef,
   summary,
-  type MockSignal,
   type MockStep,
   type Recipe,
   type ValueFn,
@@ -154,9 +154,10 @@ export function OperationDialog({
   ws: Workspace;
   inputs: string[];
   editing?: MockStep;
-  onApply: (recipe: Recipe, name: string) => void;
+  onApply: (recipe: Recipe, name: string) => string | undefined;
   onClose: () => void;
 }) {
+  const [applyError, setApplyError] = useState('');
   const saved = editing?.recipe;
   const [op, setOp] = useState<DeriveOp>(
     saved && DERIVE.some((item) => item.op === saved.op)
@@ -174,15 +175,15 @@ export function OperationDialog({
             : DEFAULTS.smooth,
     ),
   );
-  const signals = [...ws.outputs.values()].filter(
-    (item): item is MockSignal => item.kind !== 'value',
-  );
+  const signals = eligibleSignals(ws, editing?.id);
   const [by, setBy] = useState(
     saved?.op === 'multiply'
       ? saved.by
-      : (signals.find((item) => !inputs.includes(item.id))?.id ?? ''),
+      : (signals.find((item) => !inputs.includes(item.id))?.id ??
+          signals[0]?.id ??
+          ''),
   );
-  const first = ws.outputs.get(inputs[0]) as MockSignal | undefined;
+  const first = signals.find((item) => item.id === inputs[0]);
   const [mode, setMode] = useState<'ranges' | 'windows'>(
     saved?.op === 'windows' ? 'windows' : 'ranges',
   );
@@ -217,12 +218,14 @@ export function OperationDialog({
       const value = Number(param);
       if (op === 'abs' || op === 'derivative') return { op };
       if (op === 'multiply')
-        return by ? { op, by } : 'Choose the signal to multiply by.';
+        return signals.some((item) => item.id === by)
+          ? { op, by }
+          : 'Choose the signal to multiply by.';
       if (!Number.isFinite(value)) return 'Enter a number.';
       if (op === 'smooth')
-        return value >= 1 && Number.isInteger(value)
+        return value >= 1 && Number.isInteger(value) && value % 2 === 1
           ? { op, width: value }
-          : 'The window is a whole number of samples.';
+          : 'The window is a positive odd whole number of samples.';
       return op === 'scale' ? { op, factor: value } : { op, amount: value };
     }
     if (kind === 'segment') {
@@ -244,7 +247,18 @@ export function OperationDialog({
       : 'Enter a time shift in seconds.';
   })();
   // Cheap at mockup sizes, so the preview is recomputed on every change.
-  const drafts = typeof recipe === 'string' ? [] : compute(ws, recipe, inputs);
+  const preview = (() => {
+    if (typeof recipe === 'string') return { drafts: [], error: recipe };
+    try {
+      return { drafts: compute(ws, recipe, inputs), error: '' };
+    } catch (error) {
+      return {
+        drafts: [],
+        error: error instanceof Error ? error.message : 'Could not preview.',
+      };
+    }
+  })();
+  const drafts = preview.drafts;
   const describe = () =>
     typeof recipe === 'string'
       ? ''
@@ -269,14 +283,13 @@ export function OperationDialog({
             : `${DERIVE.find((item) => item.op === op)!.name} of ${subject}`;
   const [name, setName] = useState(editing?.name ?? '');
   const finalName = name.trim() || defaultName;
-  const error =
-    typeof recipe === 'string'
-      ? recipe
-      : !inputs.length
-        ? 'Choose at least one signal first.'
-        : !drafts.length
-          ? 'These settings produce no outputs for the chosen signals.'
-          : '';
+  const error = preview.error
+    ? preview.error
+    : !inputs.length
+      ? 'Choose at least one signal first.'
+      : !drafts.length
+        ? 'These settings produce no outputs for the chosen signals.'
+        : '';
 
   // Preview: the first input and up to two results, colour-slotted in order.
   const traces: ChartTrace[] = [];
@@ -336,10 +349,11 @@ export function OperationDialog({
       footer={
         <>
           <span
-            className={error ? 'mk-error' : 'mk-muted'}
-            role={error ? 'alert' : undefined}
+            className={error || applyError ? 'mk-error' : 'mk-muted'}
+            role={error || applyError ? 'alert' : undefined}
           >
             {error ||
+              applyError ||
               `${count} ${outputWord}${count === 1 ? '' : 's'} · ${describe()}${
                 editing ? ' · dependent steps are rebuilt' : ''
               }`}
@@ -350,9 +364,10 @@ export function OperationDialog({
           <button
             className="mk-button mk-primary"
             disabled={!!error}
-            onClick={() =>
-              typeof recipe !== 'string' && onApply(recipe, finalName)
-            }
+            onClick={() => {
+              if (typeof recipe !== 'string')
+                setApplyError(onApply(recipe, finalName) ?? '');
+            }}
           >
             <Icon size={14} />
             {editing

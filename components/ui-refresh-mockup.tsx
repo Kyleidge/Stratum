@@ -77,6 +77,7 @@ import {
   lowerBound,
   remove,
   rename,
+  sampleAtDisplayTime,
   settings,
   stepKind,
   stepOf,
@@ -167,8 +168,9 @@ function download(name: string, text: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** CSV text cell: quoted so spreadsheets keep it as text. */
-const cell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+/** Quotes delimit cells; the prefix also prevents spreadsheet formulas. */
+const cell = (value: string) =>
+  `"${(/^[\s]*[=+@-]/.test(value) ? `'${value}` : value).replace(/"/g, '""')}"`;
 
 function Sparkline({ item, color }: { item: MockSignal; color: string }) {
   const stride = Math.max(1, Math.floor(item.v.length / 60));
@@ -311,18 +313,27 @@ export default function UiRefreshMockup() {
   const plotArea = useRef<HTMLDivElement>(null);
 
   // A deleted or undone selection falls back to the latest operation.
-  const selection: Selection =
-    (chosen.kind === 'step'
-      ? ws.steps.some((step) => step.id === chosen.id)
-      : ws.outputs.has(chosen.id)) || !ws.steps.length
-      ? chosen
-      : { kind: 'step', id: ws.steps[ws.steps.length - 1].id };
+  const selection = useMemo<Selection>(
+    () =>
+      (chosen.kind === 'step'
+        ? ws.steps.some((step) => step.id === chosen.id)
+        : ws.outputs.has(chosen.id)) || !ws.steps.length
+        ? chosen
+        : { kind: 'step', id: ws.steps[ws.steps.length - 1].id },
+    [chosen, ws],
+  );
   const step =
     (selection.kind === 'step'
       ? ws.steps.find((item) => item.id === selection.id)
       : stepOf(ws, selection.id)) ?? ws.steps[0];
   const selected =
     selection.kind === 'output' ? ws.outputs.get(selection.id) : undefined;
+  // File reads can finish after another command changes the workspace. Keep
+  // their eventual commit and Undo snapshot based on the latest transaction.
+  const currentWorkspace = useRef({ ws, selection });
+  useEffect(() => {
+    currentWorkspace.current = { ws, selection };
+  }, [ws, selection]);
   const checked = new Set(
     [...checkedIds].filter((id) => isSignal(ws.outputs.get(id))),
   );
@@ -431,7 +442,9 @@ export default function UiRefreshMockup() {
     toastTimer.current = setTimeout(() => setToast(undefined), 5000);
   }
   function commit(next: Workspace, nextSelection: Selection, label: string) {
-    setPast((old) => [...old.slice(-19), { ws, selection, label }]);
+    const previous = currentWorkspace.current;
+    currentWorkspace.current = { ws: next, selection: nextSelection };
+    setPast((old) => [...old.slice(-19), { ...previous, label }]);
     setFuture([]);
     setWs(next);
     setChosen(nextSelection);
@@ -444,6 +457,7 @@ export default function UiRefreshMockup() {
     if (!last) return;
     setPast((old) => old.slice(0, -1));
     setFuture((old) => [{ ws, selection, label: last.label }, ...old]);
+    currentWorkspace.current = { ws: last.ws, selection: last.selection };
     setWs(last.ws);
     setChosen(last.selection);
     say(`Undid: ${last.label}`);
@@ -453,6 +467,7 @@ export default function UiRefreshMockup() {
     if (!next) return;
     setFuture((old) => old.slice(1));
     setPast((old) => [...old, { ws, selection, label: next.label }]);
+    currentWorkspace.current = { ws: next.ws, selection: next.selection };
     setWs(next.ws);
     setChosen(next.selection);
     say(`Redid: ${next.label}`);
@@ -480,7 +495,21 @@ export default function UiRefreshMockup() {
     setDialog({ type: 'operation', kind, inputs });
   }
   function applyOperation(recipe: Recipe, name: string, editing?: MockStep) {
-    setDialog(null);
+    try {
+      applyOperationDraft(recipe, name, editing);
+      setDialog(null);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : 'Could not apply settings.';
+    }
+  }
+  function applyOperationDraft(
+    recipe: Recipe,
+    name: string,
+    editing?: MockStep,
+  ) {
     if (editing) {
       let next = edit(ws, editing.id, recipe);
       if (name !== editing.name) next = rename(next, editing.id, name);
@@ -561,16 +590,28 @@ export default function UiRefreshMockup() {
     );
   }
   async function importFiles(files: FileList | null) {
-    let next = ws;
-    let last: MockStep | undefined;
+    const loaded: { name: string; text: string }[] = [];
     for (const file of Array.from(files ?? [])) {
       try {
-        const result = importCsv(next, file.name, await file.text());
+        loaded.push({ name: file.name, text: await file.text() });
+      } catch (error) {
+        say(
+          `${file.name}: ${error instanceof Error ? error.message : 'could not be read.'}`,
+          { error: true },
+        );
+        return;
+      }
+    }
+    let next = currentWorkspace.current.ws;
+    let last: MockStep | undefined;
+    for (const file of loaded) {
+      try {
+        const result = importCsv(next, file.name, file.text);
         next = result.ws;
         last = result.step;
       } catch (error) {
         say(
-          `${file.name}: ${error instanceof Error ? error.message : 'could not be read.'}`,
+          `${file.name}: ${error instanceof Error ? error.message : 'could not be imported.'}`,
           { error: true },
         );
         return;
@@ -745,11 +786,16 @@ export default function UiRefreshMockup() {
         redo();
       } else if (event.key === 'F2') {
         event.preventDefault();
+        setInspectorOpen(true);
         setRenaming(true);
       } else if (event.key === 'Delete' && step) {
         event.preventDefault();
         setDialog({ type: 'delete', step });
-      } else if (event.key === 'Escape') setMenu(null);
+      } else if (event.key === 'Escape') {
+        setMenu(null);
+        setInspectorOpen(false);
+        setRailOpen(false);
+      }
     };
   });
   useEffect(() => {
@@ -819,14 +865,9 @@ export default function UiRefreshMockup() {
       const time = lead.t[i] - lead.offset;
       rows.push({
         time,
-        cells: traces.map((trace) => {
-          const j = lowerBound(trace.t, time + trace.offset - 1e-6);
-          return j < trace.t.length &&
-            Math.abs(trace.t[j] - trace.offset - time) < 1e-6 &&
-            Number.isFinite(trace.v[j])
-            ? trace.v[j]
-            : undefined;
-        }),
+        cells: traces.map((trace) =>
+          sampleAtDisplayTime(trace, time, trace.offset),
+        ),
       });
     }
     return rows;
@@ -1088,6 +1129,7 @@ export default function UiRefreshMockup() {
           </button>
           <button
             className="mk-button"
+            aria-label="Import CSV recording"
             onClick={() => fileInput.current?.click()}
           >
             <ArrowDownToLine size={14} />
@@ -1099,7 +1141,7 @@ export default function UiRefreshMockup() {
             accept=".csv,text/csv"
             multiple
             className="sr-only"
-            aria-label="Import CSV recording"
+            aria-label="CSV files to import"
             onChange={(event) => {
               const files = event.target.files;
               void importFiles(files).finally(() => {
@@ -1481,6 +1523,7 @@ export default function UiRefreshMockup() {
               <div className="mk-menu-anchor" data-menu>
                 <button
                   className="mk-tool"
+                  aria-label="Export plot or samples"
                   aria-haspopup="menu"
                   aria-expanded={menu === 'export'}
                   disabled={!traces.length}
@@ -1803,6 +1846,16 @@ export default function UiRefreshMockup() {
         </main>
 
         <aside className="mk-inspector" aria-label="Inspector">
+          <div className="mk-inspector-drawer-head mk-inspector-toggle">
+            <strong>Inspector</strong>
+            <button
+              className="mk-icon"
+              aria-label="Close inspector"
+              onClick={() => setInspectorOpen(false)}
+            >
+              <X size={16} />
+            </button>
+          </div>
           {step && (
             <>
               <div className="mk-inspector-head">
