@@ -234,8 +234,10 @@ Table filters never silently change export scope.
   without the app and printed or saved as PDF using a browser. Imported labels
   are escaped; formula-like CSV text remains text in spreadsheet software.
 
-Reports do not yet provide an editable layout, saved report templates or combined
-multi-axis plot design. Large sample files are assembled in memory as a Blob and
+Printable HTML reports have a fixed layout. The **Reports** workspace composes
+an editable multipage PDF from snapshots of signals, values and saved plots,
+including multi-axis and lane layouts (`docs/report-builder-mockup.md`); saved
+report templates and persistent report drafts are not yet available. Large sample files are assembled in memory as a Blob and
 remain subject to device memory limits. Export cancellation suppresses download
 even when the worker request had been queued.
 

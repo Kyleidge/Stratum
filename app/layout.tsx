@@ -3,6 +3,7 @@ import './globals.css';
 import './regions.css';
 import './workflow.css';
 import './ui-refresh-mockup.css';
+import './report-builder-mockup.css';
 
 export const metadata: Metadata = {
   title: 'Stratum · Signal Workbench',

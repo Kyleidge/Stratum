@@ -43,11 +43,23 @@ There are no server API routes or cloud signal uploads.
 - `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
   viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
   summary CSV, and standalone printable HTML reports with escaped labels.
-  Reports are immutable snapshots, not an editable report-builder workspace.
+  These printable HTML reports remain immutable snapshots.
   Sample exports preserve each signal's evaluated axis and blank missing values.
   Never substitute decimated plot points for sample data. CSV text cells must
   remain text in spreadsheets. Cancellation must prevent the download even
   when a worker request was queued behind another read.
+- `components/report-builder-mockup.tsx` is also the main application's Reports
+  workspace beside Data Inspector, chosen in the top bar. `lib/report-data.ts`
+  resolves explicit signal and scalar membership; `lib/report-plot.tsx` captures
+  saved plots with the workspace's lane, Y-axis and stacked layouts and value
+  labels. Report blocks are snapshots: engine changes never silently refresh
+  captures. Report edits do not mutate the signal engine or workflow history.
+  Keep the report and plot views mounted across workspace switches; drafts and
+  report Undo/Redo are session-only. While Reports is shown, workflow keyboard
+  shortcuts stay inactive so report Undo never reaches workflow history. The
+  editor maps its `--rb-*` tokens to the theme's role tokens; paper keeps its
+  document colors. `/report-mockup` remains an isolated synthetic preview. See
+  `docs/report-builder-mockup.md` for PDF limits and validation.
 - `lib/workflow-history.ts`: chronological invocation history, legacy adaptation,
   output ownership, and iterative lineage including binary and trigger inputs.
   `lib/workflow-types.ts`: immutable scalar records and explicit operation records.
@@ -218,6 +230,10 @@ Run commands from the repository root:
   UI in a hidden native window with isolated temporary storage. Covers nested
   segments, scalar values, large batches, lineage and keyboard navigation; saves
   an ignored screenshot in `outputs/workflow-desktop.png`.
+- `pnpm desktop:report-mockup`: build and open the isolated report preview.
+- `pnpm desktop:report-workspace-smoke`, `desktop:report-plot-smoke` and
+  `desktop:report-smoke`: after the desktop build, check the integrated Reports
+  workspace, saved plot captures and the report editor in hidden windows.
 - `pnpm desktop:package`: create a portable app under build/releases/ for the
   current operating system. This is an unsigned development package.
 

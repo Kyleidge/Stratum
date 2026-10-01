@@ -6,6 +6,7 @@ import {
   ArrowUpLeft,
   ChevronRight,
   Download,
+  FilePlus2,
   GitBranch,
   History,
   ListChecks,
@@ -60,6 +61,7 @@ export type ToolbarAction =
   | 'rename-recording'
   | 'delete'
   | 'export'
+  | 'report'
   | 'owner';
 const creationActions = [
   {
@@ -98,6 +100,7 @@ const inspectionActions = [
   { id: 'lineage', label: 'Show lineage in tree', Icon: GitBranch },
   { id: 'owner', label: 'Open producing operation', Icon: ListTree },
   { id: 'export', label: 'Export / report', Icon: Download },
+  { id: 'report', label: 'Add to report', Icon: FilePlus2 },
   { id: 'back', label: 'Back to previous selection', Icon: ArrowLeft },
 ] as const;
 
@@ -117,7 +120,8 @@ export function acceptsToolbarTarget(
   )
     return targetSignals(index, target).length > 0;
   if (action === 'samples') return targetSignals(index, target).length === 1;
-  if (action === 'export') return targetOutputs(index, target).length > 0;
+  if (action === 'export' || action === 'report')
+    return targetOutputs(index, target).length > 0;
   if (action === 'edit')
     return !!step && !['import', 'regions'].includes(step.kind);
   if (action === 'duplicate') return !!step && step.kind !== 'import';
@@ -291,6 +295,30 @@ export default function WorkflowToolbar({
               <X size={13} />
             </button>
           )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="workflow-more-action workflow-report-action"
+                  aria-label="Add to report"
+                  aria-disabled={!enabled('report') && !accepts('report')}
+                  disabled={busy}
+                  {...dropProps('report')}
+                  onClick={() => {
+                    if (enabled('report')) invoke('report');
+                  }}
+                />
+              }
+            >
+              <FilePlus2 size={15} />
+              <span>Report</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Add the viewed output or operation to your report. Drop a signal,
+              value or operation here to choose a different item.
+            </TooltipContent>
+          </Tooltip>
           <DropdownMenu
             open={moreOpen || (!!dragged && hoverTarget === dragged)}
             modal={false}

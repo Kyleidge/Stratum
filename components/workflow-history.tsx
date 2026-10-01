@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  FilePlus2,
   ListChecks,
   ArrowUpLeft,
   Table2,
@@ -71,7 +72,7 @@ export default function WorkflowHistory({
   ) => void;
   onInspect?: (
     target: WorkflowSelection,
-    action: 'samples' | 'inputs' | 'export' | 'use-viewed',
+    action: 'samples' | 'inputs' | 'export' | 'report' | 'use-viewed',
   ) => void;
   onCreatePlot?: (target: WorkflowSelection) => void;
   contributingOutputs?: ReadonlySet<string>;
@@ -562,6 +563,12 @@ export default function WorkflowHistory({
                         onClick={() => onInspect(target, 'export')}
                       >
                         <Download /> Export / report
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        disabled={busy || !step.outputIds.length}
+                        onClick={() => onInspect(target, 'report')}
+                      >
+                        <FilePlus2 /> Add to report
                       </ContextMenuItem>
                       <ContextMenuSeparator />
                     </>

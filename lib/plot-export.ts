@@ -1,12 +1,18 @@
-/** Standalone, local plot image. DOM text is escaped by XMLSerializer. */
-export async function exportPlotImage(
+/** Capture rendered panels with their computed styles and no transient cursor. */
+export function capturePlotSvg(
   host: HTMLElement,
   name: string,
-  format: 'svg' | 'png',
   legend: { label: string; color: string }[] = [],
-): Promise<void> {
+): { svg: string; width: number; height: number; background: string } {
   const charts = [...host.querySelectorAll<SVGSVGElement>('.signal-chart svg')];
   if (!charts.length) throw new Error('There is no rendered plot to export.');
+  // Unit lanes share one clock label and sit together above their time axis.
+  const continued = charts.map(
+    (chart) =>
+      !!chart
+        .closest('.scratchpad-lane')
+        ?.previousElementSibling?.classList.contains('scratchpad-lane'),
+  );
   const ns = 'http://www.w3.org/2000/svg';
   const output = document.createElementNS(ns, 'svg');
   const width = Math.max(
@@ -21,7 +27,11 @@ export async function exportPlotImage(
   const height =
     60 +
     legendHeight +
-    charts.reduce((sum, chart) => sum + chart.viewBox.baseVal.height + 34, 0);
+    charts.reduce(
+      (sum, chart, i) =>
+        sum + chart.viewBox.baseVal.height + (continued[i] ? 4 : 34),
+      0,
+    );
   output.setAttribute('xmlns', ns);
   output.setAttribute('width', String(width));
   output.setAttribute('height', String(height));
@@ -83,23 +93,25 @@ export async function exportPlotImage(
   if (legend.length > 30)
     text(`Legend: first 30 of ${legend.length} traces`, 40 + legendHeight);
   let y = 48 + legendHeight;
-  for (const original of charts) {
+  for (const [i, original] of charts.entries()) {
     const label =
       original
         .closest('.scratchpad-stack')
         ?.querySelector('.scratchpad-axis-label') ??
       host.querySelector('.scratchpad-axis-label');
-    text(
-      (label
-        ? [...label.children]
-            .map((part) => part.textContent?.trim())
-            .filter(Boolean)
-            .join(' · ') || label.textContent?.trim()
-        : null) ??
-        original.getAttribute('aria-label') ??
-        '',
-      y + 12,
-    );
+    if (continued[i]) y -= 30;
+    else
+      text(
+        (label
+          ? [...label.children]
+              .map((part) => part.textContent?.trim())
+              .filter(Boolean)
+              .join(' · ') || label.textContent?.trim()
+          : null) ??
+          original.getAttribute('aria-label') ??
+          '',
+        y + 12,
+      );
     const clone = original.cloneNode(true) as SVGSVGElement;
     clone.setAttribute('x', '0');
     clone.setAttribute('y', String(y + 22));
@@ -116,6 +128,9 @@ export async function exportPlotImage(
         'stroke',
         'stroke-width',
         'stroke-dasharray',
+        'stroke-linejoin',
+        // Direct value labels draw a surface-coloured halo behind their text.
+        'paint-order',
         'font-family',
         'font-size',
         'font-weight',
@@ -129,7 +144,23 @@ export async function exportPlotImage(
     output.appendChild(clone);
     y += original.viewBox.baseVal.height + 34;
   }
-  const blob = new Blob([new XMLSerializer().serializeToString(output)], {
+  return {
+    svg: new XMLSerializer().serializeToString(output),
+    width,
+    height,
+    background: surface,
+  };
+}
+
+/** Standalone, local plot image. DOM text is escaped by XMLSerializer. */
+export async function exportPlotImage(
+  host: HTMLElement,
+  name: string,
+  format: 'svg' | 'png',
+  legend: { label: string; color: string }[] = [],
+): Promise<void> {
+  const { svg, width, height } = capturePlotSvg(host, name, legend);
+  const blob = new Blob([svg], {
     type: 'image/svg+xml;charset=utf-8',
   });
   let delivery = blob;
