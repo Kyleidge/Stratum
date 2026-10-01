@@ -18,6 +18,7 @@ export function workflowRows(
   selectedOutput?: string,
   contributingOutputs?: ReadonlySet<string>,
   focusedStepId?: string,
+  outputKind: 'all' | 'signals' | 'values' = 'all',
 ): WorkflowRow[] {
   const rows: WorkflowRow[] = [];
   const search = query.trim().toLowerCase();
@@ -28,9 +29,14 @@ export function workflowRows(
       `#${String(step.sequence + 1).padStart(3, '0')} ${step.sequence + 1} ${label}`
         .toLowerCase()
         .includes(search);
-    const candidates = contributingOutputs
-      ? step.outputIds.filter((id) => contributingOutputs.has(id))
-      : step.outputIds;
+    const candidates = step.outputIds.filter(
+      (id) =>
+        (!contributingOutputs || contributingOutputs.has(id)) &&
+        (outputKind === 'all' ||
+          (outputKind === 'values') === index.values.has(id)),
+    );
+    // Type filters show only steps that produced a matching output.
+    if (outputKind !== 'all' && !candidates.length) continue;
     const outputs =
       search && !matchesStep
         ? candidates.filter((id) =>

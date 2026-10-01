@@ -5,7 +5,6 @@ import {
   ChartNoAxesCombined,
   ChevronDown,
   ChevronRight,
-  CornerDownRight,
   Copy,
   Download,
   ListChecks,
@@ -54,6 +53,8 @@ export default function WorkflowHistory({
   busy,
   onAction,
   contributingOutputs,
+  outputKind = 'all',
+  lineageOutputs,
   onDragSelection,
   onInspect,
   onCreatePlot,
@@ -74,6 +75,10 @@ export default function WorkflowHistory({
   ) => void;
   onCreatePlot?: (target: WorkflowSelection) => void;
   contributingOutputs?: ReadonlySet<string>;
+  /** Show only signal or value outputs, and the steps that produced them. */
+  outputKind?: 'all' | 'signals' | 'values';
+  /** Outputs that contribute to the current selection, marked in the tree. */
+  lineageOutputs?: ReadonlySet<string>;
   onDragSelection?: (selection: WorkflowSelection | null) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -114,6 +119,7 @@ export default function WorkflowHistory({
         selection.kind === 'output' ? selection.id : undefined,
         contributingOutputs,
         focusedStepId,
+        outputKind,
       ),
     [
       steps,
@@ -123,6 +129,7 @@ export default function WorkflowHistory({
       selection,
       contributingOutputs,
       focusedStepId,
+      outputKind,
     ],
   );
   const container = useRef<HTMLDivElement>(null);
@@ -371,7 +378,14 @@ export default function WorkflowHistory({
                 tabIndex={row.key === tabKey ? 0 : -1}
                 data-row={position}
                 data-kind={row.kind}
+                data-step-kind={step.kind === 'regions' ? 'segment' : step.kind}
                 data-selected={row.key === selectedKey}
+                data-lineage={
+                  !!lineageOutputs &&
+                  (row.kind === 'output'
+                    ? lineageOutputs.has(row.outputId!)
+                    : step.outputIds.some((id) => lineageOutputs.has(id)))
+                }
                 className="workflow-tree-row"
                 draggable={row.kind !== 'more' && !busy}
                 onDragStart={(event) => {
@@ -475,22 +489,25 @@ export default function WorkflowHistory({
                     )}
                   </button>
                 ) : (
-                  <CornerDownRight className="workflow-branch" size={14} />
+                  <span className="workflow-branch" aria-hidden="true" />
                 )}
                 {row.kind === 'more' ? (
                   <span className="workflow-more">{row.label} →</span>
                 ) : (
                   <>
-                    <Icon size={15} className={`workflow-icon ${step.kind}`} />
+                    {row.kind === 'step' ? (
+                      <code className="workflow-step-node">
+                        <Icon size={11} />#
+                        {String(step.sequence + 1).padStart(3, '0')}
+                      </code>
+                    ) : (
+                      <Icon
+                        size={14}
+                        className={`workflow-icon ${index.values.has(row.outputId!) ? 'value' : index.nodes.get(row.outputId!)?.operation === 'raw' ? 'import' : 'derive'}`}
+                      />
+                    )}
                     <span className="workflow-row-copy">
-                      <strong>
-                        {row.kind === 'step' && (
-                          <code>
-                            #{String(step.sequence + 1).padStart(3, '0')}{' '}
-                          </code>
-                        )}
-                        {row.label}
-                      </strong>
+                      <strong>{row.label}</strong>
                       <small>
                         {row.kind === 'step'
                           ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length}`

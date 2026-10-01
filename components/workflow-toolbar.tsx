@@ -16,6 +16,7 @@ import {
   Table2,
   Waves,
   Hash,
+  X,
 } from 'lucide-react';
 import {
   Tooltip,
@@ -82,6 +83,13 @@ const creationActions = [
     Icon: Hash,
     hint: 'Calculate an average, minimum or maximum.',
   },
+  {
+    id: 'align',
+    label: 'Compare & align',
+    short: 'Compare',
+    Icon: ScanLine,
+    hint: 'Compare and align signal time bases across recordings.',
+  },
 ] as const;
 const inspectionActions = [
   { id: 'samples', label: 'View samples', Icon: Table2 },
@@ -122,23 +130,34 @@ export default function WorkflowToolbar({
   selection,
   dragged,
   index,
-  inputCount,
+  inputIds,
   checked,
   hasPast,
   busy,
   onAction,
+  onClearChecked,
   onDragEnd,
 }: {
   selection: WorkflowTarget;
   dragged: WorkflowTarget | null;
   index: WorkflowIndex;
-  inputCount: number;
+  /** Processing inputs: checked signals, or the viewed selection's signals. */
+  inputIds: string[];
   checked: boolean;
   hasPast: boolean;
   busy: boolean;
   onAction: (action: ToolbarAction, dropped?: WorkflowTarget) => void;
+  onClearChecked: () => void;
   onDragEnd: () => void;
 }) {
+  const inputCount = inputIds.length;
+  const scopeLabel = checked
+    ? `${inputCount} checked`
+    : inputCount === 1
+      ? index.label(inputIds[0])
+      : inputCount
+        ? `${inputCount} inputs`
+        : 'No signals';
   const [moreOpen, setMoreOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<WorkflowTarget>();
   const [hoverTarget, setHoverTarget] = useState<WorkflowTarget>();
@@ -249,44 +268,29 @@ export default function WorkflowToolbar({
                 />
               }
             >
-              <ListChecks size={15} />
-              <span>
-                {inputCount
-                  ? `${inputCount} ${checked ? 'checked' : inputCount === 1 ? 'input' : 'inputs'}`
-                  : 'Choose inputs'}
-              </span>
+              <ListChecks size={14} />
+              <span className="workflow-scope-label">Apply to</span>
+              <strong>{scopeLabel}</strong>
               <ChevronRight size={12} />
             </TooltipTrigger>
             <TooltipContent side="bottom">
               {checked
-                ? 'Review the checked signals used by creation tools.'
-                : 'Review the inputs for the current selection.'}
+                ? 'Derive, Segment, Value and Compare use these checked signals. Review or change them.'
+                : 'Processing follows what you view. Check outputs in the table to choose other inputs.'}
             </TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="workflow-utility-action"
-                  aria-label="Compare & align"
-                  aria-disabled={!enabled('align') && !accepts('align')}
-                  disabled={busy}
-                  {...dropProps('align')}
-                  onClick={() => {
-                    if (enabled('align')) invoke('align');
-                  }}
-                />
-              }
+          {checked && (
+            <button
+              type="button"
+              className="workflow-scope-clear"
+              aria-label="Clear checked inputs"
+              title="Clear checked inputs and follow the selection"
+              disabled={busy}
+              onClick={onClearChecked}
             >
-              <ScanLine size={15} />
-              <span>Compare</span>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              Compare and align signal time bases. Accepts signal and batch
-              drops.
-            </TooltipContent>
-          </Tooltip>
+              <X size={13} />
+            </button>
+          )}
           <DropdownMenu
             open={moreOpen || (!!dragged && hoverTarget === dragged)}
             modal={false}

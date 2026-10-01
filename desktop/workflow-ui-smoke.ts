@@ -283,6 +283,23 @@ export async function workflowUiSmoke() {
   function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error(message);
   }
+  const outputRow = (name: string) =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '.workflow-tree-row[data-kind="output"]',
+      ),
+    ].find((row) => row.title === name);
+  /** Filters History to an output by name, selects it and clears the filter. */
+  async function openOutput(name: string) {
+    const search = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Search workflow"]',
+    )!;
+    setValue(search, name);
+    (await until(() => outputRow(name), `output ${name}`)).click();
+    await delay();
+    setValue(search, '');
+    await delay();
+  }
   function selectedHistoryRow() {
     const row = document.querySelector<HTMLElement>(
       '.workflow-tree-row[aria-selected="true"]',
@@ -370,7 +387,10 @@ export async function workflowUiSmoke() {
   }
   async function resizePanes() {
     const canvas = document.querySelector('.scratchpad-canvas');
-    for (const [pane, direction] of [['history', 1]] as const) {
+    for (const [pane, direction] of [
+      ['history', 1],
+      ['inspector', -1],
+    ] as const) {
       const splitter = document.querySelector<HTMLElement>(
         `.workflow-${pane}-resizer`,
       );
@@ -453,27 +473,21 @@ export async function workflowUiSmoke() {
   }
   async function selectionDetails() {
     const sidebar = document.getElementById('workflow-navigation')!;
-    const details = sidebar.querySelector<HTMLElement>('.workflow-properties');
+    const inspector = document.getElementById('workflow-inspector');
+    const details = inspector?.querySelector<HTMLElement>(
+      '.workflow-properties',
+    );
     const tree = sidebar.querySelector<HTMLElement>('[role="tree"]')!;
-    assert(details, 'Selection details must be inside the history sidebar.');
-    const initial = details.getBoundingClientRect();
-    const treeHeight = tree.clientHeight;
+    assert(details, 'Selection details must be in the inspector.');
+    const plot = () =>
+      document.querySelector('.workflow-main')!.getBoundingClientRect();
     assert(
-      tree.getBoundingClientRect().bottom <= initial.top + 1 &&
-        !document.querySelector('.workflow-document .workflow-properties') &&
-        !document.querySelector('.workflow-properties-resizer'),
-      'Details must sit below history without a right-hand properties pane.',
+      !sidebar.querySelector('.workflow-properties') &&
+        inspector!.getBoundingClientRect().left >= plot().right - 1 &&
+        tree.getBoundingClientRect().bottom > innerHeight - 120,
+      'The inspector must sit right of the plot, leaving History its height.',
     );
-    const documentBounds = document
-      .querySelector('.workflow-document')!
-      .getBoundingClientRect();
-    const plotBounds = document
-      .querySelector('.workflow-main')!
-      .getBoundingClientRect();
-    assert(
-      Math.abs(documentBounds.width - plotBounds.width) < 1,
-      'The plot must use the full document width.',
-    );
+    const plotWidth = plot().width;
     const selectSignal = (name: string) => {
       const row = [
         ...tree.querySelectorAll<HTMLElement>('[data-kind="output"]'),
@@ -481,48 +495,46 @@ export async function workflowUiSmoke() {
       assert(row, `Missing signal for selection details: ${name}`);
       row.click();
     };
-    await click('Toggle selection details');
+    await click('Toggle inspector');
     selectSignal('Torque');
     await delay();
     assert(
-      details.dataset.open === 'false' &&
-        !details.querySelector('.workflow-properties-summary') &&
-        tree.clientHeight > treeHeight + 100 &&
-        localStorage.getItem('stratus-selection-details-open-v1') === 'false',
-      'Browsing signals must keep details collapsed and return space to history.',
+      document
+        .querySelector('.workflow-app')
+        ?.getAttribute('data-inspector') === 'false' &&
+        getComputedStyle(inspector!).display === 'none' &&
+        plot().width > plotWidth + 200 &&
+        localStorage.getItem('stratum-inspector-open-v1') === 'false',
+      'Hiding the inspector must persist and give its width to the plot.',
     );
-    await click('Toggle selection details');
+    await click('Toggle inspector');
     assert(
       details.querySelector('h2')?.textContent === 'Torque' &&
         details.textContent?.includes('Nm') &&
-        Math.abs(details.getBoundingClientRect().top - initial.top) < 1 &&
-        Math.abs(details.getBoundingClientRect().height - initial.height) < 1,
-      'Details must update in a fixed area below history.',
+        Math.abs(plot().width - plotWidth) < 1,
+      'The inspector must follow the selection and restore its column.',
     );
-    await click('More details', details);
-    const samples = [...details.querySelectorAll('dt')].find(
-      (term) => term.textContent === 'Samples',
-    );
-    assert(
-      samples?.nextElementSibling?.textContent === (1801).toLocaleString(),
-      'Signal details must show the full sample count.',
-    );
-    const modal = await dialog();
-    assert(
-      modal.textContent?.includes('Source recordings') &&
-        modal.textContent?.includes('Time axis') &&
-        modal.textContent?.includes((1801).toLocaleString()),
-      'More details must retain the complete metadata.',
-    );
-    modal.querySelector<HTMLButtonElement>('.workflow-property-link')!.click();
     await until(
-      () => !document.querySelector('[role="dialog"]'),
-      'follow producing operation from details',
+      () =>
+        [...details.querySelectorAll('dt')].find(
+          (term) => term.textContent === 'Samples',
+        )?.nextElementSibling?.textContent === (1801).toLocaleString(),
+      'full sample count in the inspector',
     );
+    assert(
+      ['Source recordings', 'Time axis', 'Lineage', 'Used by'].every((text) =>
+        details.textContent?.includes(text),
+      ),
+      'The inspector must show complete metadata, lineage and later uses.',
+    );
+    details
+      .querySelector<HTMLButtonElement>('.workflow-property-link')!
+      .click();
+    await delay();
     assert(
       details.textContent?.includes('Operation') &&
-        Math.abs(details.getBoundingClientRect().top - initial.top) < 1,
-      'Following an operation must preserve the details layout.',
+        selectedHistoryRow().dataset.kind === 'step',
+      'Following the producing operation must select it.',
     );
     selectSignal('Motor speed');
     await delay();
@@ -853,8 +865,8 @@ export async function workflowUiSmoke() {
     );
     assert(
       document.querySelectorAll('.workflow-action-toolbar button').length ===
-        6 && document.querySelectorAll('.workflow-create-action').length === 3,
-      'Toolbar did not consolidate into three creation actions and three utilities.',
+        6 && document.querySelectorAll('.workflow-create-action').length === 4,
+      'The top bar must hold four operations, Apply to and Inspect / export.',
     );
     assert(
       !document.querySelector(
@@ -1030,12 +1042,7 @@ export async function workflowUiSmoke() {
         '2 originals7 derived5 values',
       'Refreshing did not restore the complete example.',
     );
-    await click('Signals & values');
-    document
-      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
-      .click();
-    await delay();
-    await click('History tree');
+    await openOutput('Motor speed');
     await click('Derive signal');
     const mathModal = await dialog();
     assert(
@@ -1163,7 +1170,10 @@ export async function workflowUiSmoke() {
     assert(
       document
         .querySelector('.workflow-input-scope')
-        ?.textContent?.includes('1 input'),
+        ?.getAttribute('data-checked') === 'false' &&
+        document
+          .querySelector('.workflow-input-scope')
+          ?.textContent?.includes(selectedHistoryRow().title),
       'Follow selection did not return to the viewed member.',
     );
     // Explicitly empty input scope disables creation rather than falling back silently.
@@ -1549,20 +1559,19 @@ export async function workflowUiSmoke() {
       'Compact history buried the selected output.',
     );
     await click('Show outputs');
-    await click('Signals & values');
+    await click('Signals');
     const search = document.querySelector<HTMLInputElement>(
       'input[aria-label="Search workflow"]',
     );
-    assert(search, 'Signal index search missing.');
+    assert(search, 'History search missing.');
     setValue(search, 'Motor speed');
     await delay();
     assert(
-      document.querySelector('.workflow-catalog-item'),
-      'Signals are not findable outside history.',
+      outputRow('Motor speed') &&
+        !document.querySelector('.workflow-tree-row[data-step-kind="value"]'),
+      'The Signals filter must find signals and hide value steps.',
     );
-    document
-      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
-      .click();
+    outputRow('Motor speed')!.click();
     await delay();
     assert(
       document
@@ -1570,7 +1579,9 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('Original signal'),
       'Original signal was lost after downstream processing.',
     );
-    await click('History tree');
+    await click('All');
+    setValue(search, '');
+    await delay();
     // Everyday management must work through the actual dialogs and worker.
     await click('Derive signal');
     (await dialog())
@@ -1694,29 +1705,30 @@ export async function workflowUiSmoke() {
       );
     }
     await historyAction('Undo');
-    await click('Signals & values');
     setValue(search, 'Reviewed speed');
     await until(
-      () => document.querySelector('.workflow-catalog-item') ?? undefined,
+      () => outputRow('Reviewed speed'),
       'undo restores named signal',
     );
     await historyAction('Redo');
     setValue(search, 'Reviewed speed');
     await delay();
     assert(
-      !document.querySelector('.workflow-catalog-item'),
+      !outputRow('Reviewed speed'),
       'Redo did not remove the restored signal.',
     );
     await historyAction('Undo');
     setValue(search, 'Reviewed speed');
     await delay();
     await until(
-      () => document.querySelector('.workflow-catalog-item') ?? undefined,
+      () => outputRow('Reviewed speed'),
       'second undo restores signal',
     );
-    // The flat index finds the dependent scalar outside the virtualized tree viewport.
+    // The filtered tree finds the dependent scalar wherever it was created.
     const lastValue = [
-      ...document.querySelectorAll<HTMLElement>('.workflow-catalog-item'),
+      ...document.querySelectorAll<HTMLElement>(
+        '.workflow-tree-row[data-kind="output"]',
+      ),
     ].find((item) => item.textContent?.includes('Time average'));
     assert(lastValue, 'Dependent value is missing after Undo.');
     lastValue.click();
@@ -1786,14 +1798,7 @@ export async function workflowUiSmoke() {
       .querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')
       ?.click();
     await delay();
-    await click('Signals & values');
-    setValue(search, 'Motor speed');
-    await delay();
-    document
-      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
-      .click();
-    await delay();
-    await click('History tree');
+    await openOutput('Motor speed');
     // Leave a representative view for the optional native screenshot.
     await click('Segment');
     const lastModal = await dialog();
@@ -1871,14 +1876,7 @@ export async function workflowUiSmoke() {
       ) === 1,
       'Cross-file difference did not produce the expected constant value.',
     );
-    await click('Signals & values');
-    setValue(search, 'Motor speed');
-    await delay();
-    document
-      .querySelector<HTMLButtonElement>('.workflow-catalog-item')!
-      .click();
-    await delay();
-    await click('History tree');
+    await openOutput('Motor speed');
     // A queued request may resolve normally even after cancellation. The UI
     // must suppress delivery independently of the worker cancellation flag.
     const host = document.createElement('div');

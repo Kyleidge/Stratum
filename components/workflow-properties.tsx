@@ -2,19 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Pencil,
   ArrowUpLeft,
+  Copy,
   GitBranch,
-  ChevronDown,
-  ChevronRight,
+  Hash,
+  LockKeyhole,
+  Pencil,
+  Scissors,
+  Settings2,
+  Trash2,
+  Waves,
+  X,
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
+import type { WorkflowStep } from '@/lib/workflow-types';
 import type { SignalGraph } from '@/lib/signal-graph';
 import type {
   EngineRequest,
@@ -24,66 +25,68 @@ import type {
 } from '@/lib/signal-types';
 import type { WorkflowSelection } from './workflow-history';
 import type { ToolbarAction } from './workflow-toolbar';
+import WorkflowList from './workflow-list';
 import { formatValue } from './signal-chart';
 
-const DETAILS_STORAGE_KEY = 'stratus-selection-details-open-v1';
+/** Lists longer than this page through WorkflowList to bound the DOM. */
+const INLINE_ITEMS = 8;
+const reference = (step: WorkflowStep) =>
+  `#${String(step.sequence + 1).padStart(3, '0')}`;
+const STEP_KIND: Record<WorkflowStep['kind'], string> = {
+  import: 'Import',
+  derive: 'Derive',
+  segment: 'Segment',
+  value: 'Value',
+  regions: 'Segment',
+};
+export const stepKindClass = (step: WorkflowStep) =>
+  step.kind === 'regions' ? 'segment' : step.kind;
 
-/** Selection metadata with a cancellable, full-signal sample count. */
+function StepIcon({ step, size = 12 }: { step: WorkflowStep; size?: number }) {
+  const Icon =
+    step.kind === 'value'
+      ? Hash
+      : step.kind === 'segment' || step.kind === 'regions'
+        ? Scissors
+        : step.kind === 'import'
+          ? LockKeyhole
+          : Waves;
+  return <Icon size={size} />;
+}
+
+/** Right-hand inspector: what the selection is, where it came from, what uses it. */
 export default function WorkflowProperties({
   project,
   index,
   graph,
   selection,
-  originals,
+  lineage,
+  usedBy,
   request,
   onFollow,
   onStep,
   onAction,
+  onClose,
   busy,
 }: {
   project: Project;
   index: WorkflowIndex;
   graph: SignalGraph;
   selection: WorkflowSelection;
-  originals: SignalNode[];
+  /** Contributing steps in creation order and their original signals. */
+  lineage: {
+    steps: WorkflowStep[];
+    originals: SignalNode[];
+    outputIds: ReadonlySet<string>;
+  };
+  usedBy: WorkflowStep[];
   request: (message: EngineRequest) => Promise<EngineResponse>;
   onFollow: (id: string) => void;
   onStep: (id: string) => void;
   onAction: (action: ToolbarAction) => void;
+  onClose: () => void;
   busy: boolean;
 }) {
-  const [open, setOpen] = useState(true);
-  const [moreOpen, setMoreOpen] = useState(false);
-  useEffect(() => {
-    queueMicrotask(() => {
-      try {
-        setOpen(localStorage.getItem(DETAILS_STORAGE_KEY) !== 'false');
-      } catch {
-        // Keep details usable when local preferences cannot be read.
-      }
-    });
-  }, []);
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    try {
-      localStorage.setItem(DETAILS_STORAGE_KEY, String(next));
-    } catch {
-      // The disclosure still remembers its state for this session.
-    }
-  }
-  function follow(id: string) {
-    setMoreOpen(false);
-    onFollow(id);
-  }
-  function followStep(id: string) {
-    setMoreOpen(false);
-    onStep(id);
-  }
-  function action(next: ToolbarAction) {
-    setMoreOpen(false);
-    onAction(next);
-  }
   const node =
     selection.kind === 'output' ? index.nodes.get(selection.id) : undefined;
   const value =
@@ -99,7 +102,7 @@ export default function WorkflowProperties({
     selection.kind === 'output'
       ? index.inputs(selection.id)
       : (step?.inputIds ?? []);
-  const sourceIds = new Set(originals.map((original) => original.sourceId));
+  const sourceIds = new Set(lineage.originals.map((item) => item.sourceId));
   if (step?.kind === 'import' && step.sourceId) sourceIds.add(step.sourceId);
   const sources = project.sources.filter((source) => sourceIds.has(source.id));
   const label =
@@ -116,7 +119,7 @@ export default function WorkflowProperties({
     error?: string;
   }>();
   useEffect(() => {
-    if (!countId || busy || (!open && !moreOpen)) return;
+    if (!countId || busy) return;
     let alive = true;
     const timer = setTimeout(() => {
       void request({ type: 'sample-count', id: countId, inspection: true })
@@ -148,7 +151,7 @@ export default function WorkflowProperties({
         () => {},
       );
     };
-  }, [countId, project, request, busy, open, moreOpen]);
+  }, [countId, project, request, busy]);
   const currentCount =
     counted && counted.id === countId && counted.project === project
       ? counted
@@ -164,219 +167,123 @@ export default function WorkflowProperties({
     value?.sampleCount ??
     (node?.operation === 'raw' ? recording?.rows : currentCount?.count) ??
     (selection.kind === 'step' ? imported?.rows : undefined);
-  const sampleDetail = (node || value || imported) && (
-    <div>
-      <dt>
-        {value
-          ? 'Input samples'
-          : selection.kind === 'step'
-            ? 'Samples / ch.'
-            : 'Samples'}
-      </dt>
-      <dd
-        title={
-          currentCount?.error ??
-          (value
-            ? 'Finite input samples used to calculate this value.'
-            : 'Total samples in the full signal, including missing values.')
-        }
-      >
-        {count?.toLocaleString() ??
-          (currentCount?.error ? 'Unavailable' : 'Counting…')}
-        {value && ' finite'}
-      </dd>
-    </div>
-  );
-
-  const fullDetails = (
-    <div className="workflow-properties-content">
-      <dl className="workflow-property-grid">
-        <div>
-          <dt>Type</dt>
-          <dd>
-            {selection.kind === 'output'
-              ? index.kind(selection.id)
-              : 'Operation'}
-          </dd>
-        </div>
-        {(node || value) && (
-          <div>
-            <dt>Unit</dt>
-            <dd>{node?.unit || value?.unit || 'Unitless'}</dd>
-          </div>
-        )}
-        {sampleDetail}
-        {step && (
-          <>
-            <div>
-              <dt>{selection.kind === 'step' ? 'Step' : 'Produced by'}</dt>
-              <dd>
-                <button
-                  className="workflow-property-link"
-                  onClick={() => followStep(step.id)}
-                  title={stepName(step)}
-                >
-                  #{String(step.sequence + 1).padStart(3, '0')} {stepName(step)}
-                </button>
-              </dd>
-            </div>
-            <div>
-              <dt>Revision</dt>
-              <dd>{step.revision ?? 1}</dd>
-            </div>
-            {selection.kind === 'step' && (
-              <div>
-                <dt>Outputs</dt>
-                <dd>{step.outputIds.length.toLocaleString()}</dd>
-              </div>
-            )}
-          </>
-        )}
-      </dl>
-      {time && range && (
-        <>
-          <h3>{value ? 'Input time axis' : 'Time axis'}</h3>
-          <dl className="workflow-property-grid">
-            <div>
-              <dt>Reference</dt>
-              <dd>{time.name}</dd>
-            </div>
-            <div>
-              <dt>Start</dt>
-              <dd className="workflow-property-number">
-                {formatValue(range[0], 3)} s
-              </dd>
-            </div>
-            <div>
-              <dt>End</dt>
-              <dd className="workflow-property-number">
-                {formatValue(range[1], 3)} s
-              </dd>
-            </div>
-            <div>
-              <dt>Duration</dt>
-              <dd className="workflow-property-number">
-                {formatValue(range[1] - range[0], 3)} s
-              </dd>
-            </div>
-          </dl>
-        </>
-      )}
-      {!!inputs.length && (
-        <>
-          <h3>
-            Inputs <span>{inputs.length}</span>
-          </h3>
-          <ul className="workflow-property-links">
-            {inputs.slice(0, 3).map((id) => (
-              <li key={id}>
-                <button
-                  className="workflow-property-link"
-                  onClick={() => follow(id)}
-                  title={index.label(id)}
-                >
-                  <ArrowUpLeft size={12} />
-                  <span>{index.label(id)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {inputs.length > 3 && (
-            <button
-              className="workflow-property-link"
-              onClick={() => action('inputs')}
-            >
-              All {inputs.length} inputs…
-            </button>
-          )}
-        </>
-      )}
-      {!!sources.length && (
-        <>
-          <h3>
-            Source recordings <span>{sources.length}</span>
-          </h3>
-          <ul className="workflow-property-sources">
-            {sources.slice(0, 3).map((source) => (
-              <li key={source.id} title={source.name}>
-                {source.name}
-              </li>
-            ))}
-          </ul>
-          {sources.length > 3 && (
-            <button
-              className="workflow-property-link"
-              onClick={() => action('inputs')}
-            >
-              All source signals…
-            </button>
-          )}
-        </>
-      )}
-      <div className="workflow-property-actions">
-        {step && !['import', 'regions'].includes(step.kind) && (
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={() => action('edit')}
-          >
-            <Pencil size={13} />
-            Edit operation
-          </button>
-        )}
+  const kind = selection.kind === 'output' ? index.kind(selection.id) : '';
+  const kindKey = value
+    ? 'value'
+    : node?.operation === 'raw'
+      ? 'original'
+      : node
+        ? 'derived'
+        : step
+          ? stepKindClass(step)
+          : 'derive';
+  const editable = !!step && !['import', 'regions'].includes(step.kind);
+  // The selection's own operation closes the chain as its current step.
+  const chain =
+    step && !lineage.steps.some((item) => item.id === step.id)
+      ? [...lineage.steps, step]
+      : lineage.steps;
+  const contributing = (item: WorkflowStep) => {
+    const ids = item.outputIds.filter(
+      (id) =>
+        lineage.outputIds.has(id) ||
+        (selection.kind === 'output' && id === selection.id),
+    );
+    return item.id === step?.id && selection.kind === 'step'
+      ? `${item.outputIds.length} output${item.outputIds.length === 1 ? '' : 's'}`
+      : ids.length === item.outputIds.length && ids.length > 1
+        ? `All ${ids.length} outputs`
+        : ids
+            .slice(0, 3)
+            .map((id) => index.label(id))
+            .join(', ') + (ids.length > 3 ? ` +${ids.length - 3}` : '');
+  };
+  const chainItem = (item: WorkflowStep) => (
+    <li
+      key={item.id}
+      data-kind={stepKindClass(item)}
+      data-current={item.id === step?.id}
+    >
+      <span className="workflow-lineage-node">
+        <StepIcon step={item} size={11} />
+      </span>
+      <div>
         <button
           className="workflow-property-link"
-          onClick={() => action('lineage')}
+          onClick={() => onStep(item.id)}
+          title={`${reference(item)} ${stepName(item)}`}
         >
-          <GitBranch size={13} />
-          Trace lineage
+          <code>{reference(item)}</code> {stepName(item)}
         </button>
+        <small>{contributing(item)}</small>
       </div>
-    </div>
+    </li>
+  );
+  const usedByItem = (item: WorkflowStep) => (
+    <li key={item.id}>
+      <button
+        className="workflow-property-link"
+        onClick={() => onStep(item.id)}
+        title={`${reference(item)} ${stepName(item)}`}
+      >
+        <code>{reference(item)}</code> {stepName(item)}
+      </button>
+    </li>
   );
   return (
     <section
       id="workflow-properties"
       className="workflow-properties"
       aria-label="Selection details"
-      data-open={open}
     >
+      <div className="workflow-inspector-bar">
+        <strong>Inspector</strong>
+        <button
+          className="workflow-icon-button workflow-quiet"
+          aria-label="Close inspector"
+          title="Hide the inspector"
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
       <header className="workflow-properties-heading">
-        <button
-          className="workflow-details-toggle"
-          aria-label="Toggle selection details"
-          aria-expanded={open}
-          aria-controls="workflow-selection-summary"
-          onClick={toggle}
-        >
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <strong>Details</strong>
-          {!open && <span title={label}>{label}</span>}
-        </button>
-        <button
-          className="workflow-icon-button"
-          title="Rename selection"
-          aria-label="Rename selection"
-          disabled={busy}
-          onClick={() => action('rename')}
-        >
-          <Pencil size={13} />
-        </button>
-      </header>
-      {open && (
-        <div
-          id="workflow-selection-summary"
-          className="workflow-properties-summary"
-        >
+        <span className="workflow-kind" data-kind={kindKey}>
+          <i />
+          {selection.kind === 'output'
+            ? kind
+            : step
+              ? `${STEP_KIND[step.kind]} operation · ${reference(step)}`
+              : 'Operation'}
+        </span>
+        <div className="workflow-properties-title">
           <h2 title={label}>{label}</h2>
+          <button
+            className="workflow-icon-button workflow-quiet"
+            title="Rename selection · F2"
+            aria-label="Rename selection"
+            disabled={busy}
+            onClick={() => onAction('rename')}
+          >
+            <Pencil size={13} />
+          </button>
+        </div>
+      </header>
+      {value && (
+        <div className="workflow-properties-hero">
+          <strong>
+            {value.value === null ? 'Unavailable' : formatValue(value.value, 3)}
+          </strong>
+          <small>{value.unit}</small>
+        </div>
+      )}
+      <div className="workflow-properties-content">
+        <section>
+          <h3>Properties</h3>
           <dl className="workflow-property-grid">
             <div>
               <dt>Type</dt>
-              <dd>
-                {selection.kind === 'output'
-                  ? index.kind(selection.id)
-                  : 'Operation'}
-              </dd>
+              <dd>{selection.kind === 'output' ? kind : 'Operation'}</dd>
             </div>
             {(node || value) && (
               <div>
@@ -386,52 +293,249 @@ export default function WorkflowProperties({
                 </dd>
               </div>
             )}
-            {sampleDetail}
-            {selection.kind === 'step' && step && (
+            {(node || value || imported) && (
               <div>
-                <dt>Outputs</dt>
-                <dd>{step.outputIds.length.toLocaleString()}</dd>
+                <dt>
+                  {value
+                    ? 'Input samples'
+                    : selection.kind === 'step'
+                      ? 'Samples / ch.'
+                      : 'Samples'}
+                </dt>
+                <dd
+                  className="workflow-property-number"
+                  title={
+                    currentCount?.error ??
+                    (value
+                      ? 'Finite input samples used to calculate this value.'
+                      : 'Total samples in the full signal, including missing values.')
+                  }
+                >
+                  {count?.toLocaleString() ??
+                    (currentCount?.error ? 'Unavailable' : 'Counting…')}
+                  {value && ' finite'}
+                </dd>
               </div>
             )}
             {range && (
               <div>
                 <dt>{value ? 'Input range' : 'Time range'}</dt>
-                <dd title={`${range[0]}–${range[1]} s`}>
+                <dd
+                  className="workflow-property-number"
+                  title={`${range[0]}–${range[1]} s`}
+                >
                   {formatValue(range[0], 3)}–{formatValue(range[1], 3)} s
                 </dd>
               </div>
             )}
-            {step && (
+            {value?.timestamp !== undefined && (
               <div>
-                <dt>{selection.kind === 'step' ? 'Step' : 'Produced by'}</dt>
-                <dd>
-                  <button
-                    className="workflow-property-link"
-                    onClick={() => followStep(step.id)}
-                    title={stepName(step)}
-                  >
-                    #{String(step.sequence + 1).padStart(3, '0')}{' '}
-                    {stepName(step)}
-                  </button>
+                <dt>First occurs</dt>
+                <dd className="workflow-property-number">
+                  {formatValue(value.timestamp, 3)} s
                 </dd>
               </div>
             )}
+            {step && (
+              <>
+                <div>
+                  <dt>{selection.kind === 'step' ? 'Step' : 'Produced by'}</dt>
+                  <dd>
+                    <button
+                      className="workflow-property-link"
+                      onClick={() => onStep(step.id)}
+                      title={stepName(step)}
+                    >
+                      {reference(step)} {stepName(step)}
+                    </button>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Revision</dt>
+                  <dd>{step.revision ?? 1}</dd>
+                </div>
+                {selection.kind === 'step' && (
+                  <div>
+                    <dt>Outputs</dt>
+                    <dd>{step.outputIds.length.toLocaleString()}</dd>
+                  </div>
+                )}
+              </>
+            )}
           </dl>
-          <button
-            className="workflow-property-link"
-            onClick={() => setMoreOpen(true)}
-          >
-            More details <ChevronRight size={12} />
-          </button>
-        </div>
-      )}
-      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
-        <DialogContent className="workflow-dialog workflow-properties-dialog">
-          <DialogTitle>Selection details</DialogTitle>
-          <DialogDescription>{label}</DialogDescription>
-          {fullDetails}
-        </DialogContent>
-      </Dialog>
+        </section>
+        {time && range && (
+          <section>
+            <h3>{value ? 'Input time axis' : 'Time axis'}</h3>
+            <dl className="workflow-property-grid">
+              <div>
+                <dt>Reference</dt>
+                <dd title={time.name}>{time.name}</dd>
+              </div>
+              <div>
+                <dt>Start</dt>
+                <dd className="workflow-property-number">
+                  {formatValue(range[0], 3)} s
+                </dd>
+              </div>
+              <div>
+                <dt>End</dt>
+                <dd className="workflow-property-number">
+                  {formatValue(range[1], 3)} s
+                </dd>
+              </div>
+              <div>
+                <dt>Duration</dt>
+                <dd className="workflow-property-number">
+                  {formatValue(range[1] - range[0], 3)} s
+                </dd>
+              </div>
+            </dl>
+          </section>
+        )}
+        {!!inputs.length && (
+          <section>
+            <h3>
+              Inputs <span>{inputs.length}</span>
+            </h3>
+            <ul className="workflow-property-links">
+              {inputs.slice(0, 3).map((id) => (
+                <li key={id}>
+                  <button
+                    className="workflow-property-link"
+                    onClick={() => onFollow(id)}
+                    title={index.label(id)}
+                  >
+                    <ArrowUpLeft size={12} />
+                    <span>{index.label(id)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {inputs.length > 3 && (
+              <button
+                className="workflow-property-link"
+                onClick={() => onAction('inputs')}
+              >
+                All {inputs.length} inputs…
+              </button>
+            )}
+          </section>
+        )}
+        {!!chain.length && (
+          <section>
+            <h3>
+              Lineage{' '}
+              <span>
+                {chain.length} {chain.length === 1 ? 'step' : 'steps'}
+              </span>
+            </h3>
+            {chain.length <= INLINE_ITEMS ? (
+              <ol className="workflow-lineage">{chain.map(chainItem)}</ol>
+            ) : (
+              <>
+                <ol className="workflow-lineage">
+                  {chain.slice(-INLINE_ITEMS).map(chainItem)}
+                </ol>
+                <WorkflowList
+                  key={selection.id}
+                  items={chain}
+                  summary={`All ${chain.length} contributing steps`}
+                >
+                  {(visible) => (
+                    <ol className="workflow-lineage">
+                      {visible.map(chainItem)}
+                    </ol>
+                  )}
+                </WorkflowList>
+              </>
+            )}
+          </section>
+        )}
+        <section>
+          <h3>Used by {!!usedBy.length && <span>{usedBy.length}</span>}</h3>
+          {!usedBy.length ? (
+            <p className="workflow-muted">No later operations use this yet.</p>
+          ) : usedBy.length <= INLINE_ITEMS ? (
+            <ul className="workflow-property-links">
+              {usedBy.map(usedByItem)}
+            </ul>
+          ) : (
+            <WorkflowList
+              key={selection.id}
+              items={usedBy}
+              initialOpen
+              summary={`${usedBy.length} later operations`}
+            >
+              {(visible) => (
+                <ul className="workflow-property-links">
+                  {visible.map(usedByItem)}
+                </ul>
+              )}
+            </WorkflowList>
+          )}
+        </section>
+        {!!sources.length && (
+          <section>
+            <h3>
+              Source recordings <span>{sources.length}</span>
+            </h3>
+            <ul className="workflow-property-sources">
+              {sources.slice(0, 3).map((source) => (
+                <li key={source.id} title={source.name}>
+                  {source.name}
+                </li>
+              ))}
+            </ul>
+            {sources.length > 3 && (
+              <button
+                className="workflow-property-link"
+                onClick={() => onAction('inputs')}
+              >
+                All source signals…
+              </button>
+            )}
+          </section>
+        )}
+      </div>
+      <div className="workflow-property-actions">
+        <button
+          className="secondary-button"
+          disabled={busy || !editable}
+          title={
+            editable
+              ? 'Rebuild with new settings'
+              : 'Recordings and saved ranges are immutable'
+          }
+          onClick={() => onAction('edit')}
+        >
+          <Settings2 size={13} />
+          Edit settings
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy || !step || step.kind === 'import'}
+          onClick={() => onAction('duplicate')}
+        >
+          <Copy size={13} />
+          Duplicate
+        </button>
+        <button
+          className="secondary-button workflow-danger"
+          disabled={busy || !step}
+          onClick={() => onAction('delete')}
+        >
+          <Trash2 size={13} />
+          Delete
+        </button>
+        <button
+          className="workflow-property-link"
+          onClick={() => onAction('lineage')}
+        >
+          <GitBranch size={13} />
+          Trace lineage in History
+        </button>
+      </div>
     </section>
   );
 }

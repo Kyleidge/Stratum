@@ -32,6 +32,12 @@ There are no server API routes or cloud signal uploads.
   Inspection and checked processing inputs are independent. Explicit parent
   navigation clears search; opening a search result preserves matching context.
   Lineage-filtered trees show only contributing outputs, not batch siblings.
+  One top bar holds the recording scope, Undo/Redo (Ctrl+Z/Ctrl+Y), the four
+  operations and their "Apply to" processing scope. History filters by text
+  and All/Signals/Values chips and dots outputs that feed the selection.
+  `components/workflow-properties.tsx` is the right-hand inspector (properties,
+  bounded lineage chain, Used by, Edit/Duplicate/Delete); it becomes a drawer
+  below 1240 px, and History becomes one below 820 px.
 - `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
   viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
   summary CSV, and standalone printable HTML reports with escaped labels.

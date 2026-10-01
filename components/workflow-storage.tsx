@@ -87,14 +87,16 @@ export default function WorkflowStorage({
     <>
       <button
         className="secondary-button"
+        aria-label="Workspace"
+        title="Back up, restore or reset the workspace"
         disabled={disabled}
         onClick={() => {
           setError('');
           setOpen(true);
         }}
       >
-        <FolderArchive size={16} />
-        Workspace
+        <FolderArchive size={14} />
+        <span>Workspace</span>
       </button>
       <Dialog
         open={open}

@@ -6,11 +6,20 @@ const PANES = {
   history: {
     id: 'workflow-navigation',
     label: 'Operation history',
-    initial: 320,
+    initial: 300,
     min: 250,
     max: 640,
     fraction: 0.48,
     direction: 1,
+  },
+  inspector: {
+    id: 'workflow-inspector',
+    label: 'Inspector',
+    initial: 300,
+    min: 260,
+    max: 520,
+    fraction: 0.4,
+    direction: -1,
   },
 } as const;
 
