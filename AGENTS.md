@@ -37,7 +37,9 @@ There are no server API routes or cloud signal uploads.
   and All/Signals/Values chips and dots outputs that feed the selection.
   `components/workflow-properties.tsx` is the right-hand inspector (properties,
   bounded lineage chain, Used by, Edit/Duplicate/Delete); it becomes a drawer
-  below 1240 px, and History becomes one below 820 px.
+  below 1240 px, and History becomes one below 820 px. Ctrl+K opens
+  `components/workflow-command-palette.tsx`: the top-bar commands plus a word
+  search over every step and output in scope, capped at 40 results.
 - `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
   viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
   summary CSV, and standalone printable HTML reports with escaped labels.

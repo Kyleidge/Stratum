@@ -3733,3 +3733,66 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Search and command palette (Ctrl+K) */
+.workflow-search-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 6px 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.workflow-app .workflow-search-trigger:hover {
+  border-color: var(--primary-line);
+  color: var(--ink-1);
+}
+.workflow-search-trigger kbd,
+.workflow-palette [data-slot='command-shortcut'] {
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--ink-3);
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+}
+.workflow-palette {
+  width: min(580px, calc(100vw - 32px));
+  max-width: none !important;
+}
+.workflow-palette [data-slot='command-list'] {
+  max-height: min(420px, 60vh);
+}
+.workflow-palette [data-slot='command-item'] {
+  gap: 8px;
+}
+.workflow-palette-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-palette [data-slot='command-item'] small {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.workflow-palette-more {
+  margin: 0;
+  padding: 6px 12px 8px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+@media (max-width: 1500px) {
+  .workflow-search-trigger span,
+  .workflow-search-trigger kbd {
+    display: none;
+  }
+}

@@ -3,6 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
+  Download,
+  ScanLine,
+  Scissors,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -82,6 +85,10 @@ import PlotScratchpad, {
   type PlotScratchpadHandle,
 } from './plot-scratchpad';
 import WorkflowDock, { type DockTab } from './workflow-dock';
+import WorkflowCommandPalette, {
+  type PaletteCommand,
+  type PaletteTarget,
+} from './workflow-command-palette';
 import { TRACE_COLORS } from '@/lib/plot-scratchpad';
 import WorkflowProperties from './workflow-properties';
 import WorkflowPaneResizer from './workflow-pane-resizer';
@@ -231,6 +238,7 @@ export default function WorkflowWorkbench() {
     if (!next) setDropNote('');
     setEditorOpen(!!next);
   }
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [help, setHelp] = useState(false),
     [notice, setNotice] = useState(''),
     [changeNotice, setChangeNotice] = useState('');
@@ -440,6 +448,13 @@ export default function WorkflowWorkbench() {
       const mod = event.ctrlKey || event.metaKey;
       if (!mod || event.altKey) return;
       const key = event.key.toLowerCase();
+      if (key === 'k') {
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
       if (key !== 'z' && key !== 'y') return;
       if (
         event.target instanceof Element &&
@@ -800,6 +815,101 @@ export default function WorkflowWorkbench() {
   const dockSampleId = sampleChoices.includes(sampleChoice)
     ? sampleChoice
     : (sampleChoices[0] ?? '');
+  // Command palette: commands mirror the top bar; any step or output in scope
+  // can be opened by name.
+  const paletteCommands: PaletteCommand[] = [
+    ...(
+      [
+        ['derive', 'Derive signal…', Waves],
+        ['segment', 'Segment…', Scissors],
+        ['value', 'Calculate value…', Hash],
+        ['align', 'Compare & align…', ScanLine],
+      ] as const
+    ).map(([action, label, icon]) => ({
+      id: `command:${action}`,
+      label,
+      hint: `Apply to ${processingIds.length === 1 ? index.label(processingIds[0]) : `${processingIds.length} signals`}`,
+      icon,
+      disabled: engine.busy || !engine.ready || !processingIds.length,
+      run: () => toolbarAction(action),
+    })),
+    {
+      id: 'command:import',
+      label: 'Import CSV…',
+      icon: ArrowDownToLine,
+      disabled: engine.busy || !engine.ready,
+      run: () => file.current?.click(),
+    },
+    {
+      id: 'command:export',
+      label: 'Export / report…',
+      icon: Download,
+      disabled: !step?.outputIds.length,
+      run: () => setExportOpen(true),
+    },
+    {
+      id: 'command:undo',
+      label: 'Undo last change',
+      shortcut: 'Ctrl Z',
+      icon: Undo2,
+      disabled: !engine.canUndo || engine.busy,
+      run: undo,
+    },
+    {
+      id: 'command:redo',
+      label: 'Redo last change',
+      shortcut: 'Ctrl Y',
+      icon: Redo2,
+      disabled: !engine.canRedo || engine.busy,
+      run: redo,
+    },
+    {
+      id: 'command:theme',
+      label: theme === 'dark' ? 'Use light theme' : 'Use dark theme',
+      icon: theme === 'dark' ? Sun : Moon,
+      run: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+    },
+    {
+      id: 'command:inspector',
+      label: 'Show or hide the inspector',
+      icon: PanelRight,
+      run: toggleInspector,
+    },
+    {
+      id: 'command:guide',
+      label: 'Open the workflow guide',
+      icon: HelpCircle,
+      run: () => setHelp(true),
+    },
+  ];
+  const paletteTargets = (): PaletteTarget[] =>
+    steps.flatMap((item) => [
+      {
+        id: `step:${item.id}`,
+        label: `${reference(item)} ${stepName(item)}`,
+        hint: `Operation · ${item.outputIds.length} output${item.outputIds.length === 1 ? '' : 's'}`,
+        icon:
+          item.kind === 'value'
+            ? Hash
+            : item.kind === 'segment' || item.kind === 'regions'
+              ? Scissors
+              : item.kind === 'import'
+                ? LockKeyhole
+                : Waves,
+        run: () => selectStep(item.id),
+      },
+      ...item.outputIds.map((id) => ({
+        id: `output:${id}`,
+        label: index.label(id),
+        hint: `${index.kind(id)} · ${reference(item)}`,
+        icon: index.values.has(id)
+          ? Hash
+          : index.nodes.get(id)?.operation === 'raw'
+            ? LockKeyhole
+            : Waves,
+        run: () => follow(id),
+      })),
+    ]);
   const selectedLineage = index.lineage(
     selection.kind === 'output' ? [selection.id] : (step?.inputIds ?? []),
   );
@@ -928,6 +1038,16 @@ export default function WorkflowWorkbench() {
           onDragEnd={() => setDragged(null)}
         />
         <div className="workflow-topbar-end">
+          <button
+            className="workflow-search-trigger"
+            aria-label="Search or run a command"
+            title="Search steps and outputs, or run a command · Ctrl+K"
+            onClick={() => setPaletteOpen(true)}
+          >
+            <Search size={14} />
+            <span>Search</span>
+            <kbd>Ctrl K</kbd>
+          </button>
           <button
             className="secondary-button workflow-import-button"
             aria-label="Import CSV"
@@ -1934,6 +2054,12 @@ export default function WorkflowWorkbench() {
           }
         />
       )}
+      <WorkflowCommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={paletteCommands}
+        targets={paletteTargets}
+      />
       <WorkflowExport
         open={exportOpen}
         onOpenChange={setExportOpen}

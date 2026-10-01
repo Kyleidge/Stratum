@@ -479,6 +479,47 @@ export async function workflowUiSmoke() {
       );
     }
   }
+  /** Ctrl+K finds outputs by name; the top bar trigger opens the same palette. */
+  async function commandPalette() {
+    async function openByName(query: string, label: string, keyboard: boolean) {
+      if (keyboard)
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'k',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      else await click('Search or run a command');
+      const palette = await dialog();
+      const input = palette.querySelector<HTMLInputElement>(
+        'input[aria-label="Search steps, outputs and commands"]',
+      );
+      assert(input, 'Command palette search is missing.');
+      setValue(input, query);
+      (
+        await until(
+          () =>
+            [...palette.querySelectorAll<HTMLElement>('[cmdk-item]')].find(
+              (item) =>
+                item.querySelector('.workflow-palette-label')?.textContent ===
+                label,
+            ),
+          `palette result ${label}`,
+        )
+      ).click();
+      await until(
+        () =>
+          !document.querySelector('[role="dialog"]') &&
+          document.querySelector('.workflow-status-selection')?.textContent ===
+            label,
+        `palette opened ${label}`,
+      );
+    }
+    await openByName('torque smoothed', 'Smoothed torque', true);
+    await openByName('motor speed', 'Motor speed', false);
+  }
   async function selectionDetails() {
     const sidebar = document.getElementById('workflow-navigation')!;
     const inspector = document.getElementById('workflow-inspector');
@@ -560,6 +601,7 @@ export async function workflowUiSmoke() {
     );
     await resizePanes();
     await selectionDetails();
+    await commandPalette();
     await click('Keep plot');
     const plotTab = () =>
       document.querySelector('[aria-label="Plot tabs"] [aria-selected="true"]');
