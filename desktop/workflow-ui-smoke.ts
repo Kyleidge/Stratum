@@ -608,10 +608,20 @@ export async function workflowUiSmoke() {
       'multiple Y axes for mixed units',
     );
     assert(
-      button('Overlay') !== undefined &&
-        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+      document.querySelectorAll('.scratchpad-lane .signal-chart svg').length ===
+        2 &&
+        document.querySelectorAll('.scratchpad-canvas [data-time-axis]')
           .length === 1,
-      'Mixed units should share one plot with independent value axes.',
+      'Mixed units should default to lanes that share one time axis.',
+    );
+    await click('Y axes');
+    await until(
+      () =>
+        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+          .length === 1 &&
+        document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
+          .length === 2,
+      'explicit independent Y axes',
     );
     await click(
       'Motor speed',

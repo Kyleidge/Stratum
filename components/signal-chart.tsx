@@ -101,6 +101,7 @@ export default function SignalChart({
   grid = true,
   includeZero = true,
   fillHeight = false,
+  timeAxis = true,
   interaction,
   overlay,
 }: {
@@ -116,6 +117,8 @@ export default function SignalChart({
   includeZero?: boolean;
   /** Match a CSS-sized viewport without stretching labels or pointer geometry. */
   fillHeight?: boolean;
+  /** False for upper lanes that share the time axis drawn by the lowest lane. */
+  timeAxis?: boolean;
   interaction?: ChartInteraction;
   overlay?: (geometry: ChartGeometry) => ReactNode;
 }) {
@@ -248,7 +251,7 @@ export default function SignalChart({
       };
     });
   }, [axisGroups, traces, interaction, includeZero, gesture]);
-  const bottom = chartHeight - (interaction ? 51 : 31);
+  const bottom = chartHeight - (interaction ? (timeAxis ? 51 : 12) : 31);
   const plotHeight = bottom - 15;
   const valueTicks = fluid
     ? Math.max(4, Math.min(8, Math.floor(plotHeight / 60)))
@@ -454,7 +457,7 @@ export default function SignalChart({
           : undefined;
     return {
       axis,
-      time: !axis && py > bottom,
+      time: timeAxis && !axis && py > bottom,
       fraction: Math.max(0, Math.min(1, (bottom - py) / plotHeight)),
     };
   };
@@ -817,7 +820,7 @@ export default function SignalChart({
             </g>
           );
         })}
-        {interaction && (
+        {interaction && timeAxis && (
           <g className="plot-time-axis">
             <title>
               Scroll to zoom time; drag to pan; double-click to edit
@@ -842,14 +845,16 @@ export default function SignalChart({
                 className="chart-grid vertical"
               />
             )}
-            <text
-              x={x(time)}
-              y={bottom + 22}
-              textAnchor="middle"
-              className={interaction ? 'plot-time-axis' : undefined}
-            >
-              {formatAxisTick(time, timeTicks.step)}
-            </text>
+            {timeAxis && (
+              <text
+                x={x(time)}
+                y={bottom + 22}
+                textAnchor="middle"
+                className={interaction ? 'plot-time-axis' : undefined}
+              >
+                {formatAxisTick(time, timeTicks.step)}
+              </text>
+            )}
           </g>
         ))}
         <g clipPath={`url(#${clipId})`}>
@@ -1091,17 +1096,23 @@ export default function SignalChart({
           height: chartHeight,
           x,
         })}
-        <text
-          data-time-axis
-          className={interaction ? 'plot-time-axis plot-axis-title' : undefined}
-          x={interaction ? left + span / 2 : chartWidth - 5}
-          y={chartHeight - 6}
-          textAnchor={interaction ? 'middle' : 'end'}
-        >
-          {interaction
-            ? interaction.axes?.timeLabel || interaction.timeLabel || 'Time (s)'
-            : 's'}
-        </text>
+        {timeAxis && (
+          <text
+            data-time-axis
+            className={
+              interaction ? 'plot-time-axis plot-axis-title' : undefined
+            }
+            x={interaction ? left + span / 2 : chartWidth - 5}
+            y={chartHeight - 6}
+            textAnchor={interaction ? 'middle' : 'end'}
+          >
+            {interaction
+              ? interaction.axes?.timeLabel ||
+                interaction.timeLabel ||
+                'Time (s)'
+              : 's'}
+          </text>
+        )}
       </svg>
     </section>
   );

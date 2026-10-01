@@ -137,6 +137,11 @@ constant-time access to arbitrary large recordings.
 ## Multiple-axis follow-up
 
 Each exact unit gets a stable, independent Y scale on the shared time plot.
+Overlay, the default layout, draws each unit group in its own lane on one
+shared time axis, so different units never share a frame implicitly. The
+explicit Y axes layout overlays every unit in one frame with an axis per scale;
+Stacked gives each trace a panel. Lanes, axes and stacked panels keep the same
+stable axis keys, limits and held scales.
 Add Y axis creates another independent scale with that unit. Trace properties
 offers only compatible axes and can create and assign a new axis in one action.
 Axes use stable IDs: automatic axes use unit keys, explicit axes use unique IDs.

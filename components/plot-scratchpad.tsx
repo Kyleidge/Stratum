@@ -13,9 +13,11 @@ import {
 import {
   Activity,
   ChartNoAxesCombined,
+  ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   Download,
+  MoveHorizontal,
   Eye,
   EyeOff,
   Grid2X2,
@@ -48,6 +50,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Table,
   TableBody,
@@ -471,6 +479,16 @@ export default function PlotScratchpad({
   );
   const canOverlay = clocks.size <= 1;
   const stacked = sheet.layout === 'stacked' || !canOverlay;
+  const multiAxis = !stacked && sheet.layout === 'axes';
+  // Different units never share a frame unless independent Y axes are chosen.
+  const lanes =
+    stacked || multiAxis
+      ? []
+      : axisGroups.filter((axis) => shownAxes.has(axis.key));
+  // Traces that start at different times can be compared from their starts.
+  const alignable =
+    visibleIds.length > 1 &&
+    new Set(visibleIds.map((id) => timeRange(id)[0])).size > 1;
   const safeStackPage = Math.min(
     stackPage,
     Math.max(0, Math.ceil(traces.length / 8) - 1),
@@ -1134,43 +1152,44 @@ export default function PlotScratchpad({
                 data-drop={over === selectedTab}
                 aria-label="Drop signals, segments or values onto this plot"
               >
-                <div className="scratchpad-chart-tools">
-                  {saved && (
-                    <button
-                      className="scratchpad-zero"
-                      aria-label="Align trace starts at zero"
-                      aria-pressed={!!sheet.zeroTime}
-                      onClick={() => {
-                        update({ zeroTime: !sheet.zeroTime });
-                        setWindow([0, 1]);
-                        setMeasuring(false);
-                      }}
-                    >
-                      Δt ·{' '}
-                      {sheet.zeroTime ? 'Starts at 0' : 'Align starts at 0'}
-                    </button>
-                  )}
+                <div
+                  className="scratchpad-chart-tools"
+                  role="toolbar"
+                  aria-label="Plot tools"
+                >
                   <fieldset
                     className="scratchpad-mode"
                     aria-label="Plot layout"
                   >
                     <button
-                      aria-pressed={!stacked}
+                      aria-pressed={!stacked && !multiAxis}
                       disabled={!canOverlay}
                       title={
                         canOverlay
-                          ? 'Overlay traces with a separate Y axis for each unit'
+                          ? 'Overlay traces on one time axis; different units get their own lanes'
                           : 'Overlay requires matching time references'
                       }
                       onClick={() => update({ layout: 'overlay' })}
                     >
-                      <ChartNoAxesCombined size={15} /> Overlay
+                      <ChartNoAxesCombined size={15} />
+                      <span>Overlay</span>
                     </button>
                     <button
                       aria-pressed={stacked}
+                      title="One panel per trace on a shared time axis"
                       onClick={() => update({ layout: 'stacked' })}
                     >
-                      <Layers2 size={15} /> Stacked
+                      <Layers2 size={15} />
+                      <span>Stacked</span>
+                    </button>
+                    <button
+                      aria-pressed={multiAxis}
+                      disabled={!canOverlay}
+                      title="Overlay different units in one frame, each on its own Y axis"
+                      onClick={() => update({ layout: 'axes' })}
+                    >
+                      <ArrowUpDown size={14} />
+                      <span>Y axes</span>
                     </button>
                   </fieldset>
                   <fieldset
@@ -1183,7 +1202,8 @@ export default function PlotScratchpad({
                       title="Drag to pan · Shift-drag always pans"
                       onClick={() => setMode('pan')}
                     >
-                      <Hand size={14} /> Pan
+                      <Hand size={14} />
+                      <span>Pan</span>
                     </button>
                     <button
                       aria-label="Box zoom mode"
@@ -1191,7 +1211,8 @@ export default function PlotScratchpad({
                       title="Drag across a time interval to zoom"
                       onClick={() => setMode('zoom')}
                     >
-                      <Scan size={14} /> Zoom
+                      <Scan size={14} />
+                      <span>Zoom</span>
                     </button>
                     <button
                       aria-label="Toggle measurement cursors"
@@ -1207,61 +1228,18 @@ export default function PlotScratchpad({
                         setMode(measuring ? 'pan' : 'cursor');
                       }}
                     >
-                      <Crosshair size={14} /> A/B
+                      <Crosshair size={14} />
+                      <span>A/B</span>
                     </button>
                   </fieldset>
-                  <fieldset
-                    className="scratchpad-zoom"
-                    aria-label="Plot view controls"
-                  >
+                  <fieldset className="scratchpad-mode" aria-label="Plot scale">
                     <button
-                      aria-label="Toggle plot grid"
-                      aria-pressed={sheet.grid}
-                      onClick={() => update({ grid: !sheet.grid })}
+                      aria-label="Fit entire plot"
+                      title="Fit all data · Home"
+                      onClick={fit}
                     >
-                      <Grid2X2 size={15} />
-                    </button>
-                    <span />
-                    <button
-                      aria-label="Previous plot view"
-                      title="Previous view · Backspace"
-                      disabled={!backViews[windowKey]?.length}
-                      onClick={back}
-                    >
-                      <Undo2 size={14} />
-                    </button>
-                    <button
-                      aria-label="Pan plot left"
-                      disabled={!traces.length}
-                      onClick={() => zoom(1, -(window[1] - window[0]) / 4)}
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button
-                      aria-label="Zoom in"
-                      disabled={
-                        !traces.length || window[1] - window[0] <= 0.000001
-                      }
-                      onClick={() => zoom(0.5)}
-                    >
-                      <ZoomIn size={16} />
-                    </button>
-                    <button
-                      aria-label="Zoom out"
-                      disabled={!traces.length || window[1] - window[0] >= 1000}
-                      onClick={() => zoom(2)}
-                    >
-                      <ZoomOut size={16} />
-                    </button>
-                    <button
-                      aria-label="Pan plot right"
-                      disabled={!traces.length}
-                      onClick={() => zoom(1, (window[1] - window[0]) / 4)}
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                    <button aria-label="Fit entire plot" onClick={fit}>
-                      <Maximize size={15} /> Fit
+                      <Maximize size={14} />
+                      <span>Fit</span>
                     </button>
                     <button
                       aria-label="Hold Y-axis scales"
@@ -1274,11 +1252,83 @@ export default function PlotScratchpad({
                       }
                       onClick={toggleHoldY}
                     >
-                      <LockKeyhole size={14} /> Hold Y
+                      <LockKeyhole size={14} />
+                      <span>Hold Y</span>
+                    </button>
+                    {(saved || alignable) && (
+                      <button
+                        aria-label="Align trace starts at zero"
+                        aria-pressed={!!sheet.zeroTime}
+                        title="Plot each trace from its own start time to compare runs"
+                        onClick={() => {
+                          update({ zeroTime: !sheet.zeroTime });
+                          setWindow([0, 1]);
+                          setMeasuring(false);
+                        }}
+                      >
+                        <MoveHorizontal size={14} />
+                        <span>Align starts</span>
+                      </button>
+                    )}
+                  </fieldset>
+                  <span className="scratchpad-tools-gap" />
+                  <fieldset
+                    className="scratchpad-zoom"
+                    aria-label="Plot view controls"
+                  >
+                    <button
+                      aria-label="Previous plot view"
+                      title="Previous view · Backspace"
+                      disabled={!backViews[windowKey]?.length}
+                      onClick={back}
+                    >
+                      <Undo2 size={14} />
+                    </button>
+                    <button
+                      aria-label="Pan plot left"
+                      title="Pan left · ←"
+                      disabled={!traces.length}
+                      onClick={() => zoom(1, -(window[1] - window[0]) / 4)}
+                    >
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button
+                      aria-label="Zoom in"
+                      title="Zoom in · +"
+                      disabled={
+                        !traces.length || window[1] - window[0] <= 0.000001
+                      }
+                      onClick={() => zoom(0.5)}
+                    >
+                      <ZoomIn size={15} />
+                    </button>
+                    <button
+                      aria-label="Zoom out"
+                      title="Zoom out · −"
+                      disabled={!traces.length || window[1] - window[0] >= 1000}
+                      onClick={() => zoom(2)}
+                    >
+                      <ZoomOut size={15} />
+                    </button>
+                    <button
+                      aria-label="Pan plot right"
+                      title="Pan right · →"
+                      disabled={!traces.length}
+                      onClick={() => zoom(1, (window[1] - window[0]) / 4)}
+                    >
+                      <ChevronRight size={15} />
+                    </button>
+                    <button
+                      aria-label="Toggle plot grid"
+                      title="Grid lines"
+                      aria-pressed={sheet.grid}
+                      onClick={() => update({ grid: !sheet.grid })}
+                    >
+                      <Grid2X2 size={14} />
                     </button>
                   </fieldset>
                   <fieldset
-                    className="scratchpad-mode"
+                    className="scratchpad-zoom"
                     aria-label="Plot settings and delivery"
                   >
                     {isActive && active.traces.length === 1 && (
@@ -1319,22 +1369,35 @@ export default function PlotScratchpad({
                     >
                       <StickyNote size={14} />
                     </button>
-                    <button
-                      aria-label="Export plot SVG"
-                      disabled={!traces.length || exporting}
-                      onClick={() => void imageExport('svg')}
-                      title="Export current panels as SVG"
-                    >
-                      SVG
-                    </button>
-                    <button
-                      aria-label="Export plot PNG"
-                      disabled={!traces.length || exporting}
-                      onClick={() => void imageExport('png')}
-                      title="Export current panels as PNG"
-                    >
-                      PNG
-                    </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <button
+                            aria-label="Export plot"
+                            title="Export the displayed panels as an image"
+                          />
+                        }
+                      >
+                        <Download size={14} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="scratchpad-export-menu"
+                      >
+                        <DropdownMenuItem
+                          disabled={!traces.length || exporting}
+                          onClick={() => void imageExport('svg')}
+                        >
+                          Plot image (SVG)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!traces.length || exporting}
+                          onClick={() => void imageExport('png')}
+                        >
+                          Plot image (PNG)
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <button
                       aria-label="Plot interaction help"
                       title="Plot gestures and shortcuts"
@@ -1459,20 +1522,49 @@ export default function PlotScratchpad({
                               )?.name}
                         </span>
                       </div>
-                      <SignalChart
-                        key={windowKey}
-                        traces={overlayTraces}
-                        segments={[]}
-                        range={zoomRange(fullRange)}
-                        onSegment={() => {}}
-                        fluid
-                        height={340}
-                        fillHeight
-                        heading={false}
-                        grid={sheet.grid}
-                        includeZero={false}
-                        interaction={interactionFor(fullRange)}
-                      />
+                      {lanes.length > 1 ? (
+                        lanes.map((axis, i) => (
+                          <div className="scratchpad-lane" key={axis.key}>
+                            <SignalChart
+                              key={windowKey}
+                              traces={overlayTraces.filter(
+                                (trace) =>
+                                  traceAxisKey(
+                                    trace.node.unit,
+                                    trace.axisId,
+                                    sheet.axes,
+                                  ) === axis.key,
+                              )}
+                              segments={[]}
+                              range={zoomRange(fullRange)}
+                              onSegment={() => {}}
+                              fluid
+                              height={180}
+                              fillHeight
+                              heading={false}
+                              grid={sheet.grid}
+                              includeZero={false}
+                              timeAxis={i === lanes.length - 1}
+                              interaction={interactionFor(fullRange, [axis])}
+                            />
+                          </div>
+                        ))
+                      ) : (
+                        <SignalChart
+                          key={windowKey}
+                          traces={overlayTraces}
+                          segments={[]}
+                          range={zoomRange(fullRange)}
+                          onSegment={() => {}}
+                          fluid
+                          height={340}
+                          fillHeight
+                          heading={false}
+                          grid={sheet.grid}
+                          includeZero={false}
+                          interaction={interactionFor(fullRange)}
+                        />
+                      )}
                     </>
                   )
                 ) : (
@@ -1564,9 +1656,11 @@ export default function PlotScratchpad({
                         ? 'Separate time references · independent time axes'
                         : stacked
                           ? 'Shared time axis · separate value axes'
-                          : axisGroups.length > 1
-                            ? `Shared time · ${axisGroups.length} Y axes`
-                            : 'Shared time & value axes'}
+                          : lanes.length > 1
+                            ? `Shared time · ${lanes.length} lanes by unit`
+                            : axisGroups.length > 1
+                              ? `Shared time · ${axisGroups.length} Y axes`
+                              : 'Shared time & value axes'}
                   </span>
                   <span>{formatValue(100 / (window[1] - window[0]), 0)}%</span>
                   <span>

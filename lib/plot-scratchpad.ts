@@ -48,7 +48,12 @@ export type PlotSheet = {
   id: string;
   name: string;
   traces: PlotTrace[];
-  layout: 'overlay' | 'stacked';
+  /**
+   * Overlay draws traces on one time axis, splitting different units into
+   * lanes; axes overlays every unit on independent Y axes; stacked gives each
+   * trace its own panel.
+   */
+  layout: 'overlay' | 'stacked' | 'axes';
   grid: boolean;
   zeroTime?: boolean;
   window?: PlotRange;
@@ -160,8 +165,8 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
           name: sheet.name.trim().slice(0, 80),
           traces,
           layout:
-            sheet.layout === 'stacked'
-              ? ('stacked' as const)
+            sheet.layout === 'stacked' || sheet.layout === 'axes'
+              ? sheet.layout
               : ('overlay' as const),
           grid: sheet.grid !== false,
           zeroTime: sheet.zeroTime === true,

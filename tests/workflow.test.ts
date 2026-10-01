@@ -96,6 +96,17 @@ void test('scratchpad layouts tolerate corrupt storage and retain missing signal
   );
   assert.equal(large[0].traces.length, 5000);
   assert.equal(large[0].zeroTime, false);
+  // Unit lanes are the default; independent Y axes persist when chosen.
+  assert.equal(large[0].layout, 'overlay');
+  assert.deepEqual(
+    readPlotSheets(
+      JSON.stringify([
+        { id: 'plot:axes', name: 'Axes', traces: [], layout: 'axes' },
+        { id: 'plot:bad', name: 'Bad', traces: [], layout: 'sideways' },
+      ]),
+    ).map((sheet) => sheet.layout),
+    ['axes', 'overlay'],
+  );
 });
 
 void test('live plots retain full coverage and coalesce slow pan reads without starving them', async (t) => {

@@ -168,6 +168,12 @@ export async function plotUiSmoke() {
     'Stacked panels lost their held Y scales.',
   );
   await click('Overlay');
+  assert(
+    document.querySelectorAll('.scratchpad-lane .signal-chart svg').length ===
+      2 && same(limits('rpm'), heldSpeed),
+    'Unit lanes lost their held Y scales.',
+  );
+  await click('Y axes');
   await click('Hold Y-axis scales');
   assert(
     holdY().getAttribute('aria-pressed') === 'false' &&
@@ -721,15 +727,24 @@ export async function plotUiSmoke() {
     stored()[0].annotations?.[0].labelPosition === labelPosition,
     'Saving annotation text reset its height.',
   );
-  await click('Export plot SVG');
-  await click('Export plot PNG');
-  await until(
-    () =>
-      !document.querySelector<HTMLButtonElement>(
-        '[aria-label="Export plot PNG"]',
-      )?.disabled,
-    'PNG delivery',
-  );
+  async function exportImage(format: string) {
+    // An export in progress disables both formats until its file is ready.
+    const item = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (entry) =>
+          entry.textContent?.includes(format) &&
+          !entry.hasAttribute('data-disabled'),
+      );
+    await click('Export plot');
+    await until(() => !!item(), `${format} export menu`);
+    item()!.click();
+    await until(
+      () => !document.querySelector('[role="menuitem"]'),
+      `${format} delivery`,
+    );
+  }
+  await exportImage('SVG');
+  await exportImage('PNG');
   await wheelAt('Nm');
   const torqueBeforeReorder = limits('Nm');
   const original = stored()[0];

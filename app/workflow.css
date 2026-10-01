@@ -122,17 +122,6 @@
   outline-offset: -2px;
   background: color-mix(in srgb, var(--primary) 8%, var(--card));
 }
-.scratchpad-zero {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: transparent;
-  padding: 7px 6px;
-  color: var(--muted-foreground);
-}
-.scratchpad-zero[aria-pressed='true'] {
-  border-color: var(--primary);
-  color: var(--primary);
-}
 .scratchpad-traces > details > summary {
   padding: 5px 0;
   cursor: pointer;
@@ -341,12 +330,6 @@
 .scratchpad-zoom button[aria-pressed='true'] {
   background: var(--muted);
   color: var(--foreground);
-}
-.scratchpad-zoom > span {
-  height: 18px;
-  width: 1px;
-  background: var(--border);
-  margin: 0 5px;
 }
 .scratchpad-canvas .signal-chart {
   border: 0;
@@ -3658,4 +3641,95 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
 .scratchpad-axis-label strong {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Plot toolbar: one row of grouped segmented controls. Labels collapse to
+ * icons when the plot is narrow; every control keeps an accessible name. */
+.scratchpad-canvas {
+  container-type: inline-size;
+}
+.scratchpad-chart-tools {
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-height: 38px;
+  padding: 4px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.scratchpad-chart-tools fieldset {
+  flex-shrink: 0;
+  gap: 1px;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.scratchpad-chart-tools fieldset:last-child {
+  border: 1px solid var(--line);
+}
+.scratchpad-chart-tools button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 7px;
+  gap: 5px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.scratchpad-chart-tools button[aria-pressed='true'] {
+  background: var(--raised);
+  color: var(--ink-1);
+}
+.workflow-app .scratchpad-chart-tools button:hover:not(:disabled) {
+  background: var(--hover-solid);
+  color: var(--ink-1);
+}
+.scratchpad-tools-gap {
+  flex: 1;
+  min-width: 4px;
+}
+.scratchpad-export-menu {
+  width: auto;
+  min-width: 170px;
+}
+@container (max-width: 860px) {
+  .scratchpad-chart-tools button > span {
+    display: none;
+  }
+}
+
+/* Lanes: different units stacked on one shared time axis */
+.scratchpad-lane {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 140px;
+}
+.scratchpad-lane + .scratchpad-lane {
+  border-top: 1px dashed var(--line);
+}
+.scratchpad-lane > .signal-chart {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* A narrow plot wraps its toolbar instead of hiding controls off-screen. */
+@container (max-width: 720px) {
+  .scratchpad-chart-tools {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .scratchpad-tools-gap {
+    display: none;
+  }
+}
+.workflow-output-table .workflow-output-name {
+  display: block;
+  min-width: 140px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
