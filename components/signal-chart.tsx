@@ -190,6 +190,7 @@ export default function SignalChart({
           name: trace.label || trace.node.name,
           color: trace.color || trace.node.color,
           axisId: trace.axisId,
+          reference: trace.referenceLine,
         })),
         interaction?.axes,
       ),

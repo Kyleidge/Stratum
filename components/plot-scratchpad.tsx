@@ -431,6 +431,7 @@ export default function PlotScratchpad({
       ...trace,
       unit: traceUnit(trace.id),
       name: index.label(trace.id),
+      reference: index.values.has(trace.id),
     }));
   const axisGroups = groupPlotAxes(
     axisTraces.filter((trace) => trace.visible),

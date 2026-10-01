@@ -16,7 +16,14 @@ export type PlotAxisGroup = {
   label: string;
   color: string;
 };
-type AxisTrace = { unit: string; name: string; color: string; axisId?: string };
+type AxisTrace = {
+  unit: string;
+  name: string;
+  color: string;
+  axisId?: string;
+  /** Value reference lines name an axis only when no signal shares it. */
+  reference?: boolean;
+};
 
 export function traceAxisKey(
   unit: string,
@@ -37,16 +44,24 @@ export function groupPlotAxes(
 ): PlotAxisGroup[] {
   const groups = new Map<
     string,
-    { unit: string; names: Set<string>; color: string }
+    {
+      unit: string;
+      names: Set<string>;
+      references: Set<string>;
+      color: string;
+    }
   >();
   for (const item of items) {
     const key = traceAxisKey(item.unit, item.axisId, axes);
     const group = groups.get(key) ?? {
       unit: item.unit.trim(),
       names: new Set<string>(),
+      references: new Set<string>(),
       color: item.color,
     };
-    group.names.add(item.name.trim() || 'Value');
+    (item.reference ? group.references : group.names).add(
+      item.name.trim() || 'Value',
+    );
     groups.set(key, group);
   }
   if (includeEmpty)
@@ -59,11 +74,12 @@ export function groupPlotAxes(
         groups.set(key, {
           unit: axis.unit,
           names: new Set(['Y axis']),
+          references: new Set<string>(),
           color: 'var(--ink-3)',
         });
     }
   return [...groups].map(([key, group]) => {
-    const names = [...group.names];
+    const names = [...(group.names.size ? group.names : group.references)];
     const name =
       names.slice(0, 2).join(' / ') +
       (names.length > 2 ? ` +${names.length - 2}` : '');

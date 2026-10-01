@@ -307,6 +307,18 @@ void test('unit axes name and scale independently and retain their identity acro
   assert.equal(groups[0].label, 'Speed / Filtered speed (rpm)');
   assert.equal(groups[1].label, 'Torque (Nm)');
   assert.equal(groupPlotAxes(inputs.toReversed())[0].key, groups[2].key);
+  // A value's reference line names its axis only when no signal shares it.
+  const reference = {
+    name: 'Time average · Torque',
+    unit: 'Nm',
+    color: '#c98500',
+    reference: true,
+  };
+  assert.equal(groupPlotAxes([reference, inputs[1]])[0].label, 'Torque (Nm)');
+  assert.equal(
+    groupPlotAxes([reference])[0].label,
+    'Time average · Torque (Nm)',
+  );
   const saved = readPlotSheets(
     JSON.stringify([
       {

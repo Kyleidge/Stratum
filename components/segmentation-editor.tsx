@@ -640,8 +640,8 @@ export default function SegmentationEditor({
         {plan ? (
           <>
             <strong>
-              {plan.ranges.length}{' '}
-              {target === 'file' ? 'file segments' : 'signal segments'} ·{' '}
+              {plan.ranges.length} {target === 'file' ? 'file' : 'signal'}{' '}
+              {plan.ranges.length === 1 ? 'segment' : 'segments'} ·{' '}
               {plan.ranges.filter((range) => range.clipped).length} clipped
             </strong>
             <small>

@@ -198,7 +198,8 @@ function ExportForm({
       )}
       <div className="workflow-export-preview">
         <strong>
-          {ids.length} {allValues ? 'values' : 'signals'} included
+          {ids.length} {allValues ? 'value' : 'signal'}
+          {ids.length === 1 ? '' : 's'} included
         </strong>
         <ul>
           {ids.slice(0, 30).map((id) => (
