@@ -10,7 +10,9 @@ import {
   HelpCircle,
   LockKeyhole,
   PanelLeft,
+  Moon,
   Search,
+  Sun,
   Waves,
   X,
   Undo2,
@@ -33,6 +35,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useSignalEngine } from '@/hooks/use-signal-engine';
+import { useTheme } from '@/hooks/use-theme';
 import { SignalGraph } from '@/lib/signal-graph';
 import TimeWorkbench from './time-workbench';
 import type { TimeSettings } from '@/lib/time-types';
@@ -105,6 +108,7 @@ type Editor = {
 
 export default function WorkflowWorkbench() {
   const engine = useSignalEngine('init-workflow');
+  const [theme, setTheme] = useTheme();
   const { project } = engine;
   const index = useMemo(() => new WorkflowIndex(project), [project]);
   const graph = useMemo(() => new SignalGraph(project), [project]);
@@ -699,6 +703,14 @@ export default function WorkflowWorkbench() {
           >
             <ArrowDownToLine size={15} />
             Import CSV
+          </button>
+          <button
+            className="workflow-icon-button"
+            aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+            title="Switch between light and dark themes"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          >
+            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
           </button>
           <button
             className="workflow-link workflow-guide-button"

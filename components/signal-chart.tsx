@@ -28,6 +28,12 @@ import {
 } from '@/lib/plot-axes';
 import { formatAxisTick, logTicks, niceTicks } from '@/lib/plot-ticks';
 
+const SEGMENT_COLORS = [
+  'var(--series-3)',
+  'var(--series-7)',
+  'var(--series-4)',
+];
+
 export function formatValue(value: number, digits = 1): string {
   return Number.isFinite(value)
     ? value.toLocaleString('en-GB', {
@@ -733,7 +739,7 @@ export default function SignalChart({
                     x2={position}
                     y1="15"
                     y2={bottom}
-                    stroke={axis.color}
+                    style={{ stroke: axis.color }}
                     opacity="0.6"
                   />
                   <text
@@ -809,7 +815,7 @@ export default function SignalChart({
                 y="8"
                 width={Math.max(0, x(s.end) - x(s.start))}
                 height={bottom - 5}
-                fill={['#62d7ae', '#a795ec', '#e2ae79'][i % 3]}
+                style={{ fill: SEGMENT_COLORS[i % 3] }}
                 opacity="0.055"
               />
               <line
@@ -817,7 +823,7 @@ export default function SignalChart({
                 x2={x(s.start)}
                 y1="8"
                 y2={bottom + 3}
-                stroke={['#62d7ae', '#a795ec', '#e2ae79'][i % 3]}
+                style={{ stroke: SEGMENT_COLORS[i % 3] }}
                 strokeDasharray="3 4"
                 opacity="0.4"
               />
@@ -848,7 +854,7 @@ export default function SignalChart({
                 x2={x(currentTime)}
                 y1="8"
                 y2={bottom + 3}
-                stroke="#d6dfe2"
+                style={{ stroke: 'var(--ink-2)' }}
                 opacity=".45"
                 strokeDasharray="3 3"
               />
@@ -858,7 +864,7 @@ export default function SignalChart({
                 width="128"
                 height="24"
                 rx="3"
-                fill="#2b343b"
+                style={{ fill: 'var(--raised)' }}
               />
               <text
                 x={Math.min(
@@ -879,7 +885,7 @@ export default function SignalChart({
             y="8"
             width={Math.abs(x(gesture.start) - x(gesture.end))}
             height={plotHeight}
-            fill="#87baf2"
+            style={{ fill: 'var(--primary)' }}
             opacity="0.2"
             pointerEvents="none"
           />
@@ -914,7 +920,7 @@ export default function SignalChart({
                   x2={x(time)}
                   y1="8"
                   y2={bottom}
-                  stroke={i ? '#f2c479' : '#87baf2'}
+                  style={{ stroke: i ? 'var(--cursor-b)' : 'var(--cursor-a)' }}
                   strokeDasharray="5 3"
                 />
                 <rect
@@ -923,13 +929,13 @@ export default function SignalChart({
                   width="20"
                   height="20"
                   rx="2"
-                  fill={i ? '#f2c479' : '#87baf2'}
+                  style={{ fill: i ? 'var(--cursor-b)' : 'var(--cursor-a)' }}
                 />
                 <text
                   x={x(time)}
                   y="18"
                   textAnchor="middle"
-                  style={{ fill: '#142235' }}
+                  style={{ fill: 'var(--on-primary)' }}
                 >
                   {i ? 'B' : 'A'}
                 </text>
@@ -993,7 +999,7 @@ export default function SignalChart({
                   x2={x(note.time)}
                   y1={labelY}
                   y2={bottom}
-                  stroke="#b6c7db"
+                  style={{ stroke: 'var(--ink-3)' }}
                   opacity="0.45"
                 />
                 <text

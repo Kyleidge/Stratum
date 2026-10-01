@@ -4,15 +4,16 @@ export const MAX_PLOT_TABS = 12;
 // Bounded persisted metadata; complete normal segment batches remain intact.
 export const MAX_PLOT_TRACES = 10000;
 export const MAX_CUSTOM_AXES = 32;
+/** Categorical series order, distinguishable with colour-vision deficiency. */
 export const TRACE_COLORS = [
-  '#91e5ba',
-  '#7ebcff',
-  '#f2c479',
-  '#c4a0ff',
-  '#fb9bac',
-  '#78d6df',
-  '#ded785',
-  '#b6c7db',
+  '#3987e5',
+  '#d95926',
+  '#199e70',
+  '#c98500',
+  '#d55181',
+  '#008300',
+  '#9085e9',
+  '#e66767',
 ];
 export type PlotRange = [number, number];
 export type PlotTrace = {

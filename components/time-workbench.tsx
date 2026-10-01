@@ -19,6 +19,7 @@ import type { TimeAnchor, TimeReference, TimeSettings } from '@/lib/time-types';
 import { RegionNumber, RegionSelect, finite } from './region-controls';
 import SignalChart from './signal-chart';
 import WorkflowList from './workflow-list';
+import { TRACE_COLORS } from '@/lib/plot-scratchpad';
 
 type Mode = 'overlay' | TimeSettings['kind'];
 type AnchorForm = {
@@ -509,16 +510,7 @@ export default function TimeWorkbench({
                             node: graph.find(plot.id),
                             plot,
                             label: label(plot.id),
-                            color: [
-                              '#61d9b0',
-                              '#ac9cfa',
-                              '#edb477',
-                              '#74b9fa',
-                              '#e787ac',
-                              '#ff9f80',
-                              '#8bd5ed',
-                              '#f0cf65',
-                            ][i],
+                            color: TRACE_COLORS[i % TRACE_COLORS.length],
                           }))}
                         range={[
                           Math.min(
@@ -538,16 +530,7 @@ export default function TimeWorkbench({
                             <li
                               key={id}
                               style={{
-                                color: [
-                                  '#61d9b0',
-                                  '#ac9cfa',
-                                  '#edb477',
-                                  '#74b9fa',
-                                  '#e787ac',
-                                  '#ff9f80',
-                                  '#8bd5ed',
-                                  '#f0cf65',
-                                ][i],
+                                color: TRACE_COLORS[i % TRACE_COLORS.length],
                               }}
                             >
                               {label(id)}

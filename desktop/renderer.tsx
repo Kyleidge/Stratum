@@ -6,8 +6,11 @@ import '@/app/regions.css';
 import '@/app/workflow.css';
 import '@/app/ui-refresh-mockup.css';
 import { smokeTest } from './smoke-test';
+import { applyTheme, storedTheme } from '@/lib/theme';
 
 const params = new URL(location.href).searchParams;
+// Apply the saved theme before the first render to avoid a flash.
+applyTheme(storedTheme());
 if (params.has('smoke')) void smokeTest();
 else if (params.has('mockup'))
   void import('@/components/ui-refresh-mockup').then(

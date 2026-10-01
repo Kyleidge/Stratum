@@ -59,7 +59,7 @@ export function groupPlotAxes(
         groups.set(key, {
           unit: axis.unit,
           names: new Set(['Y axis']),
-          color: '#b6c7db',
+          color: 'var(--ink-3)',
         });
     }
   return [...groups].map(([key, group]) => {

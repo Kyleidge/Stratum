@@ -160,7 +160,12 @@ There are no server API routes or cloud signal uploads.
   `import.meta.url` unsuitable for constructing browser worker URLs.
 - `desktop/`: Electron shell and a separate Vite renderer build that shares the
   workbench. Native windows load bundled assets using a restricted custom scheme.
-- `app/globals.css`: Tailwind CSS v4 imports and semantic light/dark theme tokens.
+- `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
+  (surfaces, ink 1–3, primary, status, kind and series colours), defined once
+  per theme under `:root[data-theme]`. Stylesheets and components use only
+  these tokens, never raw colours. `lib/theme.ts` and `hooks/use-theme.ts`
+  persist the device-local light/dark choice (dark by default). One system
+  font family and a five-step type scale (`--text-xs`…`--text-xl`) apply.
 - `components/ui/`: reusable Base UI/shadcn primitives with Lucide icons.
 - `lib/utils.ts`: `cn()` combines clsx and tailwind-merge.
 - `hooks/use-mobile.ts`: shared mobile breakpoint hook (768px).

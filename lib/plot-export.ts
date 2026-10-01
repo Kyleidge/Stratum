@@ -26,17 +26,22 @@ export async function exportPlotImage(
   output.setAttribute('width', String(width));
   output.setAttribute('height', String(height));
   output.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  // Export what is displayed: the current theme's surface and ink.
+  const theme = getComputedStyle(host);
+  const surface = theme.getPropertyValue('--surface').trim() || '#1a1a19';
+  const ink = theme.getPropertyValue('--ink-1').trim() || '#f4f4f1';
+  const font = theme.getPropertyValue('--font-ui').trim() || 'sans-serif';
   const background = document.createElementNS(ns, 'rect');
   background.setAttribute('width', '100%');
   background.setAttribute('height', '100%');
-  background.setAttribute('fill', '#1b2127');
+  background.setAttribute('fill', surface);
   output.appendChild(background);
   const text = (value: string, y: number, size = 12) => {
     const label = document.createElementNS(ns, 'text');
     label.setAttribute('x', '14');
     label.setAttribute('y', String(y));
-    label.setAttribute('fill', '#dce4e9');
-    label.setAttribute('font-family', 'Segoe UI, Arial, sans-serif');
+    label.setAttribute('fill', ink);
+    label.setAttribute('font-family', font);
     label.setAttribute('font-size', String(size));
     label.textContent = value;
     output.appendChild(label);
@@ -60,9 +65,9 @@ export async function exportPlotImage(
       const label = document.createElementNS(ns, 'text');
       label.setAttribute('x', String(x + 22));
       label.setAttribute('y', String(y));
-      label.setAttribute('fill', '#dce4e9');
+      label.setAttribute('fill', ink);
       label.setAttribute('font-size', '11');
-      label.setAttribute('font-family', 'Segoe UI, Arial, sans-serif');
+      label.setAttribute('font-family', font);
       const limit = Math.floor((width / 3 - 38) / 6);
       label.textContent =
         item.label.length > limit
