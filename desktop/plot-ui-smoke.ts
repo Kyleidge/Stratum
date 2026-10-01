@@ -628,6 +628,11 @@ export async function plotUiSmoke() {
       ?.textContent?.includes('Review marker'),
     'Annotation marker is missing.',
   );
+  // The annotation list below the plot resizes the chart; let it settle.
+  await until(
+    () => Math.abs(chart().clientHeight - chart().viewBox.baseVal.height) < 1,
+    'annotation layout',
+  );
   const stored = () => readPlotSheets(localStorage.getItem(PLOT_STORAGE_KEY));
   const noteLabel = () =>
     chart().querySelector<SVGTextElement>('.plot-annotation text')!;

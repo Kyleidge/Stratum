@@ -51,6 +51,10 @@ type Trace = {
   color?: string;
   label?: string;
   referenceLine?: boolean;
+  /** Direct label drawn at the end of a reference line, such as "avg 12.3". */
+  referenceLabel?: string;
+  /** Time at which a minimum or maximum occurs, marked on its line. */
+  referenceTime?: number;
   style?: PlotTrace['style'];
   width?: number;
   axisId?: string;
@@ -351,6 +355,51 @@ export default function SignalChart({
       d: group.d.join(' '),
     }));
   }, [traces, left, span, range, bottom, scales, plotHeight, interaction]);
+  // Values are labelled directly at the visible end of their reference line.
+  const references = traces.flatMap((trace) => {
+    const points = trace.plot.points;
+    const value = points[0]?.[1];
+    if (
+      !trace.referenceLine ||
+      !trace.referenceLabel ||
+      !Number.isFinite(value)
+    )
+      return [];
+    const scale = scales.find(
+      (axis) =>
+        !interaction ||
+        axis.key ===
+          traceAxisKey(trace.node.unit, trace.axisId, interaction.axes),
+    );
+    if (!scale || (scale.log && value <= 0)) return [];
+    const offset = trace.offset ?? 0;
+    const start = Math.max(left, x(points[0][0] - offset));
+    const end = Math.min(right, x(points[points.length - 1][0] - offset));
+    if (end < start) return [];
+    const y =
+      bottom -
+      (((scale.log ? Math.log10(value) : value) - scale.min) /
+        (scale.max - scale.min || 1)) *
+        plotHeight;
+    if (y < 15 || y > bottom) return [];
+    const marker =
+      trace.referenceTime === undefined
+        ? undefined
+        : x(trace.referenceTime - offset);
+    return [
+      {
+        key: trace.node.id,
+        color: trace.color || trace.node.color,
+        label: trace.referenceLabel,
+        x: Math.max(start + 40, end - 4),
+        y,
+        marker:
+          marker !== undefined && marker >= left && marker <= right
+            ? marker
+            : undefined,
+      },
+    ];
+  });
   const currentTime =
     cursor === null ? null : range[0] + cursor * (range[1] - range[0]);
   const nearest =
@@ -844,6 +893,26 @@ export default function SignalChart({
             ),
           )}
         </g>
+        {references.map((item) => (
+          <g
+            key={item.key}
+            className="chart-reference"
+            pointerEvents="none"
+            style={{ fill: item.color }}
+          >
+            {item.marker !== undefined && (
+              <circle cx={item.marker} cy={item.y} r="3.5" />
+            )}
+            <text
+              x={item.x}
+              y={Math.max(26, item.y - 6)}
+              textAnchor="end"
+              className="chart-reference-label"
+            >
+              {item.label}
+            </text>
+          </g>
+        ))}
         {currentTime !== null &&
           !gesture &&
           !interaction?.cursors &&

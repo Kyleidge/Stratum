@@ -94,8 +94,12 @@ There are no server API routes or cloud signal uploads.
   operations are illustrative, not the engine's. See `docs/ui-refresh-review.md`.
 - `components/workbench.tsx`: retained legacy workspace for compatibility.
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
-- `components/plot-scratchpad.tsx` and `lib/plot-scratchpad.ts`: Active combines
-  plotting with the operation output dock; saved plots persist styles, limits,
+- `components/plot-scratchpad.tsx` and `lib/plot-scratchpad.ts`: Active plots
+  the selection (a signal; a value as a labelled reference line over its input,
+  with a marker at a minimum/maximum; or up to eight outputs of an operation,
+  each coloured by its position in that operation) above value tiles and the
+  `components/workflow-dock.tsx` Outputs/Samples/Settings dock. The chart fills
+  the space between its controls and the dock. Saved plots persist styles, limits,
   annotations and viewport independently of workflow history. Plot gestures use
   display time and translate per-trace offsets before viewport evaluation.
   `lib/plot-axes.ts` groups exact units into independently scaled, automatically

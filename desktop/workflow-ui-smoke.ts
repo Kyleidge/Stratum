@@ -243,13 +243,21 @@ export async function workflowUiSmoke() {
     );
     tab.click();
     await delay();
-    const dock =
-      document.querySelector<HTMLDetailsElement>('.plot-output-dock');
-    assert(dock, 'Active must contain the operation outputs.');
-    if (!dock.open) {
-      dock.querySelector<HTMLElement>('summary')!.click();
+    const outputs = await until(
+      () =>
+        document.querySelector<HTMLButtonElement>(
+          '.plot-output-dock #plot-dock-outputs',
+        ) ?? undefined,
+      'operation outputs dock',
+    );
+    if (outputs.getAttribute('aria-selected') !== 'true') {
+      outputs.click();
       await delay();
     }
+    assert(
+      document.querySelector('.plot-dock-body .workflow-output-panel'),
+      'Active must dock the operation outputs below the plot.',
+    );
   }
   async function choose(label: string, text: string) {
     const chooser = (await dialog()).querySelector<HTMLButtonElement>(

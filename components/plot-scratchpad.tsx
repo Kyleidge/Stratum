@@ -25,7 +25,6 @@ import {
   Pin,
   Plus,
   Search,
-  Table2,
   X,
   ZoomIn,
   ZoomOut,
@@ -119,19 +118,35 @@ type Props = {
   project: Project;
   graph: SignalGraph;
   index: WorkflowIndex;
-  activeId: string;
+  /** Signals and values plotted on the Active tab for the current selection. */
+  active: ActivePlot;
+  /** The selected signal or value, offered for adding to a saved plot. */
+  selectedId: string;
   checkedIds: string[];
   view: string;
   onView: (view: string) => void;
   onInspect: (id: string) => void;
   request: (message: EngineRequest) => Promise<EngineResponse>;
-  outputs: ReactNode;
-  outputCount: number;
-  outputKey: string;
-  valueCard: ReactNode;
+  /** Value results shown above the Active plot. */
+  valueTiles: ReactNode;
+  /** Outputs, samples and settings of the selection, docked below Active. */
+  dock: ReactNode;
   busy: boolean;
   onNotice: (message: string) => void;
   onDragEnd: () => void;
+};
+export type ActivePlot = {
+  key: string;
+  title: string;
+  traces: { id: string; color: string }[];
+  /** Explains when the selection has more outputs than Active shows. */
+  note?: string;
+};
+const VALUE_TAGS: Record<string, string> = {
+  'time-average': 'avg',
+  'sample-average': 'mean',
+  minimum: 'min',
+  maximum: 'max',
 };
 const initialSheet: PlotSheet = {
   id: 'result',
@@ -146,16 +161,15 @@ export default function PlotScratchpad({
   project,
   graph,
   index,
-  activeId,
+  active,
+  selectedId,
   checkedIds,
   view,
   onView,
   onInspect,
   request,
-  outputs,
-  outputCount,
-  outputKey,
-  valueCard,
+  valueTiles,
+  dock,
   busy,
   onNotice,
   onDragEnd,
@@ -174,7 +188,6 @@ export default function PlotScratchpad({
   const [measureStates, setMeasureStates] = useState<Record<string, boolean>>(
     {},
   );
-  const [outputsOpen, setOutputsOpen] = useState(false);
   const [backViews, setBackViews] = useState<
     Record<string, { window: PlotRange; axes?: PlotAxes }[]>
   >({});
@@ -218,18 +231,22 @@ export default function PlotScratchpad({
   const saved = sheets.find((sheet) => sheet.id === view);
   const isActive = !saved;
   const selectedTab = saved?.id ?? 'result';
+  const activeKey = active.key;
+  const activeId = active.traces[0]?.id ?? '';
+  // Active follows the selection; trace styles and visibility persist per selection.
   const sheet: PlotSheet = saved ?? {
     ...initialSheet,
-    ...activeSettings[activeId],
-    traces: activeId
-      ? [
-          activeSettings[activeId]?.traces?.find(
-            (trace) => trace.id === activeId,
-          ) ?? { id: activeId, visible: true, color: TRACE_COLORS[0] },
-        ]
-      : [],
+    ...activeSettings[activeKey],
+    traces: active.traces.map(
+      ({ id, color }) =>
+        activeSettings[activeKey]?.traces?.find((trace) => trace.id === id) ?? {
+          id,
+          visible: true,
+          color,
+        },
+    ),
   };
-  const windowKey = saved?.id ?? `active:${activeId}`;
+  const windowKey = saved?.id ?? `active:${activeKey}`;
   const measuring = measureStates[windowKey] ?? sheet.measuring ?? false;
   function setMeasuring(value: boolean) {
     setMeasureStates((old) => ({ ...old, [windowKey]: value }));
@@ -385,6 +402,11 @@ export default function PlotScratchpad({
             label: index.label(trace.id),
             offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
             referenceLine: !!value,
+            referenceLabel:
+              value && value.value !== null
+                ? `${VALUE_TAGS[value.operation] ?? ''} ${formatValue(value.value, 1)}`.trim()
+                : undefined,
+            referenceTime: value?.timestamp,
             style: trace.style,
             width: trace.width,
             axisId: trace.axisId,
@@ -707,7 +729,7 @@ export default function PlotScratchpad({
     try {
       await exportPlotImage(
         host.current,
-        saved?.name ?? index.label(activeId),
+        saved?.name ?? active.title,
         format,
         (stacked
           ? traces.slice(safeStackPage * 8, (safeStackPage + 1) * 8)
@@ -755,7 +777,7 @@ export default function PlotScratchpad({
     else
       setActiveSettings((old) => ({
         ...old,
-        [activeId]: { ...old[activeId], ...change },
+        [activeKey]: { ...old[activeKey], ...change },
       }));
   }
   function create(ids: string[], template?: PlotSheet) {
@@ -798,8 +820,8 @@ export default function PlotScratchpad({
     const destination = sheets.find((item) => item.id === tabId);
     const existing =
       destination?.traces ??
-      (tabId === 'result' && activeId
-        ? [{ id: activeId, visible: true, color: TRACE_COLORS[0] }]
+      (tabId === 'result'
+        ? active.traces.map(({ id, color }) => ({ id, visible: true, color }))
         : []);
     const existingIds = new Set(existing.map((trace) => trace.id));
     const additions = ids.filter((id) => !existingIds.has(id));
@@ -881,7 +903,8 @@ export default function PlotScratchpad({
   }
   function openPicker() {
     setDraft(
-      saved?.traces.map((trace) => trace.id) ?? (activeId ? [activeId] : []),
+      saved?.traces.map((trace) => trace.id) ??
+        active.traces.map((trace) => trace.id),
     );
     setQuery('');
     setPickerPage(0);
@@ -1008,9 +1031,7 @@ export default function PlotScratchpad({
                       {saved.name}
                     </button>
                   ) : (
-                    <h1>
-                      {activeId ? index.label(activeId) : 'Select a signal'}
-                    </h1>
+                    <h1>{activeId ? active.title : 'Select a signal'}</h1>
                   )}
                 </div>
                 {isActive ? (
@@ -1020,10 +1041,13 @@ export default function PlotScratchpad({
                       !activeId || !loaded || sheets.length >= MAX_PLOT_TABS
                     }
                     onClick={() =>
-                      create([activeId], {
-                        ...sheet,
-                        name: index.label(activeId),
-                      })
+                      create(
+                        active.traces.map((trace) => trace.id),
+                        {
+                          ...sheet,
+                          name: active.title,
+                        },
+                      )
                     }
                   >
                     <Pin size={15} /> Keep plot
@@ -1074,12 +1098,12 @@ export default function PlotScratchpad({
                 )}
               </div>
               {saved &&
-                activeId &&
-                !saved.traces.some((trace) => trace.id === activeId) &&
+                selectedId &&
+                !saved.traces.some((trace) => trace.id === selectedId) &&
                 saved.traces.length < MAX_PLOT_TRACES && (
                   <div className="scratchpad-selection">
                     <span>
-                      Selected <strong>{index.label(activeId)}</strong>
+                      Selected <strong>{index.label(selectedId)}</strong>
                     </span>
                     <button
                       className="workflow-link"
@@ -1088,7 +1112,7 @@ export default function PlotScratchpad({
                           traces: [
                             ...saved.traces,
                             {
-                              id: activeId,
+                              id: selectedId,
                               color:
                                 TRACE_COLORS[
                                   saved.traces.length % TRACE_COLORS.length
@@ -1103,7 +1127,7 @@ export default function PlotScratchpad({
                     </button>
                   </div>
                 )}
-              {isActive && valueCard}
+              {isActive && valueTiles}
               <div
                 className="scratchpad-canvas"
                 {...dropProps(selectedTab)}
@@ -1257,7 +1281,7 @@ export default function PlotScratchpad({
                     className="scratchpad-mode"
                     aria-label="Plot settings and delivery"
                   >
-                    {isActive && (
+                    {isActive && active.traces.length === 1 && (
                       <button
                         aria-label="Active trace properties"
                         title="Trace color and rendering"
@@ -1320,6 +1344,44 @@ export default function PlotScratchpad({
                     </button>
                   </fieldset>
                 </div>
+                {isActive && sheet.traces.length > 1 && (
+                  <div className="plot-legend" aria-label="Traces">
+                    {sheet.traces.map((trace) => (
+                      <button
+                        key={trace.id}
+                        aria-pressed={trace.visible}
+                        title={trace.visible ? 'Hide trace' : 'Show trace'}
+                        onClick={() =>
+                          update({
+                            traces: sheet.traces.map((item) =>
+                              item.id === trace.id
+                                ? { ...item, visible: !item.visible }
+                                : item,
+                            ),
+                          })
+                        }
+                      >
+                        <i
+                          style={
+                            index.values.has(trace.id)
+                              ? { borderTopColor: trace.color }
+                              : { background: trace.color }
+                          }
+                          data-value={index.values.has(trace.id)}
+                        />
+                        <span>{index.label(trace.id)}</span>
+                        {trace.visible ? (
+                          <Eye size={13} />
+                        ) : (
+                          <EyeOff size={13} />
+                        )}
+                      </button>
+                    ))}
+                    {active.note && (
+                      <span className="plot-legend-note">{active.note}</span>
+                    )}
+                  </div>
+                )}
                 {visibleIds.length ? (
                   plotView?.error ? (
                     <div className="scratchpad-empty" role="alert">
@@ -1768,26 +1830,7 @@ export default function PlotScratchpad({
               ) : null}
             </>
           )}
-          {isActive && (
-            <details
-              className="plot-output-dock"
-              key={outputKey}
-              open={!activeId || view === 'outputs' || outputsOpen}
-              onToggle={(event) => setOutputsOpen(event.currentTarget.open)}
-            >
-              <summary
-                onClick={(event) => {
-                  event.preventDefault();
-                  onView('result');
-                  setOutputsOpen(!(view === 'outputs' || outputsOpen));
-                }}
-              >
-                <Table2 size={14} /> Operation outputs{' '}
-                <span>{outputCount}</span>
-              </summary>
-              {(!activeId || view === 'outputs' || outputsOpen) && outputs}
-            </details>
-          )}
+          {isActive && dock}
         </TabsContent>
       </Tabs>
       {closed && (
