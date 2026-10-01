@@ -148,3 +148,37 @@ the native production UI smoke test and live browser checks of the prototype.
 The full lint baseline remains the same 19 starter-component issues. In this
 environment, checks used the installed executables behind the package scripts
 because the bundled pnpm launcher attempted an unnecessary dependency reinstall.
+
+## Adoption in the workbench — October 2026
+
+The active workbench now implements the refresh, following the suggested order
+above. The prototype remains at `/mockup` as the design reference; it still
+runs on its own in-memory workspace.
+
+| #   | Area             | Adopted as                                                                                                                                                                                      |
+| --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Segment dialog   | Preview, trigger and target choices use the History labels (`WorkflowIndex.label`).                                                                                                             |
+| 2   | Plot axes        | Time and value ticks use 1/2/5 × 10ⁿ steps from `lib/plot-ticks.ts`; logarithmic axes use decades. The value range keeps its padding instead of rounding outward, so held scales are unchanged. |
+| 3   | Layout           | An operation plots up to eight outputs on Active, coloured by position, above a dock with Outputs, Samples and Settings.                                                                        |
+| 4   | Values           | Values are dashed reference lines with direct labels; minima and maxima mark their time. Value operations show result tiles above the plot.                                                     |
+| 5   | Chrome           | One top bar holds the scope menu, Undo/Redo, the four operations and the "Apply to" chip, which names a single input and clears checked inputs in place.                                        |
+| 6   | History sidebar  | One filter field and All/Signals/Values chips; numbered, kind-coloured steps on a spine; dots on contributing outputs. Details are in a right-hand inspector with lineage and Used by.          |
+| 7   | Theming          | Role tokens per theme in `app/globals.css`, with a persisted light theme. Stylesheets contain no raw colours outside the two theme blocks.                                                      |
+| 8   | Typography       | One system font family, a five-step scale and tabular figures.                                                                                                                                  |
+| 9   | Output table     | Output kinds are a coloured dot and text.                                                                                                                                                       |
+| 10  | Plot toolbar     | One row of grouped segmented controls with a single Export menu; labels collapse to icons in narrow plots.                                                                                      |
+| 11  | Copy             | Pluralized, with the duplicate segmentation hint removed.                                                                                                                                       |
+| 12  | CSS hygiene      | The duplicate header and sidebar rules were rewritten once, and styles for about 20 classes that no component uses were removed.                                                                |
+| 13  | Multi-unit plots | Overlay draws different units in lanes on one time axis; the "Y axes" layout keeps multi-axis overlays as an explicit choice.                                                                   |
+
+The workbench also adopts the prototype's Ctrl+K command palette, Ctrl+Z/Ctrl+Y,
+Undo in change notices, and drawers for the inspector below 1240 px and History
+below 820 px.
+
+It keeps the engine behaviours listed under "Not in the prototype": the
+virtualized history, bounded lists, atomic Edit and exact samples. Unlike the
+prototype, the Samples tab pages exact samples of one plotted signal rather
+than following the cursor, the outputs table has no sparklines (each would need
+its own engine read), and dark remains the default theme. The printable
+HTML report is a standalone document and keeps its own print colours. Saved
+trace colours stay fixed values because users can edit them.

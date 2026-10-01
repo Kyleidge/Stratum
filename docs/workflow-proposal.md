@@ -25,12 +25,13 @@ flowchart LR
 
 ## History is the primary navigation
 
-The center is a plot scratchpad. **Active** follows the inspected signal (or a
-value's input); **Keep plot** copies that signal into a named comparison tab.
+The center is a plot scratchpad. **Active** follows the selection: a signal, a
+value as a reference line over its input, or up to eight outputs of an
+operation. **Keep plot** copies those traces into a named comparison tab.
 **New plot** starts an empty tab. Named tabs stay selected while browsing History,
 and **Add to this plot** adds the inspected signal without changing checked
 processing inputs. The searchable **Add signals** dialog can also use checked
-inputs. Step outputs remain a separate tab with the existing export scopes.
+inputs. Step outputs sit in a dock below Active with the existing export scopes.
 
 Dragging a segment onto a plot adds the exact outputs of its producing segment
 operation. Dragging it onto a processing tool selects only that member. Operation
@@ -59,13 +60,12 @@ across recordings. Otherwise overlays require matching units and explicit time r
 use stacked axes, with independent time axes clearly labeled when clocks differ.
 Zoom, pan, and Fit adjust the bounded plot preview; summaries describe all samples.
 Exact samples and exports still come from evaluated engine data, never the preview.
-The toolbar above History has labelled Derive, Segment and Value actions, with
-Compare, an input-count control and an inspection/export menu underneath. Edit,
-duplicate, rename and delete live in each History item's context menu. Inspection
-preserves checked scope; an explicitly empty scope disables creation. The input
-review offers Follow selection to return to automatic inputs. The footer shows
-selection, processing scope, totals and progress; signal details no longer occupy
-space below the plot.
+One top bar holds labelled Derive, Segment, Value and Compare actions, the
+"Apply to" processing scope and an inspection/export menu. Edit, duplicate,
+rename and delete live in each History item's context menu and in the inspector.
+Inspection preserves checked scope; an explicitly empty scope disables creation.
+The input review's Follow selection, or the × on Apply to, returns to automatic
+inputs. The footer shows selection, notifications with Undo, totals and progress.
 Only the selected tab renders charts, and signal choices are paged in groups of 30.
 
 **Segment → Time ranges** shows an interactive plot of a chosen input signal.
@@ -81,20 +81,18 @@ current time reference for workspace outputs. Choosing a preview signal does
 not change the processing scope. Preview and Create retain the existing clip /
 discard policy, independent input processing and atomic operation history.
 
-Selection **Details** sits in a fixed-height, collapsible section below the
-history tree and the Signals & values index. It shows the selected item, units,
-time range and a direct link to its producing operation. **More details** opens
-the complete metadata, time reference, source recordings and input links in a
-dialog. Selection changes update the summary without reopening a collapsed
-section or changing its height. The open/closed preference is remembered on this
-device. There is no permanent right-hand properties pane; the plot uses all the
-remaining width.
+Selection details live in a right-hand **inspector**: kind, name, a value's
+result, properties, time axis, inputs, a bounded lineage chain back to the
+original recordings, the operations that use the selection, source recordings
+and Edit/Duplicate/Delete. Selection changes update it in place, and History
+keeps the full height of its rail. Hiding the inspector returns its width to the
+plot; the choice is remembered on this device. Below 1240 px it opens as a
+drawer, and below 820 px History does too.
 
-Drag the divider beside **Operation history** to resize the navigation and its
-details together. The width is remembered on this device and constrained to
-leave room for the plot. Focus the divider and use Left/Right arrows (Shift for larger steps),
+Drag the dividers beside History and the inspector to resize them. Widths are
+remembered on this device and constrained to leave room for the plot. Focus the divider and use Left/Right arrows (Shift for larger steps),
 Home/End for its limits, or Enter to reset. Double-click also resets the width;
-Escape cancels an in-progress drag. Narrow windows retain the stacked layout.
+Escape cancels an in-progress drag.
 
 The history tree has two levels: an operation and its immediate outputs. The
 operation sequence remains chronological, oldest first. Dependency depth does

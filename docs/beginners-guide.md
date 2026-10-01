@@ -13,12 +13,14 @@ seven completed steps, from original signals to smoothing, segments and values.
 
 ![Stratum showing the motor-test example, chronological history and the Motor speed plot.](images/beginners-guide/00-example.png)
 
-_Figure 1. History is on the left; processing tools run across the top. Active
-shows the selected signal, and Operation outputs sits below the plot._
+_Figure 1. History is on the left and the operations run along the top bar.
+Active plots the selection above the operation's outputs, and the inspector on
+the right shows its details and lineage._
 
-Click the arrow beside a step in **History tree** to expand its outputs, then
-click a signal name. **Signals & values** offers another way to find a result.
-The **Scope** selector above the history switches between recordings.
+Click the arrow beside a step in **History** to expand its outputs, then click a
+signal name. Type in **Filter steps and outputs**, or choose the **All**,
+**Signals** or **Values** chip, to find a result; **Ctrl+K** searches every step
+and output. The recording menu beside **Stratum** switches between recordings.
 
 ### Import your own data
 
@@ -46,12 +48,12 @@ The next three pages walk through one small workflow: smooth torque, keep a
 ### Select the original torque signal
 
 Expand **#001 Record motor speed and torque** and click **Torque**. It appears
-in **Active**. Check the input-count control near **Inspect / export**: it
-should show **1 input** for this exercise.
+in **Active**. Check **Apply to** beside the operations in the top bar: it
+should name **Torque** for this exercise.
 
 **Remember:** viewing an item and checking processing inputs are separate
-actions. Checked inputs stay selected while you browse. Open the input-count
-control and choose **Follow selection** to use the item you are viewing again.
+actions. Checked inputs stay selected while you browse. Choose the **×** on
+**Apply to** to use the item you are viewing again.
 
 ### Apply a moving average
 
@@ -64,16 +66,15 @@ want to check the input name, then choose **Create 1 derived signal**.
 _Figure 2. The Filters tab contains Moving average. Window size controls how
 many samples are used; the button creates a new derived signal._
 
-The new operation appears at the end of history. Select its **Torque · Smoothed**
-output before continuing. The original Torque signal remains available under
-step #001.
+The new operation appears at the end of history and its output is selected.
+The original Torque signal remains available under step #001.
 
 ### Process several signals together
 
-Select a step and expand **Operation outputs** below the Active plot to reveal
-the **Step outputs** table. Tick the signals you want to process, then check
-the input count before opening Derive, Segment or Value. Use **Follow selection**
-when you want to return to a single selected signal.
+Select a step: Active plots its outputs together, and the **Outputs** tab below
+the plot lists them. Tick the signals you want to process, then check **Apply
+to** before opening Derive, Segment or Value. Clear the checked inputs when you
+want to return to a single selected signal.
 
 <!-- pagebreak -->
 
@@ -112,13 +113,14 @@ the input, then choose **Create 1 value**.
 _Figure 4. Value creates one number per input signal. The calculation cards
 explain how each result is calculated._
 
-Open the new value in history. The result card shows its value, unit, finite
-sample count and valid time coverage; the plot below shows its input signal.
+The new value opens automatically. The result card shows its value, unit,
+finite sample count and valid time coverage; the plot below draws the value as
+a labelled dashed line over its input signal.
 
 ![The resulting time-average card showing 82.448 Nm, 401 finite samples and 40 seconds of valid intervals.](images/beginners-guide/04-result.png)
 
-_Figure 5. The result card from this example exercise. Your own recordings will
-produce different values and coverage._
+_Figure 5. The result card and its reference line from this example exercise.
+Your own recordings will produce different values and coverage._
 
 **Time average** weights by elapsed time and excludes missing intervals.
 **Sample average** gives each finite sample equal weight. **Minimum** and
@@ -126,15 +128,18 @@ produce different values and coverage._
 
 ### Trace and revise your work
 
-Open **Inspect / export** for **View samples**, **Inputs and originals**,
-**Show lineage in tree**, or **Used by later operations**. Clear search or
-choose **Show all steps** if a filter hides something you expect to see.
+The inspector on the right shows the selection's properties, its lineage back
+to the original recordings and the later operations that use it. **Inspect /
+export** in the top bar also opens **View samples**, **Inputs and originals**,
+**Show lineage in tree** and **Used by later operations**. Clear the filter or
+choose **Show all steps** if History hides something you expect to see.
 
-Right-click a History item to rename it or manage its operation.
-**Edit settings** updates the operation and recalculates dependent results;
-**Duplicate operation** starts a separate branch. **Delete operation** previews
-the dependent work it will also remove. The header's **Undo** and **Redo** keep
-the last 20 workspace changes, including across restarts.
+Use the inspector's buttons, or right-click a History item, to rename it or
+manage its operation. **Edit settings** updates the operation and recalculates
+dependent results; **Duplicate** starts a separate branch. **Delete** previews
+the dependent work it will also remove. **Undo** and **Redo** in the top bar
+(**Ctrl+Z**, **Ctrl+Y**) keep the last 20 workspace changes, including across
+restarts.
 
 <!-- pagebreak -->
 
@@ -147,14 +152,15 @@ that stays open while you browse, and **New plot** starts a blank comparison.
 
 Choose **New plot > Add signals**. Find the three **Run 1**, **Run 2** and
 **Run 3** signals named **Torque × speed**, tick them, then choose
-**Apply signals**. Turn on **Align starts at 0** to compare their elapsed time.
+**Apply signals**. Turn on **Align starts** to compare their elapsed time.
 
 ![A named plot overlaying the three Torque times speed run signals, with their starts aligned at zero.](images/beginners-guide/05-comparison.png)
 
-_Figure 6. Three runs share an elapsed-time axis. The Starts at 0 control is
-active; the numbered badge on Plot 1 shows that it contains three traces._
+_Figure 6. Three runs share an elapsed-time axis. Align starts is active; the
+numbered badge on the plot tab shows that it contains three traces._
 
-**Align starts at 0** changes the display only. **Compare** opens
+Selecting the step that created the runs plots them together on **Active**
+too. **Align starts** changes the display only. **Compare** opens
 **Compare & align** when you want to create reusable aligned signals, including
 signals from different recordings.
 
@@ -162,11 +168,13 @@ signals from different recordings.
 
 - Click the plot to focus it, then scroll to zoom time. Shift-drag pans in time.
   Choose **Fit** to see the complete plot again.
-- Use **Overlay** for a shared plot or **Stacked** for separate panels. Open
-  the trace list below the plot to show, hide or edit individual traces.
+- **Overlay** draws traces on one time axis, giving different units their own
+  lanes; **Stacked** gives each trace a panel; **Y axes** overlays different
+  units on independent scales. Open the trace list below a plot to show, hide
+  or edit individual traces.
 - Drag signals onto a plot to add them. Dragging a segment adds all sibling
   segments from its operation; **Add signals** lets you choose individual members.
-- Use the plot toolbar's **SVG** or **PNG** controls to save an image of the plot.
+- Use the plot toolbar's **Export** menu to save an SVG or PNG image of the plot.
 
 Named plot layouts are saved on this device, separately from workflow history
 and workspace backups.
@@ -210,5 +218,6 @@ replaces the current workspace after confirmation; Undo can recover the prior on
 Desktop and browser workspaces have separate local storage. Use a backup to move
 your analysis between them or to another computer. Backups support up to
 **128 MiB**; Samples CSV supports **64 MiB** per file. For a larger sample export,
-choose fewer signals or shorter segments. The header's **Guide** opens the
-built-in workflow help.
+choose fewer signals or shorter segments. The **?** button in the top bar opens
+the built-in workflow help, and the sun or moon button switches between light
+and dark themes.

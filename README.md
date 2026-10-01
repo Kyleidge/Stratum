@@ -38,11 +38,13 @@ native bundle. Packages are unsigned development builds.
 
 ## Explore
 
-The center is a **plot scratchpad**. **Active** follows the inspected signal;
-**Keep plot** makes a named tab that stays open as you browse. **New plot** starts
-a blank comparison. Use **Add signals** for keyboard-accessible selection, or drag
-items from **History tree** or **Signals & values** onto the canvas, a named tab,
-or New plot. Dropping on Active creates a comparison containing its current signal.
+The center is a **plot scratchpad**. **Active** follows the selection: a signal,
+a value drawn as a labelled dashed line over its input, or up to eight outputs of
+an operation, each keeping its colour. **Keep plot** makes a named tab that stays
+open as you browse. **New plot** starts a blank comparison. Use **Add signals**
+for keyboard-accessible selection, or drag items from **History** onto the
+canvas, a named tab, or New plot. Dropping on Active creates a comparison
+containing its current traces.
 
 | Dragged item               | Onto a plot                                             | Onto a processing tool                                     |
 | -------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
@@ -51,11 +53,13 @@ or New plot. Dropping on Active creates a comparison containing its current sign
 | Operation                  | Add every plottable output                              | Select its signal outputs, or the inputs of its values     |
 | Scalar value               | Add a dashed reference line over its evaluated interval | Select its input signal, with an explanation in the editor |
 
-Turn on **Δt · Align starts at 0** to compare segments by elapsed time. This is
-a display setting; it does not change timestamps or create a workflow operation.
-Overlays require matching units and a shared clock, or elapsed-time display.
-Other comparisons use stacked axes. Use **Compare & align** to create reusable
-aligned signals with explicit time references.
+Turn on **Align starts** to compare segments by elapsed time. This is a display
+setting; it does not change timestamps or create a workflow operation.
+**Overlay** draws traces on one time axis and gives each unit its own lane;
+**Y axes** overlays different units on independent scales; **Stacked** gives each
+trace a panel. Traces need a shared clock, or elapsed-time display, to share a
+time axis. Use **Compare & align** to create reusable aligned signals with
+explicit time references.
 
 Named plots retain their traces, colors, visibility, grid and elapsed-time settings
 on this device. Trace controls show 30 at a time and stacked plots show eight at
@@ -64,13 +68,15 @@ tabs and up to 10,000 traces per tab, rejecting larger drops without partial add
 Plots reference live outputs, so edits refresh them and Undo can restore a removed
 trace. Layouts are separate from workspace backups and workflow Undo/Redo.
 
-The toolbar above History keeps **Derive**, **Segment** and **Value** in view,
-with **Compare** underneath. The input-count control opens the processing scope;
-it distinguishes the current selection from checked inputs. **Follow selection**
-releases a checked batch so inputs follow the item you inspect again. Removing
-every checked input disables creation until you choose new inputs.
+One top bar holds the recording menu, **Undo**/**Redo**, **Derive**, **Segment**,
+**Value** and **Compare**, and **Apply to**, which names the processing inputs.
+It distinguishes the current selection from checked inputs; its **×** releases a
+checked batch so inputs follow the item you inspect again. Removing every checked
+input disables creation until you choose new inputs. **Ctrl+K** searches every
+step and output and runs the same commands. The sun or moon button switches
+between the dark and light themes.
 
-The **⋯** menu contains samples, export, lineage and navigation. Drag over it to
+The **⋯ Inspect / export** menu contains samples, export, lineage and navigation. Drag over it to
 reveal accepting menu items, or drop an item on it and choose an action. Right-click
 a History item for edit, duplicate, rename and delete, plus inspection, export and
 input selection. Keyboard users can open the context menu with **Shift+F10**.
@@ -81,14 +87,16 @@ Inspection preserves checked inputs. Creating or editing data still requires
 applying the editor, and deletion shows its normal impact confirmation. Starting
 or cancelling a drag does not change the selection.
 
-Select a step to inspect its complete **Step outputs** table; use checkboxes for
-batch selection. Browsing normally preserves checked inputs. **Inputs and
-originals**, **Show lineage in tree**, and **Used by later operations** open the
-selected item's relationships from the toolbar. Segments remain ordinary derived
-signals and can be segmented again. **Repeat with new settings** appends a new step.
-The footer shows the inspected item, processing scope, workspace totals, local
-storage status and progress or notifications. The recording filter lives above
-the History toolbar.
+Select a step to plot its outputs. The dock below the plot lists them under
+**Outputs**, with exact **Samples** and saved **Settings**; use checkboxes for
+batch selection. Browsing normally preserves checked inputs. The inspector on the
+right shows the selection's properties, its lineage back to the original
+recordings and the operations that use it. **Inputs and originals**, **Show
+lineage in tree**, and **Used by later operations** are also in Inspect / export.
+History filters by text and by the **All**, **Signals** and **Values** chips.
+Segments remain ordinary derived signals and can be segmented again. **Repeat
+with new settings** appends a new step. The footer shows the inspected item,
+notifications with Undo, workspace totals and local storage status.
 
 **Edit settings** revises the selected operation and recalculates dependent
 operations as one transaction. Step numbers and output identities are retained;
