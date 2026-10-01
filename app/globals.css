@@ -806,6 +806,10 @@ h1 > span {
   stroke: #23343f;
   stroke-dasharray: 2 3;
 }
+.chart-baseline {
+  stroke: #3a4a55;
+  stroke-width: 1;
+}
 .chart-segment {
   cursor: pointer;
 }

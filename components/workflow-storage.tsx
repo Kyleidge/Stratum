@@ -105,9 +105,10 @@ export default function WorkflowStorage({
         <DialogContent className="workflow-dialog" showCloseButton={!busy}>
           <DialogTitle>Workspace</DialogTitle>
           <DialogDescription>
-            {recordings} recordings are saved on this device. A backup includes
-            original samples, recipes, history, names and calculated results. It
-            excludes Undo/Redo history.
+            {recordings} {recordings === 1 ? 'recording is' : 'recordings are'}{' '}
+            saved on this device. A backup includes original samples, recipes,
+            history, names and calculated results. It excludes Undo/Redo
+            history.
           </DialogDescription>
           <div className="workflow-storage-actions">
             <button

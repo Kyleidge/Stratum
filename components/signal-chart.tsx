@@ -26,6 +26,7 @@ import {
   valueAxisSettings,
   zoomValueAxis,
 } from '@/lib/plot-axes';
+import { formatAxisTick, logTicks, niceTicks } from '@/lib/plot-ticks';
 
 export function formatValue(value: number, digits = 1): string {
   return Number.isFinite(value)
@@ -240,8 +241,24 @@ export default function SignalChart({
   const bottom = chartHeight - (interaction ? 51 : 31);
   const plotHeight = bottom - 15;
   const valueTicks = fluid
-    ? Math.max(4, Math.min(8, Math.floor(plotHeight / 85)))
+    ? Math.max(4, Math.min(8, Math.floor(plotHeight / 60)))
     : 4;
+  // Round 1/2/5 × 10ⁿ ticks positioned by value, never even divisions.
+  const valueTickMarks = scales.map((axis) => {
+    const { ticks, step } = axis.log
+      ? logTicks(axis.range[0], axis.range[1])
+      : niceTicks(axis.range[0], axis.range[1], valueTicks);
+    return ticks.map((value) => ({
+      value,
+      label: formatAxisTick(value, axis.log ? value : step),
+      y:
+        bottom -
+        (((axis.log ? Math.log10(value) : value) - axis.min) /
+          (axis.max - axis.min || 1)) *
+          plotHeight,
+    }));
+  });
+  const timeTicks = niceTicks(range[0], range[1], ticks);
   const x = (t: number) =>
     left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
   // Merge independent subpaths by style for large overlays. Every trace and
@@ -665,19 +682,24 @@ export default function SignalChart({
             <rect x={left} y="8" width={span} height={bottom - 5} />
           </clipPath>
         </defs>
-        {Array.from({ length: valueTicks }, (_, i) => (
-          <g key={i}>
-            {grid && (
-              <line
-                x1={left}
-                x2={right}
-                y1={15 + (i * plotHeight) / (valueTicks - 1)}
-                y2={15 + (i * plotHeight) / (valueTicks - 1)}
-                className="chart-grid"
-              />
-            )}
-          </g>
-        ))}
+        {grid &&
+          valueTickMarks[0]?.map((tick) => (
+            <line
+              key={tick.value}
+              x1={left}
+              x2={right}
+              y1={tick.y}
+              y2={tick.y}
+              className="chart-grid"
+            />
+          ))}
+        <line
+          x1={left}
+          x2={right}
+          y1={bottom}
+          y2={bottom}
+          className="chart-baseline"
+        />
         {scales.map((axis, axisIndex) => {
           const position = axisIndex ? right + (axisIndex - 1) * 88 : left;
           const direction = axisIndex ? 1 : -1;
@@ -726,22 +748,15 @@ export default function SignalChart({
                   </text>
                 </>
               )}
-              {Array.from({ length: valueTicks }, (_, i) => (
+              {valueTickMarks[axisIndex]?.map((tick) => (
                 <text
-                  key={i}
+                  key={tick.value}
                   x={position + direction * 9}
-                  y={19 + (i * plotHeight) / (valueTicks - 1)}
+                  y={tick.y + 4}
                   textAnchor={axisIndex ? 'start' : 'end'}
                   style={interaction ? { fill: axis.color } : undefined}
                 >
-                  {axisNumber(
-                    axis.log
-                      ? 10 **
-                          (axis.max -
-                            (i / (valueTicks - 1)) * (axis.max - axis.min))
-                      : axis.max -
-                          (i / (valueTicks - 1)) * (axis.max - axis.min),
-                  )}
+                  {tick.label}
                 </text>
               ))}
             </g>
@@ -761,24 +776,24 @@ export default function SignalChart({
             />
           </g>
         )}
-        {Array.from({ length: ticks }, (_, i) => (
-          <g key={i}>
+        {timeTicks.ticks.map((time) => (
+          <g key={time}>
             {grid && (
               <line
-                x1={left + (i * span) / (ticks - 1)}
-                x2={left + (i * span) / (ticks - 1)}
+                x1={x(time)}
+                x2={x(time)}
                 y1="9"
                 y2={bottom + 3}
                 className="chart-grid vertical"
               />
             )}
             <text
-              x={left + (i * span) / (ticks - 1)}
+              x={x(time)}
               y={bottom + 22}
               textAnchor="middle"
               className={interaction ? 'plot-time-axis' : undefined}
             >
-              {axisNumber(range[0] + (i / (ticks - 1)) * (range[1] - range[0]))}
+              {formatAxisTick(time, timeTicks.step)}
             </text>
           </g>
         ))}
@@ -1015,14 +1030,4 @@ export default function SignalChart({
       </svg>
     </section>
   );
-}
-
-function axisNumber(value: number): string {
-  if (!Number.isFinite(value)) return '—';
-  const abs = Math.abs(value);
-  return abs && (abs >= 1e6 || abs < 0.001)
-    ? value.toExponential(2)
-    : Number(value.toPrecision(5)).toLocaleString('en-GB', {
-        maximumFractionDigits: 6,
-      });
 }

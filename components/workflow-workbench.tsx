@@ -1726,6 +1726,7 @@ export default function WorkflowWorkbench() {
                 <SegmentationEditor
                   workflowMode
                   rangePlot={{ graph, request }}
+                  signalLabel={(id) => index.label(id)}
                   applyLabel={
                     editor.editingStepId
                       ? 'Save changes and recalculate'

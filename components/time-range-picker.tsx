@@ -44,8 +44,11 @@ export default function TimeRangePicker({
   onChange,
   request,
   busy,
+  label = (id) => graph.nodes.get(id)?.name ?? id,
 }: {
   graph: SignalGraph;
+  /** Workflow label for a signal, matching History. */
+  label?: (id: string) => string;
   ids: string[];
   value: string;
   onChange: (value: string) => void;
@@ -100,7 +103,7 @@ export default function TimeRangePicker({
                     ? [
                         {
                           value: id,
-                          label: `${signal.name}${signal.unit ? ` [${signal.unit}]` : ''}`,
+                          label: `${label(id)}${signal.unit ? ` [${signal.unit}]` : ''}`,
                         },
                       ]
                     : [];

@@ -60,6 +60,8 @@ type Props = {
     graph: SignalGraph;
     request: (message: EngineRequest) => Promise<EngineResponse>;
   };
+  /** Workflow label for a signal; History and dialogs must name it alike. */
+  signalLabel?: (id: string) => string;
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -174,6 +176,7 @@ export default function SegmentationEditor({
   applyLabel,
   defaultRange,
   rangePlot,
+  signalLabel,
   onPreview,
   onCreate,
 }: Props) {
@@ -283,7 +286,7 @@ export default function SegmentationEditor({
     .filter((node) => node.sourceId === source.id)
     .map((node) => ({
       value: node.id,
-      label: `${node.name} · ${segments.find((segment) => segment.nodes.includes(node.id))?.name ?? node.operation} [${node.unit}]`,
+      label: `${signalLabel ? signalLabel(node.id) : `${node.name} · ${segments.find((segment) => segment.nodes.includes(node.id))?.name ?? node.operation}`} [${node.unit}]`,
     }));
   function definition(): SegmentationDefinition {
     if (method === 'triggers')
@@ -426,7 +429,7 @@ export default function SegmentationEditor({
         ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
         : workflowMode
           ? target === 'selection' && selectedIds.length > 1
-            ? 'Each selected signal is segmented independently.'
+            ? 'Each selected signal is segmented independently. A trigger on the first signal follows the matching signal in each branch.'
             : 'Each interval creates a new signal from this input.'
           : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
     </p>
@@ -520,6 +523,7 @@ export default function SegmentationEditor({
           (rangePlot ? (
             <TimeRangePicker
               graph={rangePlot.graph}
+              label={signalLabel}
               request={rangePlot.request}
               ids={
                 target === 'selection'
@@ -622,7 +626,8 @@ export default function SegmentationEditor({
           </div>
         </div>
         {workflowMode && scopeHint}
-        {target === 'selection' &&
+        {!workflowMode &&
+          target === 'selection' &&
           selectedIds.length > 1 &&
           selectionKind === 'collection' && (
             <p className="input-hint">
@@ -653,7 +658,7 @@ export default function SegmentationEditor({
               {plan.ranges.map((range, index) => (
                 <li
                   key={index}
-                  title={`${range.inputId ? `${nodes.find((node) => node.id === range.inputId)?.name} · ` : ''}Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
+                  title={`${range.inputId ? `${signalLabel ? signalLabel(range.inputId) : nodes.find((node) => node.id === range.inputId)?.name} · ` : ''}Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
                 >
                   <span>{String(index + 1).padStart(2, '0')}</span>
                   <code>
