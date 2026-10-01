@@ -776,9 +776,7 @@ export default function SignalChart({
               {interaction && (
                 <>
                   <title>
-                    {label}
-                    {axis.log ? ' · positive values only' : ''} · Scroll to
-                    zoom; drag to pan; double-click to edit
+                    {`${label}${axis.log ? ' · positive values only' : ''} · Scroll to zoom; drag to pan; double-click to edit`}
                   </title>
                   <rect
                     x={axisIndex ? position : 0}
@@ -1066,8 +1064,7 @@ export default function SignalChart({
                 }}
               >
                 <title>
-                  {note.text} — Drag vertically to move label; double-click to
-                  edit.
+                  {`${note.text} — Drag vertically to move label; double-click to edit.`}
                 </title>
                 <line
                   x1={x(note.time)}

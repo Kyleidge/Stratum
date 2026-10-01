@@ -925,8 +925,12 @@ export async function workflowUiSmoke() {
     );
     assert(
       document.querySelectorAll('.workflow-action-toolbar button').length ===
-        6 && document.querySelectorAll('.workflow-create-action').length === 4,
-      'The top bar must hold four operations, Apply to and Inspect / export.',
+        7 &&
+        document.querySelectorAll('.workflow-create-action').length === 4 &&
+        !!document.querySelector(
+          '.workflow-action-toolbar [aria-label="Add to report"]',
+        ),
+      'The top bar must hold four operations, Apply to, Add to report and Inspect / export.',
     );
     assert(
       !document.querySelector(

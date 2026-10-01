@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useState,
@@ -41,6 +42,7 @@ import {
   ArrowUp,
   ArrowDown,
   LockKeyhole,
+  FilePlus2,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -80,6 +82,7 @@ import {
   MAX_CUSTOM_AXES,
   PLOT_STORAGE_KEY,
   TRACE_COLORS,
+  VALUE_TAGS,
   readPlotSheets,
   navigatePlot,
   plotViewport,
@@ -107,7 +110,9 @@ import SignalChart, {
 } from './signal-chart';
 import PlotMeasurements from './plot-measurements';
 import PlotSelect from './plot-select';
-import { exportPlotImage } from '@/lib/plot-export';
+import { capturePlotSvg, exportPlotImage } from '@/lib/plot-export';
+import { createBlock, type ReportBlock } from '@/lib/report-mockup';
+import { reportSource } from '@/lib/report-data';
 import WorkflowList from './workflow-list';
 import { stepName } from '@/lib/workflow-history';
 import {
@@ -142,6 +147,8 @@ type Props = {
   busy: boolean;
   onNotice: (message: string) => void;
   onDragEnd: () => void;
+  onReport?: (blocks: ReportBlock[]) => void;
+  onSheetsChange?: (sheets: PlotSheet[]) => void;
 };
 export type ActivePlot = {
   key: string;
@@ -149,12 +156,6 @@ export type ActivePlot = {
   traces: { id: string; color: string }[];
   /** Explains when the selection has more outputs than Active shows. */
   note?: string;
-};
-const VALUE_TAGS: Record<string, string> = {
-  'time-average': 'avg',
-  'sample-average': 'mean',
-  minimum: 'min',
-  maximum: 'max',
 };
 const initialSheet: PlotSheet = {
   id: 'result',
@@ -181,6 +182,8 @@ export default function PlotScratchpad({
   busy,
   onNotice,
   onDragEnd,
+  onReport,
+  onSheetsChange,
 }: Props) {
   const [sheets, setSheets] = useState<PlotSheet[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -349,6 +352,12 @@ export default function PlotScratchpad({
         ),
       );
     }
+  }, [sheets, loaded]);
+  const publishSheets = useEffectEvent((next: PlotSheet[]) =>
+    onSheetsChange?.(next),
+  );
+  useEffect(() => {
+    if (loaded) publishSheets(sheets);
   }, [sheets, loaded]);
   const plots = new Map(plotView?.detail?.plots ?? plotView?.overview?.plots);
   function signalFor(id: string) {
@@ -762,6 +771,73 @@ export default function PlotScratchpad({
       onNotice(error instanceof Error ? error.message : 'Plot export failed.');
     } finally {
       setExporting(false);
+    }
+  }
+  function addPlotToReport() {
+    if (!host.current || !onReport || busy || exporting) return;
+    try {
+      const displayed = stacked
+        ? traces.slice(safeStackPage * 8, (safeStackPage + 1) * 8)
+        : overlayTraces;
+      if (!displayed.length)
+        throw new Error('There is no rendered plot to add.');
+      if (displayed.length > 30)
+        throw new Error(
+          'Report snapshots support up to 30 visible traces. Hide some traces or split the plot before adding it.',
+        );
+      const title = saved?.name ?? active.title;
+      const subset = displayed.length < traces.length;
+      const scope = subset
+        ? `displayed ${displayed.length} of ${traces.length} visible traces`
+        : 'displayed plot';
+      const panels = stacked
+        ? [...host.current.querySelectorAll<HTMLElement>('.scratchpad-stack')]
+        : [host.current];
+      let bytes = 0;
+      const blocks = panels.map((panel, i) => {
+        const panelTraces = stacked ? [displayed[i]] : displayed;
+        if (panelTraces.some((trace) => !trace))
+          throw new Error('The displayed plot changed. Try adding it again.');
+        const label = `${title}${panels.length > 1 ? ` · panel ${i + 1} of ${panels.length}` : ''}`;
+        const { background, ...snapshot } = capturePlotSvg(
+          panel,
+          label,
+          panelTraces.map((trace) => ({
+            label: `${trace.label} (${trace.node.unit || 'unitless'})`,
+            color: trace.color,
+          })),
+        );
+        bytes += new TextEncoder().encode(snapshot.svg).byteLength;
+        if (bytes > 8 * 1024 * 1024)
+          throw new Error(
+            'This plot snapshot exceeds 8 MiB. Display fewer traces before adding it.',
+          );
+        return createBlock('plot', {
+          name: label,
+          text: label,
+          width: 640,
+          height: Math.max(
+            140,
+            Math.min(800, (640 * snapshot.height) / snapshot.width),
+          ),
+          padding: 0,
+          fill: background,
+          plotSnapshot: snapshot,
+          source: reportSource(
+            project,
+            panelTraces.map((trace) => trace.node.id),
+            'plot',
+            `${label} · ${scope} snapshot`,
+          ),
+        });
+      });
+      onReport(blocks);
+    } catch (error) {
+      onNotice(
+        error instanceof Error
+          ? error.message
+          : 'Could not add the plot to the report.',
+      );
     }
   }
   function update(change: Partial<PlotSheet>) {
@@ -1399,6 +1475,22 @@ export default function PlotScratchpad({
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    {onReport && (
+                      <button
+                        aria-label="Add plot to report"
+                        title="Add a snapshot of the displayed panels to Reports"
+                        disabled={
+                          !traces.length ||
+                          busy ||
+                          exporting ||
+                          !!plotView?.error ||
+                          (hasSignals && plotView?.detail?.key !== idsKey)
+                        }
+                        onClick={addPlotToReport}
+                      >
+                        <FilePlus2 size={14} />
+                      </button>
+                    )}
                     <button
                       aria-label="Plot interaction help"
                       title="Plot gestures and shortcuts"

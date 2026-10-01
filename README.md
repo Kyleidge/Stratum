@@ -129,6 +129,27 @@ the entered settings and clears any outdated interval preview. **Calculate
 value** offers four cards for time average, sample average, minimum and maximum,
 with a short explanation of how each result is calculated.
 
+### Compose a report
+
+Choose **Reports** in the top bar for a page-based report editor beside **Data
+Inspector**. Switching keeps both workspaces as they were: the inspected item,
+checked inputs, plots and the report draft. Add workspace content with
+**Report** in the top bar (the viewed output or operation), **Add to report** in
+a History item's context menu, the Outputs dock or the checked-input review, the
+report button on a plot (its displayed panels), or by dragging a History item
+onto the **Reports** button or the page. The report's **Data** library lists
+every signal, value, value step and saved plot.
+
+Captures are snapshots: later changes in Data Inspector never alter them, so add
+an item again for its latest state. Signals become editable plot blocks and
+values become read-only tables with editable titles and formatting. Saved plots
+keep their traces, axes, lanes, annotations and value labels as images in the
+current theme. Add text, images and tables; move, resize and format blocks
+across A4 or Letter pages; and choose **Export PDF** to create the PDF on this
+device. Report edits never change signals or workflow history. Drafts and report
+Undo/Redo last for the session. See the
+[report builder notes](docs/report-builder-mockup.md) for limits.
+
 ### Included motor-test workflow
 
 Choose **Open example workflow** from the empty workspace or **Workspace**.
@@ -225,8 +246,9 @@ storage deletes the local workspace and its Undo history.
 Archive version 1 is limited to **128 MiB**; evaluated samples CSV is limited to
 **64 MiB per file**. These exports prepare local downloads; they do not claim
 that a file has finished saving. For larger exports, use shorter segments or
-fewer signals. Reports are standalone printable HTML snapshots of the chosen
-outputs and their contributing history.
+fewer signals. Export / report's printable reports are standalone HTML snapshots
+of the chosen outputs and their contributing history; use **Reports** for an
+arranged multipage PDF.
 
 ## Validate
 
@@ -240,6 +262,9 @@ pnpm build
 pnpm desktop:build
 pnpm desktop:smoke
 pnpm desktop:ui-smoke
+pnpm desktop:report-workspace-smoke
+pnpm desktop:report-plot-smoke
+pnpm desktop:report-smoke
 ```
 
 The test suite exercises numerical results and storage behavior; the native smoke

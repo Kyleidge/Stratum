@@ -3796,3 +3796,107 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
     display: none;
   }
 }
+
+/* Data Inspector and Reports: switching keeps both workspaces mounted, so
+ * the inspected item, checked inputs, plots and the report draft survive. */
+.workflow-app [hidden] {
+  display: none !important;
+}
+/* Groups the signal controls without adding a box to the top bar's row. */
+.workflow-topbar-data {
+  display: contents;
+}
+/* Apply to shrinks first; the tools never slide under the controls beside
+ * them, so the recording menu's label gives way instead. */
+.workflow-topbar .workflow-action-toolbar {
+  min-width: min-content;
+}
+.workflow-topbar .workflow-scope-menu {
+  min-width: 50px;
+}
+.workflow-workspaces {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.workflow-workspaces button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.workflow-workspaces svg {
+  width: 14px;
+  height: 14px;
+}
+.workflow-app .workflow-workspaces button:hover {
+  background: var(--hover);
+  color: var(--ink-1);
+}
+.workflow-workspaces button[aria-current='page'],
+.workflow-app .workflow-workspaces button[aria-current='page']:hover {
+  background: var(--primary-wash);
+  color: var(--primary);
+  font-weight: 500;
+}
+.workflow-workspaces button[data-drop='accept'] {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.workflow-reports-workspace {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+}
+.workflow-reports-workspace > .rb-app {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+/* With the workspace switcher in the top bar, secondary labels give way
+ * before Apply to has to shrink. Icons keep their names and tooltips. */
+@media (max-width: 1700px) {
+  .workflow-workspaces span,
+  .workflow-report-action span {
+    display: none;
+  }
+}
+@media (max-width: 1600px) {
+  .workflow-search-trigger span,
+  .workflow-search-trigger kbd {
+    display: none;
+  }
+}
+@media (max-width: 1500px) {
+  .workflow-more-action span {
+    display: none;
+  }
+}
+@media (max-width: 1100px) {
+  .workflow-brand strong,
+  .workflow-create-action span {
+    display: none;
+  }
+}
+/* Narrow previews: Report stays in Inspect / export and History's menu. */
+@media (max-width: 820px) {
+  .workflow-topbar .workflow-action-toolbar {
+    min-width: 0;
+  }
+  .workflow-report-action {
+    display: none;
+  }
+}

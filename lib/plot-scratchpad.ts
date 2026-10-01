@@ -15,6 +15,13 @@ export const TRACE_COLORS = [
   '#9085e9',
   '#e66767',
 ];
+/** Short tags for a value's direct label at the end of its reference line. */
+export const VALUE_TAGS: Record<string, string> = {
+  'time-average': 'avg',
+  'sample-average': 'mean',
+  minimum: 'min',
+  maximum: 'max',
+};
 export type PlotRange = [number, number];
 export type PlotTrace = {
   id: string;

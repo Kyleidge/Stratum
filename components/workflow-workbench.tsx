@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -9,7 +9,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  FilePlus2,
   FileSpreadsheet,
+  FileText,
   GitBranch,
   Hash,
   HelpCircle,
@@ -94,9 +96,11 @@ import WorkflowProperties from './workflow-properties';
 import WorkflowPaneResizer from './workflow-pane-resizer';
 import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
 import {
+  readWorkflowDrag,
   startWorkflowDrag,
   targetOutputs,
   targetSignals,
+  WORKFLOW_DRAG_TYPE,
   type WorkflowTarget,
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
@@ -111,6 +115,19 @@ import WorkflowStorage from './workflow-storage';
 import WorkflowList from './workflow-list';
 import { affectedOperations } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
+import ReportBuilderMockup from './report-builder-mockup';
+import {
+  reportAssets,
+  reportTargetAssets,
+  resolveReportAssets,
+} from '@/lib/report-data';
+import { captureReportPlot } from '@/lib/report-plot';
+import type { PlotSheet } from '@/lib/plot-scratchpad';
+import type { ReportBlock } from '@/lib/report-mockup';
+import type {
+  ReportBuilderHandle,
+  ReportWorkspace,
+} from '@/lib/report-integration';
 
 const PAGE_SIZE = 30;
 /** Outputs of one operation drawn together on the Active plot. */
@@ -252,6 +269,26 @@ export default function WorkflowWorkbench() {
     [page, setPage] = useState(0);
   const file = useRef<HTMLInputElement>(null);
   const plots = useRef<PlotScratchpadHandle>(null);
+  const report = useRef<ReportBuilderHandle>(null);
+  // Both workspaces stay mounted; switching only changes which one is shown.
+  const [workspaceView, setWorkspaceView] = useState<'data' | 'reports'>(
+    'data',
+  );
+  const reportsShown = workspaceView === 'reports';
+  const [reportSheets, setReportSheets] = useState<PlotSheet[]>([]);
+  const openDataInspector = useCallback(() => setWorkspaceView('data'), []);
+  const openReports = useCallback(() => {
+    setWorkspaceView('reports');
+    setHistoryOpen(false);
+    setInspectorDrawer(false);
+  }, []);
+  const addReportBlocks = useCallback(
+    (blocks: ReportBlock[]) => {
+      report.current?.addBlocks(blocks);
+      openReports();
+    },
+    [openReports],
+  );
   const [dragged, setDragged] = useState<WorkflowTarget | null>(null);
   const [detailPanel, setDetailPanel] = useState<
     'inputs' | 'used-by' | 'checked' | 'samples'
@@ -274,6 +311,48 @@ export default function WorkflowWorkbench() {
   const sampleIds = targetSignals(index, selection);
   const sampleId = sampleIds.length === 1 ? sampleIds[0] : '';
   const request = engine.request;
+  const reportLibrary = useMemo(
+    () => reportAssets(project, reportSheets),
+    [project, reportSheets],
+  );
+  const reportRevision = useMemo(
+    () => ({ project, sheets: reportSheets }),
+    [project, reportSheets],
+  );
+  function reportOutputIds(ids: string[]) {
+    return ids.flatMap((id) =>
+      index.nodes.has(id)
+        ? [`signal:${id}`]
+        : index.values.has(id)
+          ? [`value:${id}`]
+          : [],
+    );
+  }
+  const reportWorkspace: ReportWorkspace = {
+    assets: reportLibrary,
+    selectionIds: reportTargetAssets(index, selection),
+    busy: engine.busy || !engine.ready,
+    revision: reportRevision,
+    resolveAssets: (ids, signal) =>
+      resolveReportAssets(
+        project,
+        reportSheets,
+        ids,
+        request,
+        (sheet, signal) => captureReportPlot(project, sheet, request, signal),
+        signal,
+      ),
+    resolveDrop: (raw) => {
+      const target = readWorkflowDrag(raw, index);
+      return target ? reportTargetAssets(index, target) : [];
+    },
+  };
+  function addToReport(ids: string[]) {
+    if (!ids.length || engine.busy || !engine.ready) return;
+    openReports();
+    setDetailPanel(undefined);
+    void report.current?.addAssets(ids);
+  }
 
   function select(next: WorkflowSelection) {
     if (next.id !== selection.id || next.kind !== selection.kind)
@@ -433,9 +512,11 @@ export default function WorkflowWorkbench() {
     void manage({ type: 'redo' }, 'Redid last change.').catch(() => {});
   }
   // Ctrl+Z / Ctrl+Y outside text fields and dialogs, with the latest handlers.
+  // Reports owns its keyboard: its Undo never changes the signal workflow.
   const shortcuts = useRef<(event: KeyboardEvent) => void>(undefined);
   useEffect(() => {
     shortcuts.current = (event) => {
+      if (reportsShown) return;
       if (
         event.key === 'Escape' &&
         (historyOpen || inspectorDrawer) &&
@@ -596,7 +677,18 @@ export default function WorkflowWorkbench() {
       });
     }
   }
-  function toolbarAction(action: ToolbarAction, dropped?: WorkflowTarget) {
+  // Report capture reads the report editor's handle; processing and inspection
+  // actions never do, so commands can be listed during render.
+  function handleAction(action: ToolbarAction, dropped?: WorkflowTarget) {
+    if (action !== 'report') return toolbarAction(action, dropped);
+    if (engine.busy) return;
+    setDragged(null);
+    addToReport(reportTargetAssets(index, dropped ?? selection));
+  }
+  function toolbarAction(
+    action: Exclude<ToolbarAction, 'report'>,
+    dropped?: WorkflowTarget,
+  ) {
     if (engine.busy) return;
     const target = dropped ?? selection;
     const signals = dropped ? targetSignals(index, target) : processingIds;
@@ -848,6 +940,21 @@ export default function WorkflowWorkbench() {
       run: () => setExportOpen(true),
     },
     {
+      id: 'command:report',
+      label: 'Add to report',
+      hint: 'Capture the viewed output or operation',
+      icon: FilePlus2,
+      disabled:
+        engine.busy || !engine.ready || !reportWorkspace.selectionIds.length,
+      run: () => handleAction('report'),
+    },
+    {
+      id: 'command:reports',
+      label: 'Open Reports',
+      icon: FileText,
+      run: openReports,
+    },
+    {
       id: 'command:undo',
       label: 'Undo last change',
       shortcut: 'Ctrl Z',
@@ -950,6 +1057,7 @@ export default function WorkflowWorkbench() {
   return (
     <div
       className="workflow-app"
+      data-workspace={workspaceView}
       data-history={historyOpen}
       data-inspector={inspectorOpen}
       data-inspector-drawer={inspectorDrawer}
@@ -960,6 +1068,7 @@ export default function WorkflowWorkbench() {
           aria-label="Toggle operation history"
           aria-expanded={historyOpen}
           aria-controls="workflow-navigation"
+          hidden={reportsShown}
           onClick={() => setHistoryOpen((open) => !open)}
         >
           <PanelLeft size={17} />
@@ -968,107 +1077,162 @@ export default function WorkflowWorkbench() {
           <Waves size={18} />
           <strong>Stratum</strong>
         </div>
-        {source && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  className="workflow-scope-menu"
-                  aria-label="Recordings shown in History"
-                  title="Recordings shown in History"
-                />
+        <nav className="workflow-workspaces" aria-label="Workspace">
+          <button
+            type="button"
+            aria-label="Data Inspector"
+            title="Data Inspector: signals, operations and plots"
+            aria-current={reportsShown ? undefined : 'page'}
+            aria-controls="workflow-data-workspace"
+            onClick={openDataInspector}
+          >
+            <Waves />
+            <span>Data Inspector</span>
+          </button>
+          <button
+            type="button"
+            aria-label="Reports"
+            title="Reports: compose and export a PDF. Drop a History item here to add it."
+            aria-current={reportsShown ? 'page' : undefined}
+            aria-controls="workflow-reports-workspace"
+            data-drop={dragged && !engine.busy ? 'accept' : undefined}
+            onClick={openReports}
+            onDragOver={(event) => {
+              if (
+                !engine.busy &&
+                event.dataTransfer.types.includes(WORKFLOW_DRAG_TYPE)
+              ) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                openReports();
               }
-            >
-              <FileSpreadsheet size={14} />
-              <span>
-                {sourceId === 'all'
-                  ? 'All recordings & results'
-                  : `${source.name}${source.synthetic ? ' · Example' : ''}`}
-              </span>
-              <ChevronDown size={14} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="workflow-scope-popup" align="start">
-              <DropdownMenuRadioGroup
-                value={sourceId === 'all' ? 'all' : source.id}
-                onValueChange={(value: string) => switchSource(value)}
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragged(null);
+              addToReport(
+                reportWorkspace.resolveDrop(
+                  event.dataTransfer.getData(WORKFLOW_DRAG_TYPE),
+                ),
+              );
+            }}
+          >
+            <FileText />
+            <span>Reports</span>
+          </button>
+        </nav>
+        {/* Signal controls stay mounted in Reports so their state is kept. */}
+        <div className="workflow-topbar-data" hidden={reportsShown}>
+          {source && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    className="workflow-scope-menu"
+                    aria-label="Recordings shown in History"
+                    title="Recordings shown in History"
+                  />
+                }
               >
-                <DropdownMenuRadioItem value="all">
-                  All recordings & results
-                </DropdownMenuRadioItem>
-                {project.sources.map((item) => (
-                  <DropdownMenuRadioItem key={item.id} value={item.id}>
-                    {item.name}
-                    {item.synthetic ? ' · Example' : ''}
+                <FileSpreadsheet size={14} />
+                <span>
+                  {sourceId === 'all'
+                    ? 'All recordings & results'
+                    : `${source.name}${source.synthetic ? ' · Example' : ''}`}
+                </span>
+                <ChevronDown size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                className="workflow-scope-popup"
+                align="start"
+              >
+                <DropdownMenuRadioGroup
+                  value={sourceId === 'all' ? 'all' : source.id}
+                  onValueChange={(value: string) => switchSource(value)}
+                >
+                  <DropdownMenuRadioItem value="all">
+                    All recordings & results
                   </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-        <span className="workflow-divider" />
-        <button
-          className="workflow-icon-button workflow-quiet"
-          aria-label="Undo last change"
-          title="Undo last change · Ctrl+Z (kept across restarts)"
-          disabled={!engine.canUndo || engine.busy}
-          onClick={() => undo()}
-        >
-          <Undo2 size={16} />
-        </button>
-        <button
-          className="workflow-icon-button workflow-quiet"
-          aria-label="Redo last change"
-          title="Redo last change · Ctrl+Y"
-          disabled={!engine.canRedo || engine.busy}
-          onClick={() => redo()}
-        >
-          <Redo2 size={16} />
-        </button>
-        <span className="workflow-divider" />
-        <WorkflowToolbar
-          selection={selection}
-          dragged={dragged}
-          index={index}
-          inputIds={processingIds}
-          checked={inputs !== null}
-          hasPast={past.length > 0}
-          busy={engine.busy || !engine.ready}
-          onAction={toolbarAction}
-          onClearChecked={() => setInputs(null)}
-          onDragEnd={() => setDragged(null)}
-        />
-        <div className="workflow-topbar-end">
+                  {project.sources.map((item) => (
+                    <DropdownMenuRadioItem key={item.id} value={item.id}>
+                      {item.name}
+                      {item.synthetic ? ' · Example' : ''}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <span className="workflow-divider" />
           <button
-            className="workflow-search-trigger"
-            aria-label="Search or run a command"
-            title="Search steps and outputs, or run a command · Ctrl+K"
-            onClick={() => setPaletteOpen(true)}
+            className="workflow-icon-button workflow-quiet"
+            aria-label="Undo last change"
+            title="Undo last change · Ctrl+Z (kept across restarts)"
+            disabled={!engine.canUndo || engine.busy}
+            onClick={() => undo()}
           >
-            <Search size={14} />
-            <span>Search</span>
-            <kbd>Ctrl K</kbd>
+            <Undo2 size={16} />
           </button>
           <button
-            className="secondary-button workflow-import-button"
-            aria-label="Import CSV"
-            title="Import CSV recordings"
-            disabled={engine.busy || !engine.ready}
-            onClick={() => file.current?.click()}
+            className="workflow-icon-button workflow-quiet"
+            aria-label="Redo last change"
+            title="Redo last change · Ctrl+Y"
+            disabled={!engine.canRedo || engine.busy}
+            onClick={() => redo()}
           >
-            <ArrowDownToLine size={14} />
-            <span>Import</span>
+            <Redo2 size={16} />
           </button>
-          <WorkflowStorage
-            disabled={engine.busy || !engine.ready}
-            recordings={project.sources.length}
-            request={request}
-            restore={(file) =>
-              manage({ type: 'restore-workspace', file }, 'Workspace restored.')
-            }
-            cancel={engine.cancel}
-            example={openExample}
-            exampleName={source?.synthetic ? source.name : undefined}
+          <span className="workflow-divider" />
+          <WorkflowToolbar
+            selection={selection}
+            dragged={dragged}
+            index={index}
+            inputIds={processingIds}
+            checked={inputs !== null}
+            hasPast={past.length > 0}
+            busy={engine.busy || !engine.ready}
+            onAction={handleAction}
+            onClearChecked={() => setInputs(null)}
+            onDragEnd={() => setDragged(null)}
           />
+        </div>
+        <div className="workflow-topbar-end">
+          <div className="workflow-topbar-data" hidden={reportsShown}>
+            <button
+              className="workflow-search-trigger"
+              aria-label="Search or run a command"
+              title="Search steps and outputs, or run a command · Ctrl+K"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <Search size={14} />
+              <span>Search</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+            <button
+              className="secondary-button workflow-import-button"
+              aria-label="Import CSV"
+              title="Import CSV recordings"
+              disabled={engine.busy || !engine.ready}
+              onClick={() => file.current?.click()}
+            >
+              <ArrowDownToLine size={14} />
+              <span>Import</span>
+            </button>
+            <WorkflowStorage
+              disabled={engine.busy || !engine.ready}
+              recordings={project.sources.length}
+              request={request}
+              restore={(file) =>
+                manage(
+                  { type: 'restore-workspace', file },
+                  'Workspace restored.',
+                )
+              }
+              cancel={engine.cancel}
+              example={openExample}
+              exampleName={source?.synthetic ? source.name : undefined}
+            />
+          </div>
           <button
             className="workflow-icon-button workflow-quiet"
             aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
@@ -1091,6 +1255,7 @@ export default function WorkflowWorkbench() {
             aria-expanded={inspectorShown}
             aria-controls="workflow-inspector"
             title="Show or hide the inspector"
+            hidden={reportsShown}
             onClick={toggleInspector}
           >
             <PanelRight size={16} />
@@ -1118,7 +1283,11 @@ export default function WorkflowWorkbench() {
           }}
         />
       </header>
-      <div className="workflow-body">
+      <div
+        id="workflow-data-workspace"
+        className="workflow-body"
+        hidden={reportsShown}
+      >
         <aside
           id="workflow-navigation"
           className="workflow-sidebar"
@@ -1188,7 +1357,7 @@ export default function WorkflowWorkbench() {
             lineageOutputs={selectedLineage.outputIds}
             busy={engine.busy}
             onAction={manageSelection}
-            onInspect={(target, action) => toolbarAction(action, target)}
+            onInspect={(target, action) => handleAction(action, target)}
             onCreatePlot={(target) => plots.current?.createPlot(target)}
             contributingOutputs={lineageRoot ? lineage.outputIds : undefined}
             onSelect={(next) => {
@@ -1263,6 +1432,8 @@ export default function WorkflowWorkbench() {
                   checkedIds={inputs === null ? [] : inputIds}
                   view={view}
                   onView={updateView}
+                  onReport={addReportBlocks}
+                  onSheetsChange={setReportSheets}
                   onInspect={follow}
                   request={request}
                   busy={engine.busy}
@@ -1300,6 +1471,25 @@ export default function WorkflowWorkbench() {
                                   onClick={() => setExportOpen(true)}
                                 >
                                   <ArrowDownToLine size={15} /> Export / report
+                                </button>
+                                <button
+                                  className="secondary-button"
+                                  disabled={
+                                    engine.busy ||
+                                    !engine.ready ||
+                                    !stepOutputs.length
+                                  }
+                                  title="Add this operation's outputs to Reports"
+                                  onClick={() =>
+                                    addToReport(
+                                      reportTargetAssets(index, {
+                                        kind: 'step',
+                                        id: step.id,
+                                      }),
+                                    )
+                                  }
+                                >
+                                  <FilePlus2 size={15} /> Add to report
                                 </button>
                                 {step.kind !== 'import' && (
                                   <button
@@ -1711,7 +1901,7 @@ export default function WorkflowWorkbench() {
                 onStep={selectStep}
                 onAction={(action) => {
                   setInspectorDrawer(false);
-                  toolbarAction(action);
+                  handleAction(action);
                 }}
                 onClose={() => {
                   if (narrow) setInspectorDrawer(false);
@@ -1723,7 +1913,7 @@ export default function WorkflowWorkbench() {
           </>
         )}
       </div>
-      {(historyOpen || inspectorDrawer) && (
+      {(historyOpen || inspectorDrawer) && !reportsShown && (
         <button
           className="workflow-scrim"
           aria-label="Close panel"
@@ -1734,7 +1924,7 @@ export default function WorkflowWorkbench() {
           }}
         />
       )}
-      <footer className="workflow-status">
+      <footer className="workflow-status" hidden={reportsShown}>
         <span className="workflow-status-selection" title={title}>
           {title}
         </span>
@@ -1788,6 +1978,13 @@ export default function WorkflowWorkbench() {
           </span>
         )}
       </footer>
+      <div
+        id="workflow-reports-workspace"
+        className="workflow-reports-workspace"
+        hidden={!reportsShown}
+      >
+        <ReportBuilderMockup ref={report} workspace={reportWorkspace} />
+      </div>
       <Dialog
         open={!!detailPanel}
         onOpenChange={(open) => {
@@ -2008,6 +2205,16 @@ export default function WorkflowWorkbench() {
                 )}
               </WorkflowList>
               <div className="workflow-scope-actions">
+                <button
+                  className="secondary-button"
+                  disabled={engine.busy || !processingIds.length}
+                  onClick={() => addToReport(reportOutputIds(processingIds))}
+                >
+                  <FilePlus2 size={15} />
+                  {inputs === null
+                    ? 'Add input signals to report'
+                    : 'Add checked signals to report'}
+                </button>
                 <button
                   className="secondary-button"
                   disabled={!sampleIds.length}
@@ -2326,6 +2533,14 @@ export default function WorkflowWorkbench() {
               offers samples, signal summaries, calculated values and a
               printable report. Choose the viewed output, checked signals or an
               entire step before downloading.
+            </li>
+            <li>
+              <strong>Compose a report.</strong> Choose Reports in the top bar
+              for a page canvas with your signals, values and saved plots. Add
+              the viewed item with Report, from a History item&apos;s menu or
+              from a plot. Captures are snapshots; switching to Data Inspector
+              keeps your draft until the app reloads. Format the pages and
+              export a PDF.
             </li>
             <li>
               <strong>Try another version.</strong> Repeat with new settings

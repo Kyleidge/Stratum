@@ -30,8 +30,9 @@ protocol.registerSchemesAsPrivileged([
 const root = fileURLToPath(new URL('../dist-desktop/', import.meta.url));
 const uiSmoke = process.argv.includes('--ui-smoke');
 const smoke = process.argv.includes('--smoke') || uiSmoke;
-// The UI refresh mockup uses static sample data and never opens the workspace.
-const mockup = !smoke && process.argv.includes('--mockup');
+// Mockups use local sample data and never open the workspace.
+const reportMockup = !smoke && process.argv.includes('--report-mockup');
+const mockup = !smoke && (process.argv.includes('--mockup') || reportMockup);
 if (smoke || mockup)
   app.setPath(
     'userData',
@@ -324,7 +325,7 @@ async function createWindow() {
   }
   try {
     await window.loadURL(
-      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : mockup ? '?mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
+      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : reportMockup ? '?report-mockup=1' : mockup ? '?mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
     );
   } catch (error) {
     // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.
