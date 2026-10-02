@@ -79,6 +79,24 @@ There are no server API routes or cloud signal uploads.
   imported recordings, and retains old source columns for Undo. Staged imports
   stay journaled until metadata publication. Legacy example methods remain for
   compatibility tests; the active workflow UI uses `demo-workflow`.
+- Batch workflows (see `docs/batch-workflows.md`): `lib/workflow-yaml.ts` is a
+  strict YAML subset (no anchors, aliases or tags); `lib/workflow-recipe.ts`
+  parses, validates and serialises `.stratum.yaml` recipes and turns each step
+  into the same `WorkflowCommand` Edit uses; `lib/workflow-extract.ts` builds a
+  recipe from a recording's History through `savedCommand`, binding channels by
+  name and outputs by step reference. `SignalEngine.runWorkflow` stages one item
+  (import, replay, checks) and commits it atomically. Later items of a batch
+  coalesce into one Undo entry via the journal tag, without rewriting the
+  journal. `lib/workflow-checks.ts` evaluates checks from exact statistics and
+  validates batch records; Edit carries checks, `runId` and `recipeStepId`.
+  Batches, runs and recipe text are part of the project and of backups;
+  deleting an item's import removes its run. UI: `workflow-save-dialog.tsx`,
+  `workflow-run-dialog.tsx` (header-only pre-flight), `workflow-batch-view.tsx`,
+  `workflow-item-bar.tsx`, `workflow-checks-panel.tsx`, `app/workflow-batch.css`.
+  Report templates (`lib/workflow-report-template.ts`) bind blocks to recipe
+  references; `lib/workflow-batch-report.ts` renders one item's report, and
+  `lib/zip-store.ts` packages PDFs. `lib/eol-example.ts` generates
+  `examples/eol-rig` (`pnpm examples:eol`); tests check the committed copies match.
 - `lib/workspace-archive.ts` validates versioned NDJSON workspace backups before
   publication. Restore stages original columns under fresh source IDs and commits
   metadata atomically, preserving the prior workspace for Undo. Archives are
@@ -274,6 +292,11 @@ to address those issues during repository setup.
   lock failures, abandoned import recovery, archive round trips and corrupt
   archive rejection. `desktop:ui-smoke` exercises actual edit/delete/rename,
   Undo/Redo, backup download and invalid restore dialogs with isolated storage.
+- `tests/workflow-batch.test.ts` covers the YAML subset's safety, recipe
+  validation with line numbers, lossless serialisation, the EOL example batch
+  (statuses, messages, coalesced Undo across restarts), cancellation, replaying a
+  saved workflow to identical values, checks across Edit/Undo, batch backups and
+  item deletion.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin

@@ -1,7 +1,25 @@
 # Batch workflows, checks and per-item reports: plan
 
-Status: proposal. Nothing here is implemented yet. Planned on branch
-`claude/batch-workflow-processing-7b6a8d`, starting from `db3db39` on `main`.
+Status: implemented on branch `claude/batch-workflow-processing-7b6a8d`. See
+[batch workflows](batch-workflows.md) for the user guide and file format. This
+page is the original plan, kept for its rationale. The implementation differs
+in these ways:
+
+- **YAML parser.** Workflow files use a strict YAML subset parsed by
+  `lib/workflow-yaml.ts`, not the `yaml` package. No dependency was added, and
+  anchors, aliases and tags are rejected outright. Saving writes a canonical
+  layout, so comments in an opened file are not preserved.
+- **Check syntax.** Checks are written `count: 3`, `limits: { min, max, unit }`,
+  `missing: { max }` or `duration: { min, max }`, not `expect: { … }`.
+- **Time origins.** `time-origin: input-start` is supported in version 1 for
+  single-input segment steps.
+- **Batch items.** Each imported item's step is named `<item label> <ID>`.
+  Files that could not be imported are recorded on the batch.
+- **Plots.** **Plot across items** labels traces by item through an optional
+  per-trace label on saved plots.
+- **Not yet done.** Phase 5 follow-ups: re-running a batch with an updated
+  workflow, import profiles, items with several files, expression checks and
+  vector PDF text.
 
 ## Goal
 
@@ -344,7 +362,7 @@ evaluated immediately.
 
 - `lib/workflow-recipe.ts`: recipe types, `extractRecipe`, `bindRecipe`
   (aliases to channels, used for pre-flight too) and `recipeCommand(step,
-  bindings)`, which returns a `WorkflowCommand`. Pure, with no IndexedDB.
+bindings)`, which returns a `WorkflowCommand`. Pure, with no IndexedDB.
 - `lib/workflow-file.ts`: YAML parsing and serialisation,
   `validateRecipe(unknown)`, the canonical hash and line-numbered errors.
 - `lib/workflow-checks.ts`: check definitions and results, with pure evaluation

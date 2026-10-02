@@ -11,6 +11,10 @@ the first column is time in seconds and blank cells mean missing samples.
 | [vibration.csv](vibration.csv)           | 4,001 / 200 Hz | Filtering, missing intervals and a single spike               |
 | [thermal-step.csv](thermal-step.csv)     | 241 / 1 Hz     | Delayed responses, derivatives and time averages              |
 
+[eol-rig](eol-rig) holds eight motor recordings from an imaginary end-of-line
+test rig and a workflow that processes, checks and reports each one. Use them to
+try [batch workflows](../docs/batch-workflows.md).
+
 ## Compare the three runs
 
 1. Import `motor-runs.csv` and select **Torque** in History.

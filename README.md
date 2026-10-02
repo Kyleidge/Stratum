@@ -250,6 +250,15 @@ fewer signals. Export / report's printable reports are standalone HTML snapshots
 of the chosen outputs and their contributing history; use **Reports** for an
 arranged multipage PDF.
 
+**Batch workflows** run the same analysis on many recordings, such as one file
+per component from a test rig. Save a recording's operations, checks and report
+layout as a `.stratum.yaml` workflow, run it on a set of CSV files, review flagged
+items in the batch view and export a PDF report per item. Every result is an
+ordinary History operation, and one Undo removes the whole batch. Choose
+**Import ▾ → Try the batch example** to see it with
+[the end-of-line rig data](examples/eol-rig), and read
+[batch workflows](docs/batch-workflows.md) for the guide and file format.
+
 ## Validate
 
 ```powershell
