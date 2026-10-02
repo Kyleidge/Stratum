@@ -2965,6 +2965,91 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
 .workflow-rail-hint i {
   flex-shrink: 0;
 }
+/* Checked processing inputs: Ctrl/Shift+click or the row check boxes. */
+.workflow-tree-row {
+  user-select: none;
+}
+.workflow-tree-row[data-checked='true']:not([data-selected='true']) {
+  background: var(--primary-wash);
+}
+.workflow-row-check {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--plane);
+  color: var(--on-primary);
+  opacity: 0;
+}
+.workflow-tree-row:hover .workflow-row-check,
+.workflow-tree-row:focus-visible .workflow-row-check,
+.workflow-tree[data-checking='true'] .workflow-row-check {
+  opacity: 1;
+}
+.workflow-tree-row[data-checked='true'] .workflow-row-check,
+.workflow-tree-row[data-checked='mixed'] .workflow-row-check {
+  opacity: 1;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+@media (hover: none) {
+  .workflow-row-check {
+    opacity: 1;
+  }
+}
+.workflow-checked-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0 10px;
+  padding: 3px 3px 3px 7px;
+  border: 1px solid var(--primary-line);
+  border-radius: 3px;
+  background: var(--primary-wash);
+  color: var(--primary);
+  font-size: var(--text-xs);
+}
+.workflow-checked-bar > svg {
+  flex-shrink: 0;
+}
+.workflow-checked-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-checked-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--primary-line);
+  border-radius: 3px;
+  background: var(--plane);
+  color: var(--primary);
+  font-size: var(--text-xs);
+}
+.workflow-checked-bar button:hover:not(:disabled) {
+  background: var(--hover-solid);
+}
+.workflow-checked-bar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.workflow-checked-bar .workflow-checked-clear {
+  padding: 2px 3px;
+  border-color: transparent;
+  background: none;
+  color: var(--ink-2);
+}
 
 /* Inspector */
 .workflow-inspector {

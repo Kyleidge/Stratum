@@ -265,6 +265,11 @@ export default function WorkflowWorkbench() {
   );
   const processingIds =
     inputs === null ? targetSignals(index, selection) : inputIds;
+  // History marks only explicit checks, never the inspected item.
+  const checkedSet = useMemo(
+    () => new Set((inputs ?? []).filter((id) => index.nodes.has(id))),
+    [inputs, index],
+  );
   const [past, setPast] = useState<WorkflowSelection[]>([]);
   const [view, updateView] = useState('result');
   const [dockTab, setDockTab] = useState<DockTab>('outputs');
@@ -465,6 +470,19 @@ export default function WorkflowWorkbench() {
         : index.steps.get(next.id);
     if (next.kind === 'output' && owner)
       setPage(Math.floor(owner.outputIds.indexOf(next.id) / PAGE_SIZE));
+  }
+  /**
+   * Checks or unchecks signals from History. The first check keeps a viewed
+   * signal, as Ctrl+click extends a selection; unchecking the last one
+   * follows the selection again.
+   */
+  function checkSignals(ids: string[], checked: boolean) {
+    const signals = new Set(ids.filter((id) => index.nodes.has(id)));
+    if (!signals.size) return;
+    const next = checked
+      ? [...new Set([...inputIds, ...signals])]
+      : inputIds.filter((id) => !signals.has(id));
+    setInputs(next.length ? next : null);
   }
   function follow(id: string) {
     setDetailPanel(undefined);
@@ -1927,6 +1945,9 @@ export default function WorkflowWorkbench() {
           )}
           <WorkflowHistory
             key={JSON.stringify([sourceId, lineageRoot])}
+            checkedIds={checkedSet}
+            onCheck={checkSignals}
+            onProcessChecked={(action) => toolbarAction(action)}
             onDragSelection={setDragged}
             steps={shownSteps}
             index={index}
@@ -1951,6 +1972,43 @@ export default function WorkflowWorkbench() {
               }
             }}
           />
+          {/* Below the tree, so it never shifts rows during Ctrl+click. */}
+          {inputs !== null && (
+            <fieldset className="workflow-checked-bar">
+              <legend className="sr-only">Checked processing inputs</legend>
+              <ListChecks size={13} />
+              <span
+                title={`${inputIds.length.toLocaleString()} ${inputIds.length === 1 ? 'signal' : 'signals'} checked for processing`}
+              >
+                <strong>{inputIds.length.toLocaleString()}</strong> checked
+              </span>
+              <button
+                aria-label="Calculate values for the checked signals"
+                title="Calculate a value for each checked signal"
+                disabled={engine.busy || !engine.ready || !inputIds.length}
+                onClick={() => toolbarAction('value')}
+              >
+                <Hash size={12} /> Value…
+              </button>
+              <button
+                aria-label="Derive signals from the checked signals"
+                title="Derive a signal from each checked signal"
+                disabled={engine.busy || !engine.ready || !inputIds.length}
+                onClick={() => toolbarAction('derive')}
+              >
+                <Waves size={12} /> Derive…
+              </button>
+              <button
+                className="workflow-checked-clear"
+                aria-label="Uncheck all signals"
+                title="Uncheck all and follow the selection"
+                disabled={engine.busy}
+                onClick={() => setInputs(null)}
+              >
+                <X size={12} />
+              </button>
+            </fieldset>
+          )}
           <p className="workflow-rail-hint">
             <i /> Contributes to the selection · drag outputs onto a plot or
             command
@@ -3184,8 +3242,10 @@ export default function WorkflowWorkbench() {
             <li>
               <strong>Choose what to process.</strong> Apply to, beside the
               operations, shows their inputs: the item in view, or signals you
-              check in the operation outputs. Checked inputs stay selected while
-              you explore; clear them to follow the selection again.
+              check. Ctrl+click signals in History to check several, Shift+click
+              to check a range, or Ctrl+click a step for all its signals; then
+              choose Value, Derive or Segment. Checked inputs stay selected
+              while you explore; clear them to follow the selection again.
             </li>
             <li>
               <strong>Build a plot.</strong> Drag a signal onto the canvas or a

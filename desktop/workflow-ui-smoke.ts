@@ -602,6 +602,44 @@ export async function workflowUiSmoke() {
     await resizePanes();
     await selectionDetails();
     await commandPalette();
+    // Ctrl+click checks History signals for processing without changing
+    // inspection; the checked bar opens the value editor for all of them.
+    const viewedRow = selectedHistoryRow().title;
+    const checkedRows = () =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '.workflow-tree-row[data-kind="output"][aria-checked="true"]',
+        ),
+      ].map((row) => row.title);
+    (
+      await until(() => outputRow('Torque'), 'torque row to check')
+    ).dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    await delay();
+    assert(
+      selectedHistoryRow().title === viewedRow &&
+        checkedRows().length === 2 &&
+        checkedRows().includes('Torque') &&
+        checkedRows().includes(viewedRow),
+      'Ctrl+click must check the viewed and clicked signals, keeping inspection.',
+    );
+    await click('Calculate values for the checked signals');
+    const checkedValueModal = await dialog();
+    assert(
+      button('Create 2 values', checkedValueModal),
+      'History checks did not reach the value editor.',
+    );
+    await click('Close', checkedValueModal);
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close checked value editor',
+    );
+    await click('Uncheck all signals');
+    assert(
+      !checkedRows().length &&
+        !document.querySelector('.workflow-checked-bar') &&
+        selectedHistoryRow().title === viewedRow,
+      'Unchecking all must follow the selection again.',
+    );
     await click('Keep plot');
     const plotTab = () =>
       document.querySelector('[aria-label="Plot tabs"] [aria-selected="true"]');

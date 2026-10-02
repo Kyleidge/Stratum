@@ -76,6 +76,11 @@ the plot lists them. Tick the signals you want to process, then check **Apply
 to** before opening Derive, Segment or Value. Clear the checked inputs when you
 want to return to a single selected signal.
 
+You can also check signals directly in History. Click one signal, then
+**Ctrl+click** others to add them, or **Shift+click** to check every signal in
+between. Choose **Value…** in the bar below History to calculate one value for
+each checked signal.
+
 <!-- pagebreak -->
 
 ## 3. Keep a useful time interval
