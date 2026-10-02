@@ -165,6 +165,15 @@ export type Summary = {
   weightedMean?: number;
 };
 export type Plot = { id: string; points: Point[]; summary: Summary };
+/** An unsaved derive candidate, evaluated for a dialog preview. */
+export type DerivePreview = {
+  node: SignalNode;
+  plot: Plot;
+  /** Input envelopes in operation order (A, then B), each on its own axis. */
+  inputs: Plot[];
+  /** Union of the candidate's and its inputs' time ranges. */
+  domain: [number, number];
+};
 export type EngineRequest =
   | { type: 'time-operation'; settings: import('./time-types').TimeSettings }
   | { type: 'delete-operation'; stepId: string }
@@ -224,7 +233,18 @@ export type EngineRequest =
       targetIds: string[];
       independently?: boolean;
       scope?: SegmentationScope;
+      inspection?: boolean;
     }
+  | {
+      type: 'derive-preview';
+      inputId: string;
+      operation: Operation;
+      parameter: number;
+      secondaryId?: string;
+      range?: [number, number];
+      inspection?: boolean;
+    }
+  | { type: 'value-preview'; ids: string[]; inspection?: boolean }
   | { type: 'segment-metrics'; ids: string[] }
   | {
       type: 'view';
@@ -247,6 +267,11 @@ export type EngineResponse = { requestId: number } & (
   | { type: 'region-plan'; plan: RegionPlan }
   | { type: 'project'; project: Project; canUndo?: boolean; canRedo?: boolean }
   | { type: 'segment-plan'; plan: SegmentationPlan }
+  | { type: 'derive-preview'; preview: DerivePreview }
+  | {
+      type: 'value-preview';
+      statistics: import('./workflow-types').ValueStatistics[];
+    }
   | { type: 'plots'; plots: Plot[] }
   | {
       type: 'plot-measurements';

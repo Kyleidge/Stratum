@@ -1773,6 +1773,91 @@ void test('time averages weight valid elapsed time; extrema and sample averages 
   }
 });
 
+void test('dialog previews match created results and never change the workspace', async () => {
+  const { engine, source } = await fixture();
+  try {
+    const before = structuredClone(engine.project);
+    const [statistics] = await engine.previewValues([source.channels[0]]);
+    assert.deepEqual(statistics, {
+      inputId: source.channels[0],
+      sampleCount: 5,
+      validDuration: 5,
+      sampleAverage: 16,
+      timeAverage: 13,
+      minimum: 0,
+      maximum: 30,
+      minimumTime: 0,
+      maximumTime: 7,
+    });
+    const smoothed = await engine.previewDerived({
+      inputId: source.channels[0],
+      operation: 'smooth',
+      parameter: 2,
+    });
+    const shifted = await engine.previewDerived({
+      inputId: source.channels[0],
+      operation: 'time-shift',
+      parameter: 10,
+      range: [4, 12],
+    });
+    const product = await engine.previewDerived({
+      inputId: source.channels[0],
+      operation: 'multiply',
+      parameter: 0,
+      secondaryId: source.channels[1],
+    });
+    await assert.rejects(
+      engine.previewDerived({
+        inputId: source.channels[0],
+        operation: 'add',
+        parameter: 0,
+        secondaryId: source.channels[1],
+      }),
+      /matching unit labels/,
+    );
+    await assert.rejects(
+      engine.previewDerived({
+        inputId: source.channels[0],
+        operation: 'median',
+        parameter: 0.5,
+      }),
+      /whole samples/,
+    );
+    assert.deepEqual(engine.project, before, 'Previews saved a result.');
+    // A shifted candidate keeps its own axis; the input stays on the original.
+    assert.deepEqual(shifted.domain, [0, 18]);
+    assert.deepEqual(
+      shifted.plot.points.map(([time]) => time),
+      [10, 11],
+    );
+    assert.deepEqual(
+      shifted.inputs[0].points.map(([time]) => time),
+      [4, 5, 7, 8],
+    );
+    assert.equal(product.node.unit, 'Nm·rpm');
+    assert.equal(product.inputs.length, 2);
+    assert.equal(product.plot.summary.max, 30 * 6000);
+    const [created] = await engine.deriveMany(
+      [source.channels[0]],
+      'smooth',
+      2,
+    );
+    assert.deepEqual(
+      (await engine.plot(created.id)).summary,
+      smoothed.plot.summary,
+    );
+    assert.equal(smoothed.node.unit, created.unit);
+    const [value] = await engine.calculateValues(
+      [source.channels[0]],
+      'maximum',
+    );
+    assert.equal(value.value, statistics.maximum);
+    assert.equal(value.timestamp, statistics.maximumTime);
+  } finally {
+    engine.close();
+  }
+});
+
 void test('empty and single-sample value domains are explicit; invalid batches append nothing', async () => {
   const { engine, source } = await fixture(
     't,Empty [V],Single [V]\n0,,3\n1,,\n2,,',

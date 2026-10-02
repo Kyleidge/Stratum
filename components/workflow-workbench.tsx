@@ -63,19 +63,9 @@ import TimeWorkbench from './time-workbench';
 import type { TimeSettings } from '@/lib/time-types';
 import { workspaceTimeScope } from '@/lib/time-model';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
-import { FUNCTIONS } from '@/lib/signal-functions';
 import { operationLabels } from '@/lib/signal-explorer';
-import ValueOperationPalette from './value-operation-palette';
-import {
-  isArithmetic,
-  isBinaryOperation,
-  arithmeticUnit,
-} from '@/lib/signal-arithmetic';
-import {
-  SignalOperationPalette,
-  SIGNAL_FUNCTIONS,
-  OPERATION_FORMULAS,
-} from './signal-operation-palette';
+import { isBinaryOperation } from '@/lib/signal-arithmetic';
+import { SIGNAL_FUNCTIONS } from './signal-operation-palette';
 import { VALUE_FUNCTIONS } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
@@ -111,7 +101,8 @@ import {
   type WorkflowTarget,
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
-import { RegionSelect, RegionNumber, finite } from './region-controls';
+import FunctionEditor from './function-editor';
+import { RegionSelect } from './region-controls';
 import WorkflowExport from './workflow-export';
 import {
   WorkflowManagementDialogs,
@@ -2952,7 +2943,7 @@ export default function WorkflowWorkbench() {
       >
         <DialogContent
           key={editorVersion}
-          className={`workflow-dialog${editor?.kind === 'segment' ? ' workflow-range-dialog' : ''}`}
+          className="workflow-dialog workflow-range-dialog workflow-operation-dialog"
           showCloseButton={!engine.busy}
         >
           <DialogTitle>
@@ -3037,13 +3028,16 @@ export default function WorkflowWorkbench() {
                     independently,
                     scope,
                   ) => {
-                    const response = await engine.preview({
+                    // Live previews never block the dialog; a newer one
+                    // supersedes any still queued in the worker.
+                    const response = await request({
                       type: 'segment-preview',
                       sourceId: editorSource.id,
                       definition,
                       targetIds,
                       independently,
                       scope,
+                      inspection: true,
                     });
                     if (response.type !== 'segment-plan')
                       throw new Error('Unexpected preview response.');
@@ -3068,6 +3062,7 @@ export default function WorkflowWorkbench() {
                   editor={editor}
                   project={project}
                   index={index}
+                  request={request}
                   busy={engine.busy}
                   onApply={(operation, parameter, secondaryId) => {
                     if (editor.kind === 'value')
@@ -3254,217 +3249,5 @@ function Pager({
         <ChevronRight size={16} />
       </button>
     </div>
-  );
-}
-
-function FunctionEditor({
-  editor,
-  project,
-  index,
-  busy,
-  onApply,
-}: {
-  editor: Editor;
-  project: Project;
-  index: WorkflowIndex;
-  busy: boolean;
-  onApply: (
-    operation: Operation | ValueOperation,
-    parameter: number,
-    secondaryId: string,
-  ) => Promise<void>;
-}) {
-  const [operation, setOperation] = useState<string>(
-    editor.operation ?? (editor.kind === 'value' ? 'time-average' : 'multiply'),
-  );
-  const [parameter, setParameter] = useState(
-    String(
-      editor.parameter ??
-        SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation)
-          ?.defaultValue ??
-        0,
-    ),
-  );
-  const [secondaryId, setSecondaryId] = useState(editor.secondaryId ?? '');
-  const [error, setError] = useState('');
-  const valueSpec = VALUE_FUNCTIONS.find(
-    (spec) => spec.operation === operation,
-  );
-  const spec =
-    SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
-    FUNCTIONS.find((spec) => spec.operation === operation);
-  const binary = isBinaryOperation(operation);
-  const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
-  const secondInputs = project.nodes.filter(
-    (node) =>
-      node.sourceId === sourceId &&
-      (!node.internal || node.id === editor.secondaryId) &&
-      (isArithmetic(operation) ||
-        (operation === 'power'
-          ? node.unit.toLowerCase() === 'rpm'
-          : node.unit.toLowerCase() === 'kw')),
-  );
-  let unit = '';
-  let unitError = '';
-  if (isArithmetic(operation) && secondaryId) {
-    try {
-      const secondUnit = index.nodes.get(secondaryId)?.unit ?? '';
-      for (const id of editor.ids) {
-        unit = arithmeticUnit(
-          operation,
-          index.nodes.get(id)?.unit ?? '',
-          secondUnit,
-        );
-      }
-      if (new Set(editor.ids.map((id) => index.nodes.get(id)?.unit)).size > 1)
-        unit = 'varies by input';
-    } catch (caught) {
-      unitError =
-        caught instanceof Error ? caught.message : 'Incompatible units.';
-    }
-  }
-  const changeOperation = (next: string) => {
-    setOperation(next);
-    setParameter(
-      String(
-        SIGNAL_FUNCTIONS.find((item) => item.operation === next)
-          ?.defaultValue ?? 0,
-      ),
-    );
-    setError('');
-  };
-  return (
-    <fieldset className="workflow-function-editor" disabled={busy}>
-      {editor.kind === 'value' ? (
-        <ValueOperationPalette
-          value={operation}
-          disabled={busy}
-          onChange={changeOperation}
-        />
-      ) : (
-        <SignalOperationPalette
-          value={operation}
-          disabled={busy}
-          onChange={changeOperation}
-        />
-      )}
-      <div className="signal-operation-settings">
-        {editor.kind === 'derive' ? (
-          <div className="signal-settings-heading">
-            <strong>
-              {spec?.name ?? operationLabels[operation as Operation]}
-            </strong>
-            {OPERATION_FORMULAS[operation] && (
-              <code>{OPERATION_FORMULAS[operation]}</code>
-            )}
-          </div>
-        ) : (
-          <div className="signal-settings-heading">
-            <strong>{valueSpec?.name}</strong>
-            <span className="value-output-count">
-              {editor.ids.length} {editor.ids.length === 1 ? 'value' : 'values'}
-            </span>
-          </div>
-        )}
-        <p>
-          {editor.kind === 'value'
-            ? valueSpec?.description
-            : binary && !isArithmetic(operation)
-              ? operation === 'power'
-                ? 'Selected inputs must be torque [Nm]. Choose one speed [rpm] signal on the same sample grid.'
-                : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
-              : spec?.description}
-        </p>
-        {editor.kind === 'value' && (
-          <p className="value-output-hint">
-            One result per input, in its original unit. Missing samples are
-            excluded.
-          </p>
-        )}
-        {binary && (
-          <div className="signal-first-input">
-            <span>Input A</span>
-            <strong>
-              {editor.ids.length === 1
-                ? index.label(editor.ids[0])
-                : `Each of ${editor.ids.length} selected signals`}
-            </strong>
-          </div>
-        )}
-        {spec?.parameter && (
-          <RegionNumber
-            label={spec.parameter}
-            value={parameter}
-            unit={spec.unit}
-            onChange={setParameter}
-          />
-        )}
-        {binary && (
-          <RegionSelect
-            label={
-              isArithmetic(operation)
-                ? 'Input B'
-                : operation === 'power'
-                  ? 'Speed input'
-                  : 'Power input'
-            }
-            value={secondaryId}
-            items={[
-              { value: '', label: 'Choose the second input…' },
-              ...secondInputs.map((node) => ({
-                value: node.id,
-                label: `${reference(index.owner.get(node.id))} ${index.label(node.id)}${node.unit ? ` [${node.unit}]` : ''}`,
-              })),
-            ]}
-            disabled={busy}
-            onChange={setSecondaryId}
-          />
-        )}
-        {isArithmetic(operation) && (
-          <p className="signal-math-hint">
-            B is combined with each A. Inputs must share a recording, sample
-            grid and time transformations. Missing samples stay missing.
-            {unit && !unitError ? ` Output unit: ${unit}.` : ''}
-          </p>
-        )}
-        {unitError && (
-          <p className="segment-error" role="alert">
-            {unitError}
-          </p>
-        )}
-      </div>
-      {error && (
-        <p className="segment-error" role="alert">
-          {error}
-        </p>
-      )}
-      <button
-        className="primary-button"
-        disabled={busy || (binary && !secondaryId) || !!unitError}
-        onClick={() => {
-          setError('');
-          void (async () => {
-            try {
-              await onApply(
-                operation as Operation | ValueOperation,
-                spec?.parameter ? finite(parameter) : 0,
-                secondaryId,
-              );
-            } catch (error) {
-              setError(
-                error instanceof Error ? error.message : 'Operation failed.',
-              );
-            }
-          })();
-        }}
-      >
-        {editor.kind === 'value' ? <Hash size={15} /> : <Waves size={15} />}
-        {editor.editingStepId
-          ? 'Save changes and recalculate'
-          : editor.kind === 'value'
-            ? `Create ${editor.ids.length} value${editor.ids.length === 1 ? '' : 's'}`
-            : `Create ${editor.ids.length} derived signal${editor.ids.length === 1 ? '' : 's'}`}
-      </button>
-    </fieldset>
   );
 }

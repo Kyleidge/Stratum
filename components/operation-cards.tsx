@@ -8,6 +8,8 @@ export type OperationCard = {
   label: string;
   visual: ReactNode;
   hint?: string;
+  /** A live result for this choice, such as a previewed value. */
+  detail?: string;
 };
 
 export default function OperationCards({
@@ -46,6 +48,9 @@ export default function OperationCards({
           <span>{item.label}</span>
           {item.hint && (
             <small className="operation-card-hint">{item.hint}</small>
+          )}
+          {item.detail && (
+            <strong className="operation-card-detail">{item.detail}</strong>
           )}
           <RadioGroupItem value={item.value} aria-label={item.label} />
         </label>

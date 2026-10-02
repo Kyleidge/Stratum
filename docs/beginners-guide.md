@@ -58,8 +58,11 @@ actions. Checked inputs stay selected while you browse. Choose the **×** on
 ### Apply a moving average
 
 Choose **Derive > Filters > Moving average**. Set **Window size** to **5**
-samples, as shown below. Expand the **review selection** disclosure if you
-want to check the input name, then choose **Create 1 derived signal**.
+samples, as shown below. The **Preview** beside the settings draws the input
+and the smoothed result before anything is created: drag the slider or choose
+a preset to compare settings, and drag across the preview to zoom. Expand the
+**review selection** disclosure if you want to check the input name, then
+choose **Create 1 derived signal**.
 
 ![The New derived signal dialog with Filters, Moving average and a five-sample window selected.](images/beginners-guide/01-smooth.png)
 
@@ -84,8 +87,8 @@ A segment is a derived signal covering part of its input. You can process it
 further or segment it again.
 
 With the new smoothed output selected, choose **Segment > Time ranges**.
-Click **Add exact range**, set **Start (s)** to **10** and **End (s)** to **50**,
-then choose **Preview**.
+Click **Add exact range** and set **Start (s)** to **10** and **End (s)** to
+**50**. The segment preview below updates automatically.
 
 ![The Segment signals dialog showing a highlighted 10-50 second interval, exact range fields and a one-segment preview.](images/beginners-guide/02-segment.png)
 
@@ -97,16 +100,20 @@ Check **Segment target** and the preview boundaries, then choose
 the visible area. Select the new segment in history for the next step.
 
 You can also drag across the plot with **Draw ranges**, or move and resize a
-range with **Adjust ranges**. **Windows** splits at regular intervals;
-**Triggers** uses signal threshold crossings. Start with Time ranges while
-learning the workflow.
+range with **Adjust ranges**. **Windows** splits at regular intervals: drag the
+highlighted range or its edges. **Triggers** uses signal threshold crossings:
+drag a threshold line up or down and choose **Rising above** or **Falling
+below**. Both plots shade the segments your settings will create. Start with
+Time ranges while learning the workflow.
 
 <!-- pagebreak -->
 
 ## 4. Turn a signal into a value
 
 Select the segment you just created. Choose **Value > Time average**, review
-the input, then choose **Create 1 value**.
+the input, then choose **Create 1 value**. Each calculation card already shows
+its result for the input, and the preview draws the selected value over the
+signal.
 
 ![The Calculate values dialog showing Time average, Sample average, Minimum and Maximum, with Time average selected.](images/beginners-guide/03-value.png)
 

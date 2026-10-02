@@ -20,10 +20,13 @@ const order: ValueOperation[] = [
 export default function ValueOperationPalette({
   value,
   disabled,
+  results,
   onChange,
 }: {
   value: string;
   disabled: boolean;
+  /** Previewed result of each calculation for the focused input. */
+  results?: Partial<Record<ValueOperation, string>>;
   onChange: (value: string) => void;
 }) {
   return (
@@ -43,6 +46,7 @@ export default function ValueOperationPalette({
           label: spec.name,
           visual: <Icon size={21} />,
           hint,
+          detail: results?.[operation],
         };
       })}
     />

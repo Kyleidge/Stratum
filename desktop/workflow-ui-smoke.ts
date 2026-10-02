@@ -137,13 +137,18 @@ export async function workflowUiSmoke() {
         );
         await delay();
       }
-      await click('Preview', modal);
+      // Segment previews update automatically as settings change.
       await until(
         () =>
           modal
             .querySelector('.segment-preview strong')
             ?.textContent?.startsWith('2 signal segments'),
         'window card preview',
+      );
+      await until(
+        () =>
+          modal.querySelectorAll('.segment-plot .segment-band').length === 2,
+        'window plot bands',
       );
       modal
         .querySelector<HTMLElement>('[role="radio"][aria-label="Triggers"]')!
@@ -167,13 +172,17 @@ export async function workflowUiSmoke() {
         );
         await delay();
       }
-      await click('Preview', modal);
       await until(
         () =>
           modal
             .querySelector('.segment-preview strong')
             ?.textContent?.startsWith('3 signal segments'),
         'trigger card preview',
+      );
+      await until(
+        () =>
+          modal.querySelectorAll('.segment-plot [data-threshold]').length === 2,
+        'trigger plot thresholds',
       );
       modal
         .querySelector<HTMLElement>('[role="radio"][aria-label="Windows"]')!
@@ -213,7 +222,6 @@ export async function workflowUiSmoke() {
         'The next range page must expose later members.',
       );
     }
-    await click('Preview', modal);
     await until(
       () => modal.querySelector('.segment-preview strong') ?? undefined,
       'segment preview',

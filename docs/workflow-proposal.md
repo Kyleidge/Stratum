@@ -81,6 +81,25 @@ current time reference for workspace outputs. Choosing a preview signal does
 not change the processing scope. Preview and Create retain the existing clip /
 discard policy, independent input processing and atomic operation history.
 
+In workflow dialogs the segment preview runs automatically, debounced, in the
+worker's `segment-preview` inspection lane, so a newer preview supersedes a
+queued one and never blocks the form. **Triggers** plots the trigger signal
+with draggable start and end threshold lines (snapped to readable steps),
+rising/falling toggles, crossing markers and the planned segments as bands.
+**Windows** plots a target with a draggable windowed span and each planned
+window. Typed fields remain the exact source of every setting.
+
+Derive and Value dialogs place their settings beside a live preview.
+`derive-preview` builds the unsaved candidate with the same validation as
+creation, then returns bounded envelopes of it and its inputs, each on its own
+time axis, so a time shift is visible. Units share a lane; other units get
+their own lane on the same time axis. Drag to zoom; the engine re-evaluates the
+zoomed interval. Parameters have a slider (logarithmic where the useful range
+spans decades), presets and a plain-language hint derived from the input's
+sample interval and value range; the engine still validates every value.
+`value-preview` reads `valueStatistics`, the same exact pass that creation
+uses, for up to 12 inputs, so each value card shows its result in advance.
+
 Selection details live in a right-hand **inspector**: kind, name, a value's
 result, properties, time axis, inputs, a bounded lineage chain back to the
 original recordings, the operations that use the selection, source recordings

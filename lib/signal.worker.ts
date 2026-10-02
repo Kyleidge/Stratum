@@ -10,10 +10,9 @@ const engine = new SignalEngine((message, progress) =>
 let queue = Promise.resolve();
 const pending = new Set<number>(),
   cancelled = new Set<number>();
-const inspections = new Map<
-  number,
-  'view' | 'rows' | 'measure-plot' | 'sample-count'
->();
+type InspectionLane = 'view' | 'rows' | 'measure-plot' | 'sample-count';
+type PreviewLane = 'segment-preview' | 'derive-preview' | 'value-preview';
+const inspections = new Map<number, InspectionLane | PreviewLane>();
 globalThis.onmessage = (
   event: MessageEvent<EngineRequest & { requestId: number }>,
 ) => {
@@ -23,11 +22,15 @@ globalThis.onmessage = (
     if (cancelled.has(requestId)) engine.cancelled = true;
     return;
   }
+  // A newer inspection or dialog preview supersedes queued ones in its lane.
   if (
     (r.type === 'view' ||
       r.type === 'rows' ||
       r.type === 'measure-plot' ||
-      r.type === 'sample-count') &&
+      r.type === 'sample-count' ||
+      r.type === 'segment-preview' ||
+      r.type === 'derive-preview' ||
+      r.type === 'value-preview') &&
     r.inspection
   ) {
     for (const [id, lane] of inspections)
@@ -155,6 +158,20 @@ globalThis.onmessage = (
                 r.independently,
                 r.scope,
               ),
+            });
+            return;
+          case 'derive-preview':
+            send({
+              type: 'derive-preview',
+              requestId,
+              preview: await engine.previewDerived(r),
+            });
+            return;
+          case 'value-preview':
+            send({
+              type: 'value-preview',
+              requestId,
+              statistics: await engine.previewValues(r.ids),
             });
             return;
           case 'segment-metrics':
