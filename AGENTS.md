@@ -41,6 +41,14 @@ There are no server API routes or cloud signal uploads.
   below 1240 px, and History becomes one below 820 px. Ctrl+K opens
   `components/workflow-command-palette.tsx`: the top-bar commands plus a word
   search over every step and output in scope, capped at 40 results.
+- `components/function-editor.tsx`: Derive/Value dialog, settings beside a
+  live preview (`components/preview-lanes.tsx`, one lane per unit). The worker's
+  `derive-preview` evaluates an unsaved candidate built by creation's own
+  validation; `value-preview` uses `SignalEngine.valueStatistics`, which
+  `calculateValues` also uses. Previews run in inspection lanes and never save.
+  `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
+  validates values. `components/segment-plot.tsx` draws trigger thresholds and
+  window spans; workflow segment previews run automatically.
 - `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
   viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
   summary CSV, and standalone printable HTML reports with escaped labels.

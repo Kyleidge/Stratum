@@ -3985,3 +3985,586 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
     display: none;
   }
 }
+
+/* Operation dialogs: settings beside a live preview the engine calculates
+   without saving. The preview never stands in for created results. */
+.operation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.operation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.operation-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--background);
+}
+.operation-preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 28px;
+}
+.operation-preview-heading > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary);
+  font-weight: 600;
+}
+.operation-preview-heading > .region-field {
+  flex: 1;
+  min-width: 160px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.operation-preview-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.operation-preview-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.operation-preview-busy svg {
+  animation: operation-preview-spin 1s linear infinite;
+}
+@keyframes operation-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .operation-preview-busy svg {
+    animation: none;
+  }
+}
+.operation-preview-plot {
+  display: flex;
+  flex-direction: column;
+  min-height: 210px;
+  transition: opacity 160ms;
+}
+.operation-preview-plot[data-stale] {
+  opacity: 0.72;
+}
+.operation-preview-empty,
+.operation-preview-error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 210px;
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 2px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+.operation-preview-error {
+  min-height: 0;
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-wash);
+}
+.operation-preview-plot > .operation-preview-error {
+  min-height: 210px;
+}
+.operation-preview-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}
+.workflow-dialog .operation-preview-help {
+  margin: 0;
+  color: var(--ink-3);
+}
+.operation-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.operation-footer > span {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-dialog .operation-footer .primary-button {
+  width: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+.preview-lanes {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.preview-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.preview-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.preview-legend i {
+  width: 12px;
+  height: 3px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+.preview-legend small {
+  color: var(--ink-3);
+}
+.preview-lane {
+  position: relative;
+  min-width: 0;
+}
+.preview-lane + .preview-lane {
+  border-top: 1px dashed var(--line);
+}
+.preview-lane-unit {
+  position: absolute;
+  top: 1px;
+  left: 6px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+.preview-lane .signal-chart {
+  border: 0;
+  background: transparent;
+}
+.preview-zoom-surface > rect {
+  cursor: crosshair;
+}
+.preview-zoom-band {
+  fill: var(--primary);
+  fill-opacity: 0.15;
+  stroke: var(--primary);
+  stroke-dasharray: 3 3;
+}
+.preview-hover line {
+  stroke: var(--ink-3);
+  stroke-dasharray: 3 3;
+}
+.workflow-dialog .signal-chart svg .preview-hover text {
+  fill: var(--ink-2);
+}
+.parameter-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.parameter-control-field {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.parameter-control-field > span {
+  color: var(--muted-foreground);
+}
+.parameter-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 2px 0;
+}
+.parameter-slider > span {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.parameter-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.parameter-presets button {
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: var(--text-xs);
+}
+.parameter-presets button:hover {
+  background: var(--accent);
+}
+.parameter-presets button[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--primary-wash);
+  color: var(--primary);
+}
+.parameter-presets button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.workflow-function-editor .parameter-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.signal-palette-grid[data-category='Values'] .signal-operation-formula {
+  grid-row: span 3;
+}
+.operation-card-detail {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--kind-value);
+  font: 600 var(--text-sm) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.value-preview-table {
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+.value-preview-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--text-sm);
+}
+.value-preview-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-weight: 500;
+  text-align: left;
+}
+.value-preview-table th,
+.value-preview-table td {
+  padding: 3px 7px;
+  border-bottom: 1px solid var(--border);
+}
+.value-preview-table th:last-child,
+.value-preview-table td:last-child {
+  width: 42%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.value-preview-table tr[data-selected] {
+  background: var(--primary-wash);
+}
+.value-preview-row {
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.value-preview-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.value-preview-table .input-hint {
+  margin: 0;
+  padding: 5px 7px;
+}
+@media (max-width: 900px) {
+  .operation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 520px) {
+  .operation-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .parameter-control-field {
+    grid-template-columns: 90px minmax(0, 1fr);
+  }
+}
+.operation-layout .signal-palette-grid[data-category='Calculus'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Segmentation plot: planned segments, crossings, thresholds and window span. */
+.segment-plot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--background);
+}
+.segment-plot-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.segment-plot-heading > .region-field {
+  flex: 1;
+  min-width: 180px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.segment-plot-signal {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.segment-plot-signal small {
+  color: var(--ink-3);
+}
+.segment-plot-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.segment-plot-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+}
+.segment-plot-key i {
+  width: 12px;
+  height: 8px;
+  border-radius: 1px;
+}
+.segment-plot-key i[data-key='segment'] {
+  background: color-mix(in srgb, var(--kind-segment) 35%, transparent);
+  border: 1px solid var(--kind-segment);
+}
+.segment-plot-key i[data-key='start'],
+.segment-plot-key i[data-key='end'] {
+  height: 2px;
+}
+.segment-plot-key i[data-key='start'] {
+  background: var(--good);
+}
+.segment-plot-key i[data-key='end'] {
+  background: var(--warning);
+}
+.segment-plot-canvas svg {
+  touch-action: none;
+  user-select: none;
+}
+.workflow-segmentation-editor .segment-plot-help {
+  padding: 0 8px 6px;
+}
+.segment-band rect {
+  fill: var(--kind-segment);
+  fill-opacity: 0.16;
+  stroke: var(--kind-segment);
+  stroke-opacity: 0.55;
+  stroke-width: 1;
+}
+.segment-band rect[data-odd] {
+  fill-opacity: 0.26;
+}
+.segment-band[data-clipped] rect {
+  stroke-dasharray: 3 3;
+}
+.workflow-dialog .signal-chart svg .segment-band text {
+  fill: var(--kind-segment);
+  font-weight: 600;
+}
+.segment-crossing[data-boundary='start'] {
+  fill: var(--good);
+}
+.segment-crossing[data-boundary='end'] {
+  fill: var(--warning);
+}
+.segment-threshold {
+  cursor: ns-resize;
+}
+.segment-threshold line {
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
+}
+.segment-threshold[data-threshold='start'] line {
+  stroke: var(--good);
+}
+.segment-threshold[data-threshold='end'] line {
+  stroke: var(--warning);
+}
+.segment-threshold:hover line,
+.segment-threshold[data-dragging] line {
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+.workflow-dialog .signal-chart svg .segment-threshold text {
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 3px;
+}
+.workflow-dialog
+  .signal-chart
+  svg
+  .segment-threshold[data-threshold='start']
+  text {
+  fill: var(--good);
+}
+.workflow-dialog
+  .signal-chart
+  svg
+  .segment-threshold[data-threshold='end']
+  text {
+  fill: var(--warning);
+}
+.segment-span-fill {
+  fill: var(--primary);
+  fill-opacity: 0.07;
+  cursor: grab;
+}
+.segment-span-edge line {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+.segment-span-edge rect[data-span-edge] {
+  cursor: ew-resize;
+}
+.segment-plot-surface[aria-disabled='true'] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.workflow-segmentation-editor .segment-edge-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.workflow-segmentation-editor .segment-edge-toggle legend {
+  margin-top: 6px;
+}
+.segment-edge-toggle button {
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: var(--text-sm);
+}
+.segment-edge-toggle button:first-of-type {
+  border-radius: 2px 0 0 2px;
+}
+.segment-edge-toggle button:last-of-type {
+  margin-left: -1px;
+  border-radius: 0 2px 2px 0;
+}
+.segment-edge-toggle button[aria-pressed='true'] {
+  position: relative;
+  border-color: var(--primary);
+  background: var(--primary-wash);
+  color: var(--primary);
+}
+.segment-edge-toggle button:focus-visible {
+  position: relative;
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.segment-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.segment-quick-actions button[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--primary-wash);
+  color: var(--primary);
+}
+.workflow-segmentation-editor .segment-preview .segment-preview-error {
+  color: var(--danger);
+}
+.segment-preview-spinner {
+  animation: operation-preview-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .segment-preview-spinner {
+    animation: none;
+  }
+}
+/* Beside a preview, Math cards stack their formula above the name. */
+.operation-layout .signal-palette-grid[data-category='Math'] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.operation-layout
+  .signal-palette-grid[data-category='Math']
+  .signal-operation-card:nth-child(n) {
+  grid-column: auto;
+  grid-template-columns: minmax(0, 1fr);
+  padding-right: 24px;
+}
+.operation-layout
+  .signal-palette-grid[data-category='Math']
+  .signal-operation-formula {
+  grid-row: auto;
+}
+@media (max-width: 520px) {
+  .operation-layout .signal-palette-grid[data-category='Math'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

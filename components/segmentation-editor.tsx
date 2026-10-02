@@ -1,16 +1,18 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useState } from 'react';
 import {
   Activity,
   Eye,
   GitBranch,
+  LoaderCircle,
   Scissors,
   Timer,
   BetweenHorizontalStart,
 } from 'lucide-react';
 import OperationCards from './operation-cards';
 import TimeRangePicker from './time-range-picker';
+import SegmentPlot, { type PlotThreshold } from './segment-plot';
 import type { SignalGraph } from '@/lib/signal-graph';
 import {
   readTimeRanges,
@@ -256,6 +258,12 @@ export default function SegmentationEditor({
   );
   const [preview, setPreview] = useState<{
     key: string;
+    plan?: SegmentationPlan;
+    error?: string;
+  }>();
+  // The last successful plan keeps plot bands steady while a new one runs.
+  const [lastPlan, setLastPlan] = useState<{
+    method: SegmentationDefinition['method'];
     plan: SegmentationPlan;
   }>();
   const [error, setError] = useState('');
@@ -275,7 +283,10 @@ export default function SegmentationEditor({
     selectedIds,
     selectionKind,
   ]);
-  const plan = preview?.key === key ? preview.plan : undefined;
+  const currentPreview = preview?.key === key ? preview : undefined;
+  const plan = currentPreview?.plan;
+  // Workflow dialogs preview automatically; earlier workspaces keep a button.
+  const autoPreview = workflowMode;
   const rangeRows = rangeFields(ranges);
   const invalidRanges =
     method === 'ranges' &&
@@ -321,27 +332,26 @@ export default function SegmentationEditor({
       ranges: readTimeRanges(ranges),
     };
   }
+  const targets =
+    target === 'selection'
+      ? selectedIds
+      : target === 'file'
+        ? source.channels
+        : [target];
+  function request() {
+    const independently =
+      target === 'selection' &&
+      targets.length > 1 &&
+      (savedOperation?.independently ?? selectionKind === 'collection');
+    const scope: SegmentationScope = target === 'file' ? 'file' : 'signals';
+    return [definition(), targets, independently, scope] as const;
+  }
   async function run(previewOnly: boolean) {
     setError('');
     try {
-      const config = definition();
-      const targets =
-        target === 'selection'
-          ? selectedIds
-          : target === 'file'
-            ? source.channels
-            : [target];
-      const independently =
-        target === 'selection' &&
-        targets.length > 1 &&
-        (savedOperation?.independently ?? selectionKind === 'collection');
-      const scope: SegmentationScope = target === 'file' ? 'file' : 'signals';
-      if (previewOnly)
-        setPreview({
-          key,
-          plan: await onPreview(config, targets, independently, scope),
-        });
-      else await onCreate(config, targets, independently, scope);
+      const settings = request();
+      if (previewOnly) setPreview({ key, plan: await onPreview(...settings) });
+      else await onCreate(...settings);
     } catch (error) {
       setError(
         error instanceof Error
@@ -350,6 +360,60 @@ export default function SegmentationEditor({
       );
     }
   }
+  const refreshPreview = useEffectEvent(
+    async (requestKey: string, current: () => boolean) => {
+      const planned = method;
+      try {
+        const plan = await onPreview(...request());
+        if (!current()) return;
+        setPreview({ key: requestKey, plan });
+        setLastPlan({ method: planned, plan });
+      } catch (caught) {
+        // A newer preview supersedes this one; its cancellation is not news.
+        if (!current()) return;
+        setPreview({
+          key: requestKey,
+          error:
+            caught instanceof Error
+              ? caught.message
+              : 'These settings could not be previewed.',
+        });
+      }
+    },
+  );
+  useEffect(() => {
+    if (!autoPreview || invalidRanges) return;
+    let current = true;
+    // Debounced so typing and dragging produce one preview per pause.
+    const timer = setTimeout(
+      () => void refreshPreview(key, () => current),
+      300,
+    );
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [autoPreview, invalidRanges, key]);
+  const bandPlan =
+    plan ?? (lastPlan?.method === method ? lastPlan.plan : undefined);
+  const thresholdLine = (
+    boundary: 'start' | 'end',
+    trigger: TriggerForm,
+    update: (change: (old: TriggerForm) => TriggerForm) => void,
+  ): PlotThreshold => ({
+    boundary,
+    signalId: trigger.signalId,
+    value: trigger.threshold.trim() ? Number(trigger.threshold) : NaN,
+    edge: trigger.edge,
+    onChange: (value) =>
+      update((old) => ({ ...old, threshold: String(value) })),
+  });
+  const windowSpan: [number, number] | undefined =
+    windowStart.trim() &&
+    windowEnd.trim() &&
+    Number(windowEnd) > Number(windowStart)
+      ? [Number(windowStart), Number(windowEnd)]
+      : undefined;
   function triggerEditor(
     label: string,
     trigger: TriggerForm,
@@ -368,19 +432,38 @@ export default function SegmentationEditor({
           items={signals}
           onChange={(signalId) => update({ ...trigger, signalId })}
         />
-        <div className="field-label">Crossing</div>
-        <Choice
-          label={`${label} edge`}
-          value={trigger.edge}
-          items={[
-            { value: 'rising', label: '↗ Rising above' },
-            { value: 'falling', label: '↘ Falling below' },
-          ]}
-          onChange={(edge) => {
-            if (edge === 'rising' || edge === 'falling')
-              update({ ...trigger, edge });
-          }}
-        />
+        {workflowMode ? (
+          <fieldset className="segment-edge-toggle">
+            <legend className="field-label">Crossing</legend>
+            {(['rising', 'falling'] as const).map((edge) => (
+              <button
+                key={edge}
+                type="button"
+                aria-pressed={trigger.edge === edge}
+                aria-label={`${label} ${edge === 'rising' ? 'rising above' : 'falling below'}`}
+                onClick={() => update({ ...trigger, edge })}
+              >
+                {edge === 'rising' ? '↗ Rising above' : '↘ Falling below'}
+              </button>
+            ))}
+          </fieldset>
+        ) : (
+          <>
+            <div className="field-label">Crossing</div>
+            <Choice
+              label={`${label} edge`}
+              value={trigger.edge}
+              items={[
+                { value: 'rising', label: '↗ Rising above' },
+                { value: 'falling', label: '↘ Falling below' },
+              ]}
+              onChange={(edge) => {
+                if (edge === 'rising' || edge === 'falling')
+                  update({ ...trigger, edge });
+              }}
+            />
+          </>
+        )}
         <div className="segment-field-pair">
           <Numeric
             label={`${label} threshold`}
@@ -503,6 +586,26 @@ export default function SegmentationEditor({
         )}
         {method === 'triggers' && (
           <>
+            {rangePlot && (
+              <SegmentPlot
+                graph={rangePlot.graph}
+                request={rangePlot.request}
+                label={
+                  signalLabel ??
+                  ((id) => rangePlot.graph.nodes.get(id)?.name ?? id)
+                }
+                ids={[...new Set([start.signalId, end.signalId])].filter((id) =>
+                  rangePlot.graph.nodes.has(id),
+                )}
+                busy={busy}
+                ranges={bandPlan?.ranges}
+                thresholds={[
+                  thresholdLine('start', start, setStart),
+                  thresholdLine('end', end, setEnd),
+                ]}
+                help="Drag a threshold line up or down. Shaded bands are the segments these settings create; triangles mark the crossings."
+              />
+            )}
             <div className={workflowMode ? 'segment-trigger-grid' : undefined}>
               {triggerEditor('Start', start, setStart)}
               {triggerEditor('End', end, setEnd)}
@@ -557,6 +660,31 @@ export default function SegmentationEditor({
           ))}
         {method === 'windows' && (
           <>
+            {rangePlot && (
+              <SegmentPlot
+                graph={rangePlot.graph}
+                request={rangePlot.request}
+                label={
+                  signalLabel ??
+                  ((id) => rangePlot.graph.nodes.get(id)?.name ?? id)
+                }
+                ids={targets.filter((id) => rangePlot.graph.nodes.has(id))}
+                busy={busy}
+                ranges={bandPlan?.ranges}
+                span={
+                  windowSpan
+                    ? {
+                        range: windowSpan,
+                        onChange: ([a, b]) => {
+                          setWindowStart(String(a));
+                          setWindowEnd(String(b));
+                        },
+                      }
+                    : undefined
+                }
+                help="Drag the highlighted range, or either edge, to choose where windows start and stop. Bands show each window."
+              />
+            )}
             <div className="segment-field-pair">
               <Numeric
                 label="Range start"
@@ -581,6 +709,43 @@ export default function SegmentationEditor({
                 onChange={setStep}
               />
             </div>
+            {workflowMode && (
+              <div className="segment-quick-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  aria-pressed={step === duration}
+                  onClick={() => setStep(duration)}
+                >
+                  Back to back
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  aria-pressed={Number(step) === Number(duration) / 2}
+                  disabled={!(Number(duration) > 0)}
+                  onClick={() => setStep(String(Number(duration) / 2))}
+                >
+                  50 % overlap
+                </button>
+                {defaultRange && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    aria-pressed={
+                      Number(windowStart) === defaultRange[0] &&
+                      Number(windowEnd) === defaultRange[1]
+                    }
+                    onClick={() => {
+                      setWindowStart(String(defaultRange[0]));
+                      setWindowEnd(String(defaultRange[1]));
+                    }}
+                  >
+                    Whole signal
+                  </button>
+                )}
+              </div>
+            )}
             <label className="segment-checkbox" htmlFor={partialId}>
               <Checkbox
                 id={partialId}
@@ -636,7 +801,11 @@ export default function SegmentationEditor({
             </p>
           )}
       </div>
-      <div className="segment-preview" aria-live="polite" data-empty={!plan}>
+      <div
+        className="segment-preview"
+        aria-live="polite"
+        data-empty={!plan && !autoPreview}
+      >
         {plan ? (
           <>
             <strong>
@@ -674,6 +843,23 @@ export default function SegmentationEditor({
               ))}
             </ol>
           </>
+        ) : autoPreview && currentPreview?.error ? (
+          <small className="segment-preview-error">
+            {currentPreview.error}
+          </small>
+        ) : autoPreview ? (
+          <small>
+            {invalidRanges ? (
+              <>
+                <Eye size={16} /> Add a valid range to preview segments.
+              </>
+            ) : (
+              <>
+                <LoaderCircle size={16} className="segment-preview-spinner" />
+                Updating the segment preview…
+              </>
+            )}
+          </small>
         ) : (
           <small>
             <Eye size={16} /> Preview to check the segment count and boundaries.
@@ -686,15 +872,17 @@ export default function SegmentationEditor({
         </p>
       )}
       <div className="segment-actions">
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => void run(true)}
-          disabled={invalidRanges}
-        >
-          <Eye size={14} />
-          Preview
-        </button>
+        {!autoPreview && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void run(true)}
+            disabled={invalidRanges}
+          >
+            <Eye size={14} />
+            Preview
+          </button>
+        )}
         <button
           className="primary-button"
           type="button"

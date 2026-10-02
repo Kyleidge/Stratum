@@ -56,12 +56,13 @@ import {
   archiveLines,
   validateWorkspace,
 } from './workspace-archive';
-import { VALUE_FUNCTIONS } from './workflow-types';
+import { VALUE_FUNCTIONS, statisticValue } from './workflow-types';
 import type {
   CheckDefinition,
   RunFlag,
   ScalarValue,
   ValueOperation,
+  ValueStatistics,
   WorkflowRun,
   WorkflowStep,
 } from './workflow-types';
@@ -91,6 +92,7 @@ import { CrossingDetector } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
   Chunk,
+  DerivePreview,
   EdgeTrigger,
   Operation,
   Plot,
@@ -1540,54 +1542,7 @@ export class SignalEngine {
         `Calculating ${spec.name.toLowerCase()} · ${index + 1}/${inputs.length}`,
         index / inputs.length,
       );
-      let count = 0,
-        mean = 0,
-        minimum = Infinity,
-        maximum = -Infinity;
-      let minTime = 0,
-        maxTime = 0,
-        duration = 0,
-        area = 0;
-      let previous: Point | undefined;
-      for await (const chunk of this.evaluate(input.id)) {
-        this.check();
-        for (let i = 0; i < chunk.time.length; i++) {
-          const time = chunk.time[i],
-            value = chunk.values[i];
-          if (!Number.isFinite(value)) {
-            previous = undefined;
-            continue;
-          }
-          count++;
-          mean = mean * ((count - 1) / count) + value / count;
-          if (value < minimum) {
-            minimum = value;
-            minTime = time;
-          }
-          if (value > maximum) {
-            maximum = value;
-            maxTime = time;
-          }
-          if (previous && time > previous[0]) {
-            const dt = time - previous[0];
-            area += (previous[1] / 2 + value / 2) * dt;
-            duration += dt;
-          }
-          previous = [time, value];
-        }
-      }
-      const value =
-        operation === 'minimum'
-          ? minimum
-          : operation === 'maximum'
-            ? maximum
-            : operation === 'sample-average'
-              ? count
-                ? mean
-                : NaN
-              : duration > 0
-                ? area / duration
-                : NaN;
+      const statistics = await this.valueStatistics(input.id);
       const [start, end] = this.bounds(input.id);
       values.push({
         id: uid(),
@@ -1597,15 +1552,17 @@ export class SignalEngine {
         name: `${input.name} · ${spec.name}`,
         unit: input.unit,
         operation,
-        value: Number.isFinite(value) ? value : null,
-        sampleCount: count,
-        validDuration: duration,
+        value: statisticValue(statistics, operation),
+        sampleCount: statistics.sampleCount,
+        validDuration: statistics.validDuration,
         start,
         end,
         createdAt,
-        ...(count && (operation === 'minimum' || operation === 'maximum')
-          ? { timestamp: operation === 'minimum' ? minTime : maxTime }
-          : {}),
+        ...(operation === 'minimum' && statistics.minimumTime !== undefined
+          ? { timestamp: statistics.minimumTime }
+          : operation === 'maximum' && statistics.maximumTime !== undefined
+            ? { timestamp: statistics.maximumTime }
+            : {}),
       });
     }
     await this.save({
@@ -1613,6 +1570,66 @@ export class SignalEngine {
       values: [...(this.project.values ?? []), ...values],
     });
     return values;
+  }
+  /** Exact statistics for every value calculation, from every finite sample. */
+  async valueStatistics(id: string): Promise<ValueStatistics> {
+    let count = 0,
+      mean = 0,
+      minimum = Infinity,
+      maximum = -Infinity;
+    let minTime = 0,
+      maxTime = 0,
+      duration = 0,
+      area = 0;
+    let previous: Point | undefined;
+    for await (const chunk of this.evaluate(id)) {
+      this.check();
+      for (let i = 0; i < chunk.time.length; i++) {
+        const time = chunk.time[i],
+          value = chunk.values[i];
+        if (!Number.isFinite(value)) {
+          previous = undefined;
+          continue;
+        }
+        count++;
+        mean = mean * ((count - 1) / count) + value / count;
+        if (value < minimum) {
+          minimum = value;
+          minTime = time;
+        }
+        if (value > maximum) {
+          maximum = value;
+          maxTime = time;
+        }
+        if (previous && time > previous[0]) {
+          const dt = time - previous[0];
+          area += (previous[1] / 2 + value / 2) * dt;
+          duration += dt;
+        }
+        previous = [time, value];
+      }
+    }
+    const finite = (value: number) => (Number.isFinite(value) ? value : null);
+    return {
+      inputId: id,
+      sampleCount: count,
+      validDuration: duration,
+      sampleAverage: count ? finite(mean) : null,
+      timeAverage: duration > 0 ? finite(area / duration) : null,
+      minimum: finite(minimum),
+      maximum: finite(maximum),
+      ...(count ? { minimumTime: minTime, maximumTime: maxTime } : {}),
+    };
+  }
+  /** Value statistics for a dialog preview; nothing is saved. */
+  async previewValues(ids: string[]): Promise<ValueStatistics[]> {
+    if (ids.length > 50) throw new Error('Preview up to 50 signals at once.');
+    const statistics: ValueStatistics[] = [];
+    for (const id of new Set(ids)) {
+      this.check();
+      statistics.push(await this.valueStatistics(id));
+    }
+    return statistics;
   }
   async previewRegions(settings: RegionSettings): Promise<RegionPlan> {
     this.check();
@@ -1757,6 +1774,50 @@ export class SignalEngine {
     });
     return set;
   }
+  /** A two-input recipe node. Both inputs must share one sample grid. */
+  private binaryNode(
+    sourceId: string,
+    operation: Operation,
+    firstId: string,
+    secondId: string,
+    labels?: Record<string, string>,
+  ): SignalNode {
+    if (this.gridRecipe(firstId) !== this.gridRecipe(secondId))
+      throw new Error(
+        'Inputs need matching sample grids and time transformations.',
+      );
+    const a = this.find(firstId),
+      b = this.find(secondId);
+    if (
+      operation === 'power' &&
+      (!/^n[· ]?m$/i.test(a.unit) || b.unit.toLowerCase() !== 'rpm')
+    )
+      throw new Error(
+        'Brake power requires torque [Nm] followed by speed [rpm].',
+      );
+    if (
+      operation === 'bsfc' &&
+      (!/^kg\/h$/i.test(a.unit) || b.unit.toLowerCase() !== 'kw')
+    )
+      throw new Error(
+        'Specific fuel consumption requires fuel flow [kg/h] followed by power [kW].',
+      );
+    return this.node(
+      sourceId,
+      isArithmetic(operation)
+        ? `${(labels?.[a.id] ?? a.name).slice(0, 64)} ${ARITHMETIC_SYMBOLS[operation]} ${(labels?.[b.id] ?? b.name).slice(0, 64)}`
+        : operation === 'power'
+          ? 'Brake power'
+          : 'Specific fuel consumption',
+      isArithmetic(operation)
+        ? arithmeticUnit(operation, a.unit, b.unit)
+        : operation === 'power'
+          ? 'kW'
+          : 'g/kWh',
+      operation,
+      [firstId, secondId],
+    );
+  }
   async applyRegionFunction(settings: FunctionSettings): Promise<FunctionRun> {
     this.check();
     const before = this.project;
@@ -1897,43 +1958,15 @@ export class SignalEngine {
           nodes: [...before.nodes, ...internal, ...outputs],
         };
         let result: SignalNode;
-        if (binary) {
-          if (this.gridRecipe(scoped[0]) !== this.gridRecipe(scoped[1]))
-            throw new Error(
-              'Inputs need matching sample grids and time transformations.',
-            );
-          const a = this.find(scoped[0]),
-            b = this.find(scoped[1]);
-          if (
-            settings.operation === 'power' &&
-            (!/^n[· ]?m$/i.test(a.unit) || b.unit.toLowerCase() !== 'rpm')
-          )
-            throw new Error(
-              'Brake power requires torque [Nm] followed by speed [rpm].',
-            );
-          if (
-            settings.operation === 'bsfc' &&
-            (!/^kg\/h$/i.test(a.unit) || b.unit.toLowerCase() !== 'kw')
-          )
-            throw new Error(
-              'Specific fuel consumption requires fuel flow [kg/h] followed by power [kW].',
-            );
-          result = this.node(
+        if (binary)
+          result = this.binaryNode(
             settings.sourceId,
-            isArithmetic(settings.operation)
-              ? `${(before.labels?.[a.id] ?? a.name).slice(0, 64)} ${ARITHMETIC_SYMBOLS[settings.operation]} ${(before.labels?.[b.id] ?? b.name).slice(0, 64)}`
-              : settings.operation === 'power'
-                ? 'Brake power'
-                : 'Specific fuel consumption',
-            isArithmetic(settings.operation)
-              ? arithmeticUnit(settings.operation, a.unit, b.unit)
-              : settings.operation === 'power'
-                ? 'kW'
-                : 'g/kWh',
             settings.operation,
-            scoped,
+            scoped[0],
+            scoped[1],
+            before.labels,
           );
-        } else
+        else
           result = (
             await this.deriveMany(
               [scoped[0]],
@@ -2284,6 +2317,85 @@ export class SignalEngine {
         nodes: [...this.project.nodes, ...nodes],
       });
     return nodes;
+  }
+  /**
+   * Evaluate a candidate derive operation without saving it. The candidate is
+   * validated and built exactly as creation builds it; only bounded envelopes
+   * of it and its inputs, each on its own time axis, are returned.
+   */
+  async previewDerived(request: {
+    inputId: string;
+    operation: Operation;
+    parameter: number;
+    secondaryId?: string;
+    range?: [number, number];
+  }): Promise<DerivePreview> {
+    const input = this.find(request.inputId);
+    const binary = isBinaryOperation(request.operation);
+    let node: SignalNode;
+    if (binary) {
+      if (!request.secondaryId)
+        throw new Error('Choose the second input for this calculation.');
+      if (this.find(request.secondaryId).sourceId !== input.sourceId)
+        throw new Error('Inputs must use the same recording.');
+      node = this.binaryNode(
+        input.sourceId,
+        request.operation,
+        input.id,
+        request.secondaryId,
+        this.project.labels,
+      );
+    } else
+      [node] = await this.deriveMany(
+        [input.id],
+        request.operation,
+        request.parameter,
+        false,
+      );
+    const graph = new SignalGraph({
+      ...this.project,
+      nodes: [...this.project.nodes, node],
+    });
+    const inputIds = [input.id, ...(binary ? [request.secondaryId!] : [])];
+    const full = [node.id, ...inputIds].map((id) => graph.ranges.get(id)!);
+    const domain: [number, number] = [
+      Math.min(...full.map((range) => range[0])),
+      Math.max(...full.map((range) => range[1])),
+    ];
+    const view = request.range ?? domain;
+    const clip = (id: string): [number, number] | undefined => {
+      const bounds = graph.ranges.get(id)!;
+      const range: [number, number] = [
+        Math.max(view[0], bounds[0]),
+        Math.min(view[1], bounds[1]),
+      ];
+      return range[1] >= range[0] ? range : undefined;
+    };
+    const empty = (id: string): Plot => ({
+      id,
+      ...new Envelope(view[0], view[1]).finish(),
+    });
+    const outputRange = clip(node.id);
+    let plot = empty(node.id);
+    if (outputRange) {
+      const envelope = new Envelope(...outputRange);
+      for await (const chunk of executeSignal(
+        node.id,
+        graph,
+        (id, range) => this.raw(id, range),
+        () => this.check(),
+        outputRange,
+      ))
+        for (let i = 0; i < chunk.time.length; i++)
+          envelope.add(chunk.time[i], chunk.values[i]);
+      plot = { id: node.id, ...envelope.finish() };
+    }
+    const inputs: Plot[] = [];
+    for (const id of inputIds) {
+      const range = clip(id);
+      inputs.push(range ? await this.plot(id, range) : empty(id));
+    }
+    return { node, plot, inputs, domain };
   }
   /** Constant translation from recording time to this node's displayed time. */
   private axisOffset(id: string): number {

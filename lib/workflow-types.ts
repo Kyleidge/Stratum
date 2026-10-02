@@ -111,6 +111,36 @@ export type WorkflowRecipeRecord = {
   text: string;
 };
 
+/**
+ * Exact statistics behind every value calculation. Previews and created values
+ * read the same record, so a preview always matches the value it creates.
+ */
+export type ValueStatistics = {
+  inputId: string;
+  sampleCount: number;
+  validDuration: number;
+  sampleAverage: number | null;
+  timeAverage: number | null;
+  minimum: number | null;
+  maximum: number | null;
+  /** First occurrence times; present only when a finite sample exists. */
+  minimumTime?: number;
+  maximumTime?: number;
+};
+
+export function statisticValue(
+  statistics: ValueStatistics,
+  operation: ValueOperation,
+): number | null {
+  return operation === 'minimum'
+    ? statistics.minimum
+    : operation === 'maximum'
+      ? statistics.maximum
+      : operation === 'sample-average'
+        ? statistics.sampleAverage
+        : statistics.timeAverage;
+}
+
 export const VALUE_FUNCTIONS: {
   operation: ValueOperation;
   name: string;

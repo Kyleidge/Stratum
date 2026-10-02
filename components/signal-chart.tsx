@@ -67,6 +67,9 @@ export type ChartGeometry = {
   width: number;
   height: number;
   x: (time: number) => number;
+  /** Primary value axis: value to plot y, and plot y back to a value. */
+  y: (value: number) => number;
+  valueAt: (y: number) => number;
 };
 export type ChartInteraction = {
   mode: 'pan' | 'zoom' | 'cursor';
@@ -104,6 +107,7 @@ export default function SignalChart({
   timeAxis = true,
   interaction,
   overlay,
+  extent,
 }: {
   traces: Trace[];
   segments: Segment[];
@@ -121,6 +125,8 @@ export default function SignalChart({
   timeAxis?: boolean;
   interaction?: ChartInteraction;
   overlay?: (geometry: ChartGeometry) => ReactNode;
+  /** Values the primary axis must also show, such as editable thresholds. */
+  extent?: number[];
 }) {
   const clipId = useId();
   const [cursor, setCursor] = useState<number | null>(null);
@@ -234,6 +240,21 @@ export default function SignalChart({
               trace.plot)
             : trace.plot,
         );
+      const shown = (extent ?? []).filter(Number.isFinite);
+      if (shown.length && group === groups[0])
+        plots.push({
+          id: '',
+          points: [],
+          summary: {
+            count: shown.length,
+            min: Math.min(...shown),
+            max: Math.max(...shown),
+            mean: NaN,
+            integral: 0,
+            start: NaN,
+            end: NaN,
+          },
+        });
       const range =
         gesture?.mode === 'y-pan' && gesture.axisKey === group.key
           ? panValueAxis(
@@ -251,7 +272,7 @@ export default function SignalChart({
         max: settings.log ? Math.log10(range[1]) : range[1],
       };
     });
-  }, [axisGroups, traces, interaction, includeZero, gesture]);
+  }, [axisGroups, traces, interaction, includeZero, gesture, extent]);
   const bottom = chartHeight - (interaction ? (timeAxis ? 51 : 12) : 31);
   const plotHeight = bottom - 15;
   const valueTicks = fluid
@@ -1093,6 +1114,17 @@ export default function SignalChart({
           width: chartWidth,
           height: chartHeight,
           x,
+          y: (value) =>
+            bottom -
+            (((scales[0].log ? Math.log10(value) : value) - scales[0].min) /
+              (scales[0].max - scales[0].min || 1)) *
+              plotHeight,
+          valueAt: (y) => {
+            const scaled =
+              scales[0].min +
+              ((bottom - y) / plotHeight) * (scales[0].max - scales[0].min);
+            return scales[0].log ? 10 ** scaled : scaled;
+          },
         })}
         {timeAxis && (
           <text
