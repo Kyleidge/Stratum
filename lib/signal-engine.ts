@@ -23,7 +23,26 @@ import {
   isArithmetic,
   isBinaryOperation,
 } from './signal-arithmetic';
-import { withWorkflowHistory } from './workflow-history';
+import { withWorkflowHistory, WorkflowIndex } from './workflow-history';
+import {
+  bindChannels,
+  createResolver,
+  outputLabels,
+  parseRef,
+  parseWorkflow,
+  recipeHash,
+  stepCommand,
+  stepRefs,
+  type BindContext,
+  type RecipeStep,
+} from './workflow-recipe';
+import {
+  evaluateChecks,
+  runStatus,
+  validateChecks,
+  type CheckOutput,
+  type OutputStatistics,
+} from './workflow-checks';
 import {
   affectedOperations,
   withoutOperations,
@@ -38,7 +57,14 @@ import {
   validateWorkspace,
 } from './workspace-archive';
 import { VALUE_FUNCTIONS } from './workflow-types';
-import type { ScalarValue, ValueOperation } from './workflow-types';
+import type {
+  CheckDefinition,
+  RunFlag,
+  ScalarValue,
+  ValueOperation,
+  WorkflowRun,
+  WorkflowStep,
+} from './workflow-types';
 import { EXAMPLES, exampleDefinition } from './signal-examples';
 import {
   WORKFLOW_EXAMPLE,
@@ -163,6 +189,8 @@ export class SignalEngine {
   private revision = 0;
   private undoStack: Project[] = [];
   private redoStack: Project[] = [];
+  /** Batch that owns the newest Undo entry, so its later items coalesce. */
+  private journalTag?: string;
   private staging = false;
   get canUndo() {
     return this.undoStack.length > 0;
@@ -217,10 +245,11 @@ export class SignalEngine {
       ((await result(snapshot)) as Project | undefined) ?? emptyProject();
     this.revision = Number(await result(revision)) || 0;
     const history = (await result(journal)) as
-      | { undo: Project[]; redo: Project[] }
+      | { undo: Project[]; redo: Project[]; tag?: string }
       | undefined;
     this.undoStack = history?.undo ?? [];
     this.redoStack = history?.redo ?? [];
+    this.journalTag = history?.tag;
     const restored = restoreSegmentationOperations(this.project);
     if (restored !== this.project)
       await this.save(restored, { undo: this.undoStack, redo: this.redoStack });
@@ -235,9 +264,15 @@ export class SignalEngine {
         'Operation cancelled. Your existing signals are unchanged.',
       );
   }
+  /**
+   * Commit a project. `batch` coalesces consecutive commits of one batch into a
+   * single Undo entry; `null` clears that association (Undo/Redo). Explicit
+   * housekeeping journals keep it.
+   */
   private async save(
     next: Project,
     history?: { undo: Project[]; redo: Project[] },
+    batch?: string | null,
   ) {
     this.check();
     if (this.project.workflowSteps) next = withWorkflowHistory(next);
@@ -246,10 +281,24 @@ export class SignalEngine {
       this.invalidate();
       return;
     }
-    const journal = history ?? {
-      undo: [...this.undoStack.slice(-19), this.project],
-      redo: [],
-    };
+    // Later items of a batch reuse the batch's Undo entry and skip the journal write.
+    const coalesce =
+      !history &&
+      !!batch &&
+      this.journalTag === batch &&
+      !this.redoStack.length;
+    const journal =
+      history ??
+      (coalesce
+        ? { undo: this.undoStack, redo: [] }
+        : {
+            undo: [...this.undoStack.slice(-19), this.project],
+            redo: [],
+          });
+    const tag =
+      batch === null
+        ? undefined
+        : (batch ?? (history ? this.journalTag : undefined));
     const tx = this.db.transaction('project', 'readwrite');
     const done = complete(tx);
     const store = tx.objectStore('project');
@@ -263,7 +312,7 @@ export class SignalEngine {
       }
       store.put(next, 'current');
       store.put(this.revision + 1, 'revision');
-      store.put(journal, 'history');
+      if (!coalesce) store.put({ ...journal, tag }, 'history');
     };
     try {
       await done;
@@ -278,6 +327,7 @@ export class SignalEngine {
     this.revision++;
     this.undoStack = journal.undo;
     this.redoStack = journal.redo;
+    this.journalTag = tag;
     this.invalidate();
   }
   async travel(direction: 'undo' | 'redo') {
@@ -295,6 +345,7 @@ export class SignalEngine {
             undo: [...this.undoStack, this.project],
             redo: this.redoStack.slice(0, -1),
           },
+      null,
     );
   }
   async deleteOperation(stepId: string) {
@@ -555,6 +606,12 @@ export class SignalEngine {
                     name: old.name,
                     revision: (old.revision ?? 1) + 1,
                     updatedAt: new Date().toISOString(),
+                    // Checks and batch membership belong to the operation, not its settings.
+                    ...(old.checks ? { checks: old.checks } : {}),
+                    ...(old.runId ? { runId: old.runId } : {}),
+                    ...(old.recipeStepId
+                      ? { recipeStepId: old.recipeStepId }
+                      : {}),
                   }
                 : step,
             )
@@ -569,6 +626,9 @@ export class SignalEngine {
         if (affectedIds.has(step.id))
           for (const id of step.outputIds)
             if (signalIds.has(id)) await this.plot(id);
+      for (const step of this.project.workflowSteps ?? [])
+        if (affectedIds.has(step.id) && step.checks?.length)
+          await this.save(await this.withCheckResults(step));
       next = this.project;
     } finally {
       this.staging = false;
@@ -576,6 +636,411 @@ export class SignalEngine {
       this.invalidate();
     }
     await this.save(next);
+  }
+  /** Exact sample statistics from the evaluated signal, never a plot preview. */
+  async outputStatistics(id: string): Promise<OutputStatistics> {
+    let samples = 0,
+      finite = 0,
+      min = Infinity,
+      max = -Infinity;
+    for await (const chunk of this.evaluate(id)) {
+      this.check();
+      samples += chunk.time.length;
+      for (const value of chunk.values)
+        if (Number.isFinite(value)) {
+          finite++;
+          if (value < min) min = value;
+          if (value > max) max = value;
+        }
+    }
+    const [start, end] = this.bounds(id);
+    return {
+      samples,
+      finite,
+      min: finite ? min : null,
+      max: finite ? max : null,
+      start,
+      end,
+    };
+  }
+  private async checkOutputs(
+    step: WorkflowStep,
+    statistics = new Map<string, OutputStatistics>(),
+  ): Promise<CheckOutput[]> {
+    const index = new WorkflowIndex(this.project);
+    const outputs: CheckOutput[] = [];
+    for (const id of step.outputIds) {
+      this.check();
+      const value = index.values.get(id);
+      if (value) {
+        outputs.push({
+          id,
+          label: index.label(id),
+          unit: value.unit,
+          value: value.value,
+        });
+        continue;
+      }
+      const node = this.find(id);
+      let stats = statistics.get(id);
+      if (!stats) {
+        stats = await this.outputStatistics(id);
+        statistics.set(id, stats);
+      }
+      outputs.push({
+        id,
+        label: index.label(id),
+        unit: node.unit,
+        statistics: stats,
+      });
+    }
+    return outputs;
+  }
+  /** The project with this step's checks evaluated for its current revision. */
+  private async withCheckResults(
+    step: WorkflowStep,
+    statistics?: Map<string, OutputStatistics>,
+  ): Promise<Project> {
+    const results = step.checks?.length
+      ? evaluateChecks(step.checks, await this.checkOutputs(step, statistics))
+      : undefined;
+    return {
+      ...this.project,
+      workflowSteps: this.project.workflowSteps!.map((item) => {
+        if (item.id !== step.id) return item;
+        const { checkResults: _old, ...rest } = item;
+        void _old;
+        return results
+          ? { ...rest, checkResults: { revision: item.revision ?? 1, results } }
+          : rest;
+      }),
+    };
+  }
+  /** Replace a step's checks and evaluate them. Undoable like a rename. */
+  async setChecks(stepId: string, checks: CheckDefinition[]) {
+    const step = this.project.workflowSteps?.find((item) => item.id === stepId);
+    if (!step) throw new Error('This operation no longer exists.');
+    if (step.kind === 'import' || step.kind === 'regions')
+      throw new Error('Add checks to a derived, segment or value operation.');
+    const valid = validateChecks(
+      checks,
+      step.kind === 'value' ? 'values' : 'signals',
+    );
+    const before = this.project;
+    let next: Project;
+    this.staging = true;
+    try {
+      const updated = {
+        ...step,
+        ...(valid.length ? { checks: valid } : {}),
+      };
+      if (!valid.length) delete updated.checks;
+      await this.save({
+        ...this.project,
+        workflowSteps: this.project.workflowSteps!.map((item) =>
+          item.id === stepId ? updated : item,
+        ),
+      });
+      next = await this.withCheckResults(updated);
+    } finally {
+      this.staging = false;
+      this.project = before;
+      this.invalidate();
+    }
+    await this.save(next);
+  }
+  /**
+   * Import one file (or use an existing recording), replay a workflow on it and
+   * evaluate its checks. Everything for the item publishes in one commit; later
+   * items of the same batch share one Undo entry.
+   */
+  async runWorkflow(options: {
+    recipe: string;
+    batchId: string;
+    batchName: string;
+    itemId: string;
+    file?: File;
+    sourceId?: string;
+  }): Promise<WorkflowRun> {
+    const recipe = parseWorkflow(options.recipe);
+    const hash = await recipeHash(recipe);
+    const itemId = options.itemId.trim().slice(0, 120);
+    if (!itemId) throw new Error('Enter an item ID.');
+    const startedAt = new Date().toISOString();
+    const before = this.project;
+    let imported: Source | undefined;
+    let next: Project;
+    let run: WorkflowRun;
+    this.staging = true;
+    try {
+      await this.initializeWorkflow();
+      let source: Source | undefined;
+      if (options.file) source = imported = await this.importCsv(options.file);
+      else
+        source = this.project.sources.find(
+          (item) => item.id === options.sourceId,
+        );
+      if (!source) throw new Error('Choose a recording or file to process.');
+      const runId = uid();
+      const flags: RunFlag[] = [];
+      const stepMap: Record<string, string> = {};
+      const aliases = new Map<string, string>();
+      for (const binding of bindChannels(
+        recipe,
+        source.channels.map((id) => this.find(id)),
+      )) {
+        if (binding.problem)
+          flags.push({ severity: 'error', message: binding.problem });
+        else aliases.set(binding.alias, source.channels[binding.channel]);
+      }
+      const outputs = new Map<string, string[]>();
+      const resolve = createResolver(aliases, outputs);
+      // Unavailable channel or step → the root cause it traces back to.
+      const unavailable = new Map(
+        recipe.channels
+          .filter((channel) => !aliases.has(channel.alias))
+          .map((channel) => [channel.alias, channel.alias]),
+      );
+      const skippedBy = new Map<string, string[]>();
+      const context: BindContext = {
+        resolve,
+        sourceOf: (id) => this.find(id).sourceId,
+        clockStart: (id) => this.bounds(id)[0] - this.axisOffset(id),
+        recordingStart: source.start,
+        newId: uid,
+      };
+      const importStep = `import:${source.id}`;
+      await this.save({
+        ...this.project,
+        workflowSteps: this.project.workflowSteps!.map((step) =>
+          step.id === importStep && !step.runId ? { ...step, runId } : step,
+        ),
+      });
+      let stoppedAt: string | undefined;
+      const label = (step: RecipeStep) => step.name ?? step.id;
+      for (const step of recipe.steps) {
+        this.check();
+        if (stoppedAt) {
+          unavailable.set(step.id, stoppedAt);
+          continue;
+        }
+        const missing = stepRefs(step)
+          .map((ref) => parseRef(ref).name)
+          .find((name) => unavailable.has(name));
+        if (missing) {
+          const root = unavailable.get(missing)!;
+          unavailable.set(step.id, root);
+          skippedBy.set(root, [...(skippedBy.get(root) ?? []), label(step)]);
+          continue;
+        }
+        const prior = new Set(
+          this.project.workflowSteps!.map((item) => item.id),
+        );
+        try {
+          await this.applyCommand(stepCommand(step, context));
+        } catch (error) {
+          if (this.cancelled) throw error;
+          unavailable.set(step.id, step.id);
+          flags.push({
+            severity: 'error',
+            recipeStepId: step.id,
+            message: `“${label(step)}” could not run: ${error instanceof Error ? error.message : 'unknown error'}`,
+          });
+          continue;
+        }
+        const added = this.project.workflowSteps!.filter(
+          (item) => !prior.has(item.id),
+        );
+        if (added.length !== 1)
+          throw new Error(
+            'A workflow step did not produce exactly one operation.',
+          );
+        const created = added[0];
+        outputs.set(step.id, created.outputIds);
+        stepMap[step.id] = created.id;
+        const index = new WorkflowIndex(this.project);
+        const names = outputLabels(
+          step,
+          created.outputIds.length,
+          itemId,
+          (position) => {
+            const id = created.outputIds[position];
+            const parent =
+              index.nodes.get(id)?.parents[0] ?? index.values.get(id)?.inputId;
+            return parent ? index.label(parent) : '';
+          },
+        );
+        const tagged: WorkflowStep = {
+          ...created,
+          runId,
+          recipeStepId: step.id,
+          ...(step.name ? { name: step.name } : {}),
+          ...(step.checks?.length
+            ? { checks: structuredClone(step.checks) }
+            : {}),
+        };
+        const labels = { ...this.project.labels };
+        names.forEach((name, position) => {
+          if (name) labels[created.outputIds[position]] = name;
+        });
+        await this.save({
+          ...this.project,
+          labels,
+          workflowSteps: this.project.workflowSteps!.map((item) =>
+            item.id === created.id ? tagged : item,
+          ),
+        });
+        // Evaluate every signal once: checks use the exact statistics, and a
+        // recipe that cannot evaluate is reported now rather than on first plot.
+        const statistics = new Map<string, OutputStatistics>();
+        try {
+          for (const id of created.outputIds.slice(0, 1000))
+            if (index.nodes.has(id)) {
+              const stats = await this.outputStatistics(id);
+              statistics.set(id, stats);
+              if (!stats.finite)
+                flags.push({
+                  severity: 'warning',
+                  recipeStepId: step.id,
+                  message: `${labels[id] ?? index.label(id)} has no finite samples.`,
+                });
+            }
+        } catch (error) {
+          if (this.cancelled) throw error;
+          flags.push({
+            severity: 'error',
+            recipeStepId: step.id,
+            message: `“${label(step)}” could not be evaluated: ${error instanceof Error ? error.message : 'unknown error'}`,
+          });
+        }
+        if (tagged.checks) {
+          await this.save(await this.withCheckResults(tagged, statistics));
+          const results =
+            this.project.workflowSteps!.find((item) => item.id === created.id)
+              ?.checkResults?.results ?? [];
+          if (
+            step.onFail === 'stop' &&
+            results.some((result) => result.status === 'fail')
+          )
+            stoppedAt = step.id;
+        }
+      }
+      // One flag per root cause rather than one per dependent step.
+      for (const [root, skipped] of skippedBy) {
+        const channel = recipe.channels.find((item) => item.alias === root);
+        const step = recipe.steps.find((item) => item.id === root);
+        flags.push({
+          severity: 'error',
+          recipeStepId: step?.id,
+          message: `Skipped ${skipped.length} ${skipped.length === 1 ? 'step' : 'steps'} that need “${channel?.name ?? (step ? label(step) : root)}”: ${skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? ` and ${skipped.length - 3} more` : ''}.`,
+        });
+      }
+      if (stoppedAt) {
+        const remaining =
+          recipe.steps.length -
+          1 -
+          recipe.steps.findIndex((step) => step.id === stoppedAt);
+        if (remaining > 0)
+          flags.push({
+            severity: 'warning',
+            recipeStepId: stoppedAt,
+            message: `Stopped after a failed check in “${label(recipe.steps.find((step) => step.id === stoppedAt)!)}”; ${remaining} later ${remaining === 1 ? 'step was' : 'steps were'} skipped.`,
+          });
+      }
+      const steps = new Map(
+        this.project.workflowSteps!.map((step) => [step.id, step]),
+      );
+      run = {
+        id: runId,
+        batchId: options.batchId,
+        itemId,
+        fileName: options.file?.name ?? source.name,
+        sourceId: source.id,
+        status: runStatus(
+          flags,
+          Object.values(stepMap).map((id) => steps.get(id)),
+        ),
+        steps: stepMap,
+        flags,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      };
+      const batches = this.project.workflowBatches ?? [];
+      const existing = batches.find((batch) => batch.id === options.batchId);
+      if (existing && existing.recipeHash !== hash)
+        throw new Error(
+          'Every item in a batch must use the same workflow revision.',
+        );
+      next = {
+        ...this.project,
+        workflowRecipes: [
+          ...(this.project.workflowRecipes ?? []).filter(
+            (item) => item.hash !== hash,
+          ),
+          {
+            hash,
+            name: recipe.name,
+            ...(recipe.revision ? { revision: recipe.revision } : {}),
+            text: options.recipe,
+          },
+        ],
+        workflowBatches: existing
+          ? batches.map((batch) =>
+              batch.id === existing.id
+                ? { ...batch, runs: [...batch.runs, run] }
+                : batch,
+            )
+          : [
+              ...batches,
+              {
+                id: options.batchId,
+                name: options.batchName.trim().slice(0, 160) || recipe.name,
+                recipeHash: hash,
+                createdAt: startedAt,
+                state: 'running',
+                runs: [run],
+              },
+            ],
+      };
+    } catch (error) {
+      if (imported) {
+        await this.removeIncomplete(imported.id);
+        await this.trackImport(imported.id, false);
+      }
+      throw error;
+    } finally {
+      this.staging = false;
+      this.project = before;
+      this.invalidate();
+    }
+    try {
+      await this.save(next, undefined, options.batchId);
+    } catch (error) {
+      if (imported) {
+        await this.removeIncomplete(imported.id);
+        await this.trackImport(imported.id, false);
+      }
+      throw error;
+    }
+    if (imported) await this.trackImport(imported.id, false).catch(() => {});
+    return run;
+  }
+  /** Mark a batch complete or cancelled, within the batch's Undo entry. */
+  async finishBatch(batchId: string, state: 'complete' | 'cancelled') {
+    const batch = this.project.workflowBatches?.find(
+      (item) => item.id === batchId,
+    );
+    if (!batch || batch.state === state) return;
+    await this.save(
+      {
+        ...this.project,
+        workflowBatches: this.project.workflowBatches!.map((item) =>
+          item.id === batchId ? { ...item, state } : item,
+        ),
+      },
+      undefined,
+      batchId,
+    );
   }
   private async writeChunk(sourceId: string, index: number, chunk: Chunk) {
     this.check();

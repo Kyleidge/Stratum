@@ -68,6 +68,15 @@ globalThis.onmessage = (
           case 'rename':
             await engine.rename(r.id, r.name);
             break;
+          case 'run-workflow':
+            await engine.runWorkflow(r);
+            break;
+          case 'finish-batch':
+            await engine.finishBatch(r.batchId, r.state);
+            break;
+          case 'set-checks':
+            await engine.setChecks(r.stepId, r.checks);
+            break;
           case 'undo':
           case 'redo':
             await engine.travel(r.type);

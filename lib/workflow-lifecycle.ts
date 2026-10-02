@@ -127,6 +127,28 @@ export function withoutOperations(
       !sources.has(run.sourceId),
   );
   const runIds = new Set(functionRuns?.map((run) => run.id));
+  // Batch items keep only their remaining steps; removed recordings drop the item.
+  const remainingSteps = new Set(
+    (project.workflowSteps ?? [])
+      .filter((step) => !stepIds.has(step.id))
+      .map((step) => step.id),
+  );
+  const workflowBatches = project.workflowBatches
+    ?.map((batch) => ({
+      ...batch,
+      runs: batch.runs
+        .filter((run) => !sources.has(run.sourceId))
+        .map((run) => ({
+          ...run,
+          steps: Object.fromEntries(
+            Object.entries(run.steps).filter(([, id]) =>
+              remainingSteps.has(id),
+            ),
+          ),
+        })),
+    }))
+    .filter((batch) => batch.runs.length);
+  const hashes = new Set(workflowBatches?.map((batch) => batch.recipeHash));
   return {
     ...project,
     sources: project.sources.filter((source) => !sources.has(source.id)),
@@ -164,6 +186,14 @@ export function withoutOperations(
         !regions.has(example.regionSetId) &&
         (!example.runId || runIds.has(example.runId)),
     ),
+    ...(project.workflowBatches ? { workflowBatches } : {}),
+    ...(project.workflowRecipes
+      ? {
+          workflowRecipes: project.workflowRecipes.filter((recipe) =>
+            hashes.has(recipe.hash),
+          ),
+        }
+      : {}),
   };
 }
 

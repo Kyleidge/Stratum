@@ -41,6 +41,72 @@ export type WorkflowStep = {
   definition?: SegmentationDefinition;
   segmentationId?: string;
   regionSetId?: string;
+  /** Workflow run that produced this step, when created by a batch. */
+  runId?: string;
+  /** Recipe step this invocation was replayed from. */
+  recipeStepId?: string;
+  checks?: CheckDefinition[];
+  /** Results for `checks`, evaluated against the step's current revision. */
+  checkResults?: { revision: number; results: CheckResult[] };
+};
+
+export type CheckKind = 'count' | 'limits' | 'missing' | 'duration';
+/** An expectation on a step's outputs. Limits are inclusive. */
+export type CheckDefinition = {
+  kind: CheckKind;
+  min?: number;
+  max?: number;
+  /** Limits only: must equal the output unit exactly; never converted. */
+  unit?: string;
+  /** 1-based output positions; all outputs when omitted. */
+  outputs?: number[];
+  severity: 'warning' | 'fail';
+  message?: string;
+};
+export type CheckStatus = 'pass' | 'warning' | 'fail';
+export type CheckResult = {
+  /** Index into the step's checks. */
+  check: number;
+  status: CheckStatus;
+  outputId?: string;
+  observed: number | null;
+  message: string;
+};
+
+export type RunStatus = 'pass' | 'warning' | 'fail' | 'error';
+/** A problem found while replaying a workflow, separate from check results. */
+export type RunFlag = {
+  severity: 'warning' | 'error';
+  recipeStepId?: string;
+  message: string;
+};
+export type WorkflowRun = {
+  id: string;
+  batchId: string;
+  itemId: string;
+  fileName: string;
+  sourceId: string;
+  status: RunStatus;
+  /** Recipe step ID → produced workflow step ID. */
+  steps: Record<string, string>;
+  flags: RunFlag[];
+  startedAt: string;
+  finishedAt: string;
+};
+export type WorkflowBatch = {
+  id: string;
+  name: string;
+  recipeHash: string;
+  createdAt: string;
+  state: 'running' | 'complete' | 'cancelled';
+  runs: WorkflowRun[];
+};
+/** Exact workflow text used by batches, for provenance and re-runs. */
+export type WorkflowRecipeRecord = {
+  hash: string;
+  name: string;
+  revision?: string;
+  text: string;
 };
 
 export const VALUE_FUNCTIONS: {

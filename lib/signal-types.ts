@@ -142,6 +142,8 @@ export type Project = {
   regionSets?: RegionSet[];
   functionRuns?: FunctionRun[];
   regionExamples?: RegionExample[];
+  workflowRecipes?: import('./workflow-types').WorkflowRecipeRecord[];
+  workflowBatches?: import('./workflow-types').WorkflowBatch[];
 };
 export type ExampleRun = {
   key: string;
@@ -172,6 +174,26 @@ export type EngineRequest =
       command: import('./workflow-lifecycle').WorkflowCommand;
     }
   | { type: 'rename'; id: string; name: string }
+  | {
+      type: 'run-workflow';
+      /** Workflow file text; the worker validates it again. */
+      recipe: string;
+      batchId: string;
+      batchName: string;
+      itemId: string;
+      file?: File;
+      sourceId?: string;
+    }
+  | {
+      type: 'finish-batch';
+      batchId: string;
+      state: 'complete' | 'cancelled';
+    }
+  | {
+      type: 'set-checks';
+      stepId: string;
+      checks: import('./workflow-types').CheckDefinition[];
+    }
   | { type: 'undo' | 'redo' | 'backup-workspace' }
   | { type: 'demo-workflow'; refresh?: boolean; sourceId?: string }
   | { type: 'restore-workspace'; file: File }

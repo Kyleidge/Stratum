@@ -8,6 +8,7 @@ import {
 import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
 import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
+import { validateWorkflowRecords } from './workflow-checks';
 
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
 export const EXPORT_LIMIT = 64 * 1024 * 1024;
@@ -569,5 +570,11 @@ export function validateWorkspace(value: unknown): Project {
         !project.functionRuns?.some((run) => run.id === example.runId))
     )
       throw new Error('Invalid saved region example.');
+  validateWorkflowRecords(
+    project.workflowSteps ?? [],
+    project.workflowBatches,
+    project.workflowRecipes,
+    new Set(sources.keys()),
+  );
   return project;
 }
