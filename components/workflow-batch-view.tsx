@@ -11,7 +11,7 @@ import {
   XCircle,
   OctagonX,
 } from 'lucide-react';
-import { WorkflowIndex } from '@/lib/workflow-history';
+import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import {
   liveRunStatus,
   runEdited,
@@ -144,7 +144,7 @@ export default function WorkflowBatchView({
       for (const [recipeStepId, stepId] of Object.entries(run.steps)) {
         const step = index.steps.get(stepId);
         if (step && step.kind !== 'value' && !seen.has(recipeStepId))
-          seen.set(recipeStepId, step.name ?? recipeStepId);
+          seen.set(recipeStepId, stepName(step));
       }
     return [...seen];
   }, [batch, index]);

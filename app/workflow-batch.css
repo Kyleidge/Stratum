@@ -274,7 +274,11 @@
   width: 26%;
 }
 .workflow-batch-items th:last-child {
-  width: 40px;
+  width: 48px;
+}
+.workflow-batch-items td:last-child {
+  overflow: visible;
+  text-overflow: clip;
 }
 .workflow-batch-items tr[data-status='pass'] svg {
   color: var(--good);
@@ -302,8 +306,12 @@
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
-.workflow-chips button svg {
-  vertical-align: -1px;
+/* Icons are block-level by default; keep a chip's icon beside its label. */
+.workflow-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 /* Batch results in the main pane */
