@@ -72,7 +72,7 @@ globalThis.onmessage = (
             await engine.runWorkflow(r);
             break;
           case 'finish-batch':
-            await engine.finishBatch(r.batchId, r.state);
+            await engine.finishBatch(r.batchId, r.state, r.failures);
             break;
           case 'set-checks':
             await engine.setChecks(r.stepId, r.checks);

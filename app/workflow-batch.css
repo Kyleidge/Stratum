@@ -1,0 +1,649 @@
+/* Batch workflows: Save and Run dialogs, batch results, item navigation and
+ * checks. Colours come only from the theme's role tokens. */
+
+.workflow-status-icon {
+  flex: none;
+  color: var(--ink-3);
+}
+.workflow-status-icon[data-status='pass'] {
+  color: var(--good);
+}
+.workflow-status-icon[data-status='warning'] {
+  color: var(--warning);
+}
+.workflow-status-icon[data-status='fail'],
+.workflow-status-icon[data-status='error'] {
+  color: var(--danger);
+}
+
+/* Dialogs */
+.workflow-dialog.workflow-batch-dialog {
+  width: min(880px, calc(100vw - 24px));
+  max-width: 880px !important;
+}
+.workflow-batch-dialog[data-drop] {
+  outline: 2px dashed var(--primary);
+  outline-offset: -6px;
+}
+.workflow-batch-dialog select,
+.workflow-check-form select,
+.workflow-batch-plot select {
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--field);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.workflow-batch-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+.workflow-batch-fields input,
+.workflow-batch-items input,
+.workflow-check-form input {
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--field);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.workflow-batch-fields .region-field small {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.workflow-batch-wide {
+  grid-column: 1 / -1;
+}
+.workflow-batch-section {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.workflow-batch-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.workflow-batch-section h3 > span {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.workflow-batch-section h3 > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-weight: 400;
+}
+.workflow-batch-steps {
+  display: grid;
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.workflow-batch-steps li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+}
+.workflow-batch-steps li:first-child {
+  border-top: 0;
+}
+.workflow-batch-steps li > div {
+  display: grid;
+  min-width: 0;
+}
+.workflow-batch-steps strong {
+  overflow: hidden;
+  color: var(--ink-1);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-batch-steps code {
+  color: var(--ink-3);
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+}
+.workflow-batch-steps small {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-batch-steps li[data-state='skipped'] small {
+  color: var(--warning);
+}
+.workflow-batch-steps li[data-state='excluded'] strong {
+  color: var(--ink-3);
+}
+.workflow-batch-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--ink-2);
+}
+.workflow-batch-channels code {
+  font-family: var(--font-code);
+  color: var(--ink-1);
+}
+.workflow-batch-notes {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-batch-notes li {
+  display: flex;
+  gap: 6px;
+}
+.workflow-batch-notes svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning);
+}
+.workflow-batch-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-1);
+}
+.workflow-batch-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--danger-line);
+  border-radius: 3px;
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+.workflow-batch-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+.workflow-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.workflow-batch-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflow-batch-summary {
+  display: grid;
+  gap: 3px;
+}
+.workflow-batch-summary strong {
+  color: var(--ink-1);
+}
+.workflow-batch-summary p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.workflow-batch-summary small {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-batch-existing summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.workflow-batch-existing ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  max-height: 110px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-batch-drop {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 3px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.workflow-batch-items {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.workflow-batch-items table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.workflow-batch-items th,
+.workflow-batch-items td {
+  overflow: hidden;
+  padding: 3px 8px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-batch-items th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-top: 0;
+  background: var(--chrome);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+.workflow-batch-items th:first-child {
+  width: 50px;
+}
+.workflow-batch-items th:nth-child(2) {
+  width: 22%;
+}
+.workflow-batch-items th:nth-child(3) {
+  width: 26%;
+}
+.workflow-batch-items th:last-child {
+  width: 40px;
+}
+.workflow-batch-items tr[data-status='pass'] svg {
+  color: var(--good);
+}
+.workflow-batch-items tr[data-status='error'] svg {
+  color: var(--warning);
+}
+.workflow-batch-items input {
+  width: 100%;
+  min-height: 24px;
+}
+
+/* Workspace and top bar */
+.workflow-storage-heading {
+  margin: 6px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-1);
+  font-size: var(--text-md);
+}
+.workflow-app .workflow-import-more {
+  min-width: 0;
+  margin-left: -5px;
+  padding: 0 4px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.workflow-chips button svg {
+  vertical-align: -1px;
+}
+
+/* Batch results in the main pane */
+.workflow-main[data-batch-view='true'] > .plot-scratchpad {
+  display: none;
+}
+.workflow-batch-view {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+.workflow-batch-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.workflow-batch-header > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-batch-header h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-1);
+  font-size: var(--text-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-batch-header small {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-batch-header code {
+  font-family: var(--font-code);
+}
+.workflow-batch-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.workflow-batch-header-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.workflow-batch-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+.workflow-batch-progress progress {
+  width: 180px;
+  height: 6px;
+  accent-color: var(--primary);
+}
+.workflow-batch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px;
+}
+.workflow-batch-plot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 10px;
+}
+.workflow-batch-plot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.workflow-batch-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+.workflow-batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.workflow-batch-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--chrome);
+  color: var(--ink-2);
+  font-weight: 500;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-batch-table th small {
+  color: var(--ink-3);
+}
+.workflow-batch-table td {
+  max-width: 340px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-1);
+  vertical-align: top;
+}
+.workflow-batch-table td:nth-child(3) {
+  min-width: 260px;
+  max-width: 420px;
+}
+.workflow-batch-table td:nth-child(2) {
+  white-space: nowrap;
+}
+.workflow-batch-table td small {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-batch-table tbody tr {
+  cursor: pointer;
+}
+.workflow-batch-table tbody tr:hover,
+.workflow-batch-table tbody tr:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.workflow-batch-table tbody tr:focus-visible {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.workflow-batch-table tr[data-status='fail'] td:first-child,
+.workflow-batch-table tr[data-status='error'] td:first-child {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.workflow-batch-table tr[data-status='warning'] td:first-child {
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+.workflow-batch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.workflow-batch-number {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.workflow-batch-view > .workflow-list-pages {
+  padding: 7px 14px;
+}
+
+/* Item navigation above the plot */
+.workflow-item-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+  font-size: var(--text-sm);
+}
+.workflow-item-bar[data-status='fail'],
+.workflow-item-bar[data-status='error'] {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.workflow-item-bar[data-status='warning'] {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+.workflow-item-bar-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.workflow-item-bar-name svg {
+  align-self: center;
+}
+.workflow-item-bar-name strong {
+  color: var(--ink-1);
+}
+.workflow-item-bar-name small {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-item-bar-problem {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-item-bar > .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* History flags */
+.workflow-tree-row[data-flag] .workflow-status-icon {
+  margin-right: -2px;
+}
+
+/* Inspector checks */
+.workflow-checks-panel {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.workflow-checks-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.workflow-checks-panel h3 > span {
+  font-weight: 400;
+}
+.workflow-checks-panel h3 > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.workflow-checks-panel ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-checks-panel li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workflow-check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.workflow-check-row strong {
+  color: var(--ink-1);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.workflow-check-row span {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-check-row small {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-check-result {
+  margin: 3px 0 0 19px;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.workflow-check-result[data-status='fail'] {
+  color: var(--danger);
+}
+.workflow-check-result[data-status='warning'] {
+  color: var(--warning);
+}
+.workflow-check-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--plane);
+}
+.workflow-check-form label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-check-form input,
+.workflow-check-form select {
+  width: 100%;
+  min-width: 0;
+}
+.workflow-check-wide {
+  grid-column: 1 / -1;
+}
+.workflow-check-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 820px) {
+  .workflow-batch-fields,
+  .workflow-check-form {
+    grid-template-columns: 1fr;
+  }
+  .workflow-batch-items th:nth-child(4),
+  .workflow-batch-items td:nth-child(4) {
+    display: none;
+  }
+  .workflow-batch-header {
+    flex-wrap: wrap;
+  }
+  .workflow-item-bar-problem {
+    display: none;
+  }
+}

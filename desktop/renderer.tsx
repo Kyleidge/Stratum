@@ -5,6 +5,7 @@ import ReportBuilderMockup from '@/components/report-builder-mockup';
 import '@/app/globals.css';
 import '@/app/regions.css';
 import '@/app/workflow.css';
+import '@/app/workflow-batch.css';
 import '@/app/ui-refresh-mockup.css';
 import '@/app/report-builder-mockup.css';
 import { smokeTest } from './smoke-test';

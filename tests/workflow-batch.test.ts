@@ -259,6 +259,10 @@ void test('a batch publishes each item atomically, flags checks and undoes as on
         assert.equal(step.recipeStepId, recipeStepId);
       }
       assert.equal(steps.get(`import:${run.sourceId}`)?.runId, run.id);
+      assert.equal(
+        steps.get(`import:${run.sourceId}`)?.name,
+        `Serial number ${component.serial}`,
+      );
     }
     const problems = (serial: string) =>
       runProblems(

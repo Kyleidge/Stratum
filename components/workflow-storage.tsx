@@ -26,6 +26,9 @@ export default function WorkflowStorage({
   cancel,
   example,
   exampleName,
+  onSaveWorkflow,
+  onOpenWorkflow,
+  onBatchExample,
 }: {
   disabled: boolean;
   recordings: number;
@@ -34,6 +37,12 @@ export default function WorkflowStorage({
   cancel: () => void;
   example: (refresh?: boolean) => Promise<void>;
   exampleName?: string;
+  /** Save the current recording's operations as a workflow file. */
+  onSaveWorkflow: () => void;
+  /** Open a workflow file to run it on recordings. */
+  onOpenWorkflow: (file: File) => void;
+  /** Open the end-of-line batch example in the Run dialog. */
+  onBatchExample: () => void;
 }) {
   const [open, setOpen] = useState(false),
     [busy, setBusy] = useState(false),
@@ -41,6 +50,7 @@ export default function WorkflowStorage({
   const [chosen, setChosen] = useState<File>();
   const [refreshing, setRefreshing] = useState(false);
   const file = useRef<HTMLInputElement>(null),
+    workflowFile = useRef<HTMLInputElement>(null),
     cancelled = useRef(false);
   async function backup() {
     setBusy(true);
@@ -132,6 +142,41 @@ export default function WorkflowStorage({
             Version 1 supports backups up to 128 MiB. Result CSV files are not
             workspace backups.
           </p>
+          <h3 className="workflow-storage-heading">Workflows</h3>
+          <p className="workflow-muted">
+            A workflow file (.stratum.yaml) holds a recording&apos;s operations,
+            checks and report layout, without samples. Run it on many recordings
+            to process and report each one.
+          </p>
+          <div className="workflow-storage-actions">
+            <button
+              className="secondary-button"
+              disabled={busy || !recordings}
+              onClick={() => {
+                setOpen(false);
+                onSaveWorkflow();
+              }}
+            >
+              Save workflow…
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => workflowFile.current?.click()}
+            >
+              Open workflow…
+            </button>
+            <button
+              className="workflow-link"
+              disabled={busy}
+              onClick={() => {
+                setOpen(false);
+                onBatchExample();
+              }}
+            >
+              Try the batch example (8 motors)
+            </button>
+          </div>
           <div className="workflow-storage-actions">
             <button
               className="secondary-button"
@@ -180,8 +225,27 @@ export default function WorkflowStorage({
             aria-label="Workspace backup file"
             onChange={(event) => {
               setError('');
-              setChosen(event.target.files?.[0]);
+              const chosenFile = event.target.files?.[0];
               event.target.value = '';
+              // A workflow file chosen here opens the Run dialog instead.
+              if (chosenFile && /\.ya?ml$/i.test(chosenFile.name)) {
+                setOpen(false);
+                onOpenWorkflow(chosenFile);
+              } else setChosen(chosenFile);
+            }}
+          />
+          <input
+            className="sr-only"
+            ref={workflowFile}
+            type="file"
+            accept=".yaml,.yml,application/yaml"
+            aria-label="Workflow file"
+            onChange={(event) => {
+              const chosenFile = event.target.files?.[0];
+              event.target.value = '';
+              if (!chosenFile) return;
+              setOpen(false);
+              onOpenWorkflow(chosenFile);
             }}
           />
         </DialogContent>

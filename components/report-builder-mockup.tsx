@@ -510,7 +510,6 @@ export default function ReportBuilderMockup({
       }
     }
   }
-  useImperativeHandle(ref, () => ({ addAssets, addBlocks }));
 
   function deleteSelected() {
     if (!selected) return;
@@ -578,6 +577,12 @@ export default function ReportBuilderMockup({
     setPreview(false);
     setZoom(null);
   }
+  useImperativeHandle(ref, () => ({
+    addAssets,
+    addBlocks,
+    getReport: () => currentRef.current.report,
+    loadReport: replaceReport,
+  }));
   function setPageLayout(patch: Partial<ReportDocument>) {
     const next = { ...report, ...patch };
     const size = pageDimensions(next);
@@ -1630,7 +1635,10 @@ export default function ReportBuilderMockup({
                                   (colIndex + 1)
                                 }
                                 value={cell}
-                                readOnly={selected.source?.kind === 'values'}
+                                readOnly={
+                                  selected.source?.kind === 'values' ||
+                                  selected.source?.kind === 'checks'
+                                }
                                 onChange={(event) =>
                                   updateSelected({
                                     tableData: selected.tableData.map(
@@ -1650,9 +1658,12 @@ export default function ReportBuilderMockup({
                           </div>
                         ))}
                       </div>
-                      {selected.source?.kind === 'values' ? (
+                      {selected.source?.kind === 'values' ||
+                      selected.source?.kind === 'checks' ? (
                         <p className="rb-field-note">
-                          Values are captured from the calculation outputs.
+                          {selected.source.kind === 'checks'
+                            ? 'Check results are captured from the workflow checks.'
+                            : 'Values are captured from the calculation outputs.'}{' '}
                           Their content is read-only; title and table formatting
                           are editable.
                         </p>

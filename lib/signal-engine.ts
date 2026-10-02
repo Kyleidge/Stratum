@@ -809,11 +809,20 @@ export class SignalEngine {
         recordingStart: source.start,
         newId: uid,
       };
+      // A newly imported item is named after it, so History reads per item.
       const importStep = `import:${source.id}`;
       await this.save({
         ...this.project,
         workflowSteps: this.project.workflowSteps!.map((step) =>
-          step.id === importStep && !step.runId ? { ...step, runId } : step,
+          step.id === importStep && !step.runId
+            ? {
+                ...step,
+                runId,
+                ...(imported && !step.name
+                  ? { name: `${recipe.item.label} ${itemId}`.slice(0, 160) }
+                  : {}),
+              }
+            : step,
         ),
       });
       let stoppedAt: string | undefined;
@@ -1026,16 +1035,32 @@ export class SignalEngine {
     return run;
   }
   /** Mark a batch complete or cancelled, within the batch's Undo entry. */
-  async finishBatch(batchId: string, state: 'complete' | 'cancelled') {
+  async finishBatch(
+    batchId: string,
+    state: 'complete' | 'cancelled',
+    failures: { name: string; message: string }[] = [],
+  ) {
     const batch = this.project.workflowBatches?.find(
       (item) => item.id === batchId,
     );
-    if (!batch || batch.state === state) return;
+    if (!batch || (batch.state === state && !failures.length)) return;
+    const recorded = failures.slice(0, 500).map((failure) => ({
+      name: String(failure.name).slice(0, 255),
+      message: String(failure.message).slice(0, 500),
+    }));
     await this.save(
       {
         ...this.project,
         workflowBatches: this.project.workflowBatches!.map((item) =>
-          item.id === batchId ? { ...item, state } : item,
+          item.id === batchId
+            ? {
+                ...item,
+                state,
+                ...(recorded.length
+                  ? { failures: [...(item.failures ?? []), ...recorded] }
+                  : {}),
+              }
+            : item,
         ),
       },
       undefined,

@@ -209,7 +209,7 @@ export async function captureReportPlot(
             detail: { key: 'report-viewport', plots, ranges: plotRanges },
           },
       color: trace.color,
-      label: index.label(trace.id),
+      label: trace.label ?? index.label(trace.id),
       offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
       referenceLine: !!value,
       referenceLabel:
@@ -377,6 +377,7 @@ export async function captureReportPlot(
           padding: 0,
           fill: background,
           plotSnapshot: snapshot,
+          ...(blocks.length ? {} : { plotSheet: structuredClone(sheet) }),
           source: reportSource(
             project,
             (panel.traces.length ? panel.traces : traces).map(

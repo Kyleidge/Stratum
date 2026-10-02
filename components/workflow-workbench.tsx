@@ -25,6 +25,11 @@ import {
   X,
   Undo2,
   Redo2,
+  Play,
+  FolderOpen,
+  Save,
+  ListChecks,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   Dialog,
@@ -35,8 +40,10 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -128,6 +135,46 @@ import type {
   ReportBuilderHandle,
   ReportWorkspace,
 } from '@/lib/report-integration';
+import WorkflowSaveDialog from './workflow-save-dialog';
+import WorkflowRunDialog, {
+  prepareItems,
+  type BatchPlan,
+} from './workflow-run-dialog';
+import WorkflowBatchView, {
+  StatusIcon,
+  type BatchProgress,
+} from './workflow-batch-view';
+import WorkflowItemBar from './workflow-item-bar';
+import {
+  batchSummaryCsv,
+  downloadBlob,
+  runForSource,
+  type PreflightItem,
+} from '@/lib/workflow-batch';
+import {
+  batchRecipe,
+  chooseFolder,
+  exportRunReports,
+  renderRunReport,
+} from '@/lib/workflow-batch-report';
+import {
+  currentResults,
+  liveRunStatus,
+  runEdited,
+  runProblems,
+  stepStatus,
+} from '@/lib/workflow-checks';
+import { YAML_LIMITS } from '@/lib/workflow-yaml';
+import {
+  componentFiles,
+  EOL_WORKFLOW,
+  EOL_WORKFLOW_NAME,
+} from '@/lib/eol-example';
+import type {
+  CheckDefinition,
+  WorkflowBatch,
+  WorkflowRun,
+} from '@/lib/workflow-types';
 
 const PAGE_SIZE = 30;
 /** Outputs of one operation drawn together on the Active plot. */
@@ -161,26 +208,49 @@ export default function WorkflowWorkbench() {
   }>();
   const source =
     project.sources.find((item) => item.id === sourceId) ?? project.sources[0];
-  const steps = useMemo(
-    () =>
-      (project.workflowSteps ?? []).filter(
-        (step) => sourceId === 'all' || step.sourceId === source?.id,
-      ),
-    [project, source?.id, sourceId],
+  // History scope: everything, one batch's items, or one recording (with the
+  // workspace-scope outputs its batch item produced).
+  const batches = project.workflowBatches ?? [];
+  const scopeBatch = sourceId.startsWith('batch:')
+    ? batches.find((batch) => `batch:${batch.id}` === sourceId)
+    : undefined;
+  const allScope =
+    sourceId === 'all' || (sourceId.startsWith('batch:') && !scopeBatch);
+  const itemRun =
+    !scopeBatch && !allScope ? runForSource(project, source?.id) : undefined;
+  const itemRunId = itemRun?.run.id;
+  const steps = useMemo(() => {
+    const all = project.workflowSteps ?? [];
+    if (scopeBatch) {
+      const runs = new Set(scopeBatch.runs.map((run) => run.id));
+      return all.filter((step) => !!step.runId && runs.has(step.runId));
+    }
+    if (allScope) return all;
+    return all.filter(
+      (step) =>
+        step.sourceId === source?.id ||
+        (!!itemRunId && step.runId === itemRunId),
+    );
+  }, [project, source?.id, scopeBatch, allScope, itemRunId]);
+  const scopedStepIds = useMemo(
+    () => new Set(steps.map((step) => step.id)),
+    [steps],
   );
+  const scopeSource = scopeBatch
+    ? (project.sources.find(
+        (item) => item.id === scopeBatch.runs[0]?.sourceId,
+      ) ?? source)
+    : source;
   const [chosen, setChosen] = useState<WorkflowSelection | null>(null);
   const selection =
     chosen &&
-    (sourceId === 'all'
-      ? chosen.kind === 'step'
-        ? index.steps.has(chosen.id)
-        : index.nodes.has(chosen.id) || index.values.has(chosen.id)
-      : (chosen.kind === 'step'
-          ? index.steps.get(chosen.id)?.sourceId
-          : (index.nodes.get(chosen.id)?.sourceId ??
-            index.values.get(chosen.id)?.sourceId)) === source?.id)
+    scopedStepIds.has(
+      chosen.kind === 'step'
+        ? chosen.id
+        : (index.owner.get(chosen.id)?.id ?? ''),
+    )
       ? chosen
-      : { kind: 'output' as const, id: source?.channels[0] ?? '' };
+      : { kind: 'output' as const, id: scopeSource?.channels[0] ?? '' };
   const step =
     selection.kind === 'step'
       ? index.steps.get(selection.id)
@@ -209,6 +279,7 @@ export default function WorkflowWorkbench() {
   const [outputFilter, setOutputFilter] = useState<
     'all' | 'signals' | 'values'
   >('all');
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
   // The inspector is a column on wide windows and a drawer on narrow ones.
   const narrow = useMediaQuery('(max-width: 1240px)');
   const [inspectorOpen, setInspectorOpen] = useStoredFlag(
@@ -230,9 +301,9 @@ export default function WorkflowWorkbench() {
     () => new Set(lineage.steps.map((step) => step.id)),
     [lineage],
   );
-  const shownSteps = lineageRoot
-    ? steps.filter((item) => lineageSteps.has(item.id))
-    : steps;
+  const shownSteps = (
+    lineageRoot ? steps.filter((item) => lineageSteps.has(item.id)) : steps
+  ).filter((item) => !flaggedOnly || (stepStatus(item) ?? 'pass') !== 'pass');
   const lineageSubject =
     lineageRoot?.length === 1
       ? index.label(lineageRoot[0])
@@ -256,6 +327,24 @@ export default function WorkflowWorkbench() {
     setEditorOpen(!!next);
   }
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Batch workflows: dialogs, live progress and report export.
+  const [batchPanel, setBatchPanel] = useState(true);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [runDialog, setRunDialog] = useState<{
+    key: number;
+    text?: string;
+    name?: string;
+    items: PreflightItem[];
+  } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress>();
+  const batchStop = useRef(false);
+  const [reportJob, setReportJob] = useState<{
+    done: number;
+    total: number;
+    item: string;
+  }>();
+  const reportAbort = useRef<AbortController | null>(null);
+  const runDialogKey = useRef(0);
   const [help, setHelp] = useState(false),
     [notice, setNotice] = useState(''),
     [changeNotice, setChangeNotice] = useState('');
@@ -268,6 +357,7 @@ export default function WorkflowWorkbench() {
   const [tableQuery, setTableQuery] = useState(''),
     [page, setPage] = useState(0);
   const file = useRef<HTMLInputElement>(null);
+  const workflowInput = useRef<HTMLInputElement>(null);
   const plots = useRef<PlotScratchpadHandle>(null);
   const report = useRef<ReportBuilderHandle>(null);
   // Both workspaces stay mounted; switching only changes which one is shown.
@@ -282,6 +372,8 @@ export default function WorkflowWorkbench() {
     setHistoryOpen(false);
     setInspectorDrawer(false);
   }, []);
+  // Stable, so the Save dialog reads the latest draft without re-extracting each render.
+  const readReport = useCallback(() => report.current?.getReport(), []);
   const addReportBlocks = useCallback(
     (blocks: ReportBlock[]) => {
       report.current?.addBlocks(blocks);
@@ -376,24 +468,21 @@ export default function WorkflowWorkbench() {
   }
   function follow(id: string) {
     setDetailPanel(undefined);
-    if (
-      (index.nodes.get(id)?.sourceId ?? index.values.get(id)?.sourceId) !==
-      source?.id
-    )
-      setSourceId('all');
+    if (!scopedStepIds.has(index.owner.get(id)?.id ?? '')) setSourceId('all');
     setQuery('');
     setLineageRoot(null);
     select({ kind: 'output', id });
   }
   function selectStep(id: string) {
     setDetailPanel(undefined);
-    if (index.steps.get(id)?.sourceId !== source?.id) setSourceId('all');
+    if (!scopedStepIds.has(id)) setSourceId('all');
     setQuery('');
     setLineageRoot(null);
     select({ kind: 'step', id });
   }
   function switchSource(id: string) {
     setSourceId(id);
+    setBatchPanel(true);
     setChosen(null);
     setView('result');
     setNotice('');
@@ -503,6 +592,294 @@ export default function WorkflowWorkbench() {
     setChosen(null);
     setView('result');
   }
+  // ---------------------------------------------------------------------------
+  // Batch workflows
+
+  function importFiles(selected: File[]) {
+    if (!selected.length) return;
+    void (async () => {
+      for (const item of selected)
+        await perform(
+          { type: 'import', file: item },
+          `Importing ${item.name}…`,
+        );
+      if (selected.length > 1) setSourceId('all');
+    })().catch(() => {});
+  }
+  async function openRunDialog(
+    text?: string,
+    name?: string,
+    files: File[] = [],
+  ) {
+    const items = await prepareItems(text, files);
+    runDialogKey.current++;
+    setRunDialog({ key: runDialogKey.current, text, name, items });
+  }
+  async function openWorkflowFile(file: File, recordings: File[] = []) {
+    if (file.size > YAML_LIMITS.bytes) {
+      setNotice('Workflow files are limited to 8 MiB.');
+      return;
+    }
+    await openRunDialog(await file.text(), file.name, recordings);
+  }
+  function openBatchExample() {
+    void openRunDialog(EOL_WORKFLOW, EOL_WORKFLOW_NAME, componentFiles());
+  }
+  async function exportReports(
+    snapshot: Project,
+    batch: WorkflowBatch,
+    runs: WorkflowRun[],
+    mode: 'zip' | 'folder' = 'zip',
+  ) {
+    if (reportAbort.current || !runs.length) return;
+    let folder;
+    if (mode === 'folder') {
+      try {
+        folder = await chooseFolder();
+      } catch {
+        return; // The folder picker was dismissed.
+      }
+    }
+    const controller = new AbortController();
+    reportAbort.current = controller;
+    setReportJob({ done: 0, total: runs.length, item: runs[0].itemId });
+    try {
+      const result = await exportRunReports({
+        project: snapshot,
+        batch,
+        runs,
+        request,
+        folder,
+        signal: controller.signal,
+        progress: (done, total, item) => setReportJob({ done, total, item }),
+      });
+      if (result.zip) downloadBlob(result.zip, `${batch.name} · reports.zip`);
+      setNotice(
+        `${result.written} ${result.written === 1 ? 'report' : 'reports'} ${folder ? 'saved to the chosen folder' : 'downloaded as a ZIP'}.`,
+      );
+    } catch (error) {
+      setNotice(
+        controller.signal.aborted
+          ? 'Report export cancelled. Nothing was downloaded.'
+          : error instanceof Error
+            ? error.message
+            : 'Reports could not be exported.',
+      );
+    } finally {
+      reportAbort.current = null;
+      setReportJob(undefined);
+    }
+  }
+  function exportSummary(snapshot: Project, batch: WorkflowBatch) {
+    downloadBlob(
+      new Blob([batchSummaryCsv(snapshot, batch)], { type: 'text/csv' }),
+      `${batch.name} · summary.csv`,
+    );
+  }
+  async function runBatch(plan: BatchPlan) {
+    setRunDialog(null);
+    if (engine.busy) return;
+    const batchId = crypto.randomUUID();
+    const failures: { name: string; message: string }[] = [];
+    let cancelled = false;
+    batchStop.current = false;
+    setBatchProgress({
+      batchId,
+      name: plan.batchName,
+      startedAt: new Date().toISOString(),
+      done: 0,
+      total: plan.items.length,
+      current: plan.items[0]?.name ?? '',
+      failures: [],
+    });
+    setSourceId(`batch:${batchId}`);
+    setBatchPanel(true);
+    setChosen(null);
+    setQuery('');
+    setLineageRoot(null);
+    setInputs(null);
+    await engine.sequence(
+      plan.items.map((item) => ({
+        type: 'run-workflow' as const,
+        recipe: plan.recipeText,
+        batchId,
+        batchName: plan.batchName,
+        itemId: item.itemId,
+        file: item.file,
+        sourceId: item.sourceId,
+      })),
+      plan.items.map(
+        (item, position) =>
+          `Processing ${item.itemId} · ${position + 1} of ${plan.items.length}`,
+      ),
+      (position, result) => {
+        if (result.error) {
+          if (batchStop.current || /cancelled/i.test(result.error.message)) {
+            cancelled = true;
+            return false;
+          }
+          failures.push({
+            name: plan.items[position].name,
+            message: result.error.message,
+          });
+        }
+        setBatchProgress(
+          (old) =>
+            old && {
+              ...old,
+              done: position + 1,
+              current: plan.items[position + 1]?.name ?? '',
+              failures: [...failures],
+            },
+        );
+        if (batchStop.current) {
+          cancelled = true;
+          return false;
+        }
+      },
+    );
+    let finished: Project | undefined;
+    try {
+      finished = await engine.mutate(
+        {
+          type: 'finish-batch',
+          batchId,
+          state: cancelled ? 'cancelled' : 'complete',
+          failures,
+        },
+        'Finishing batch…',
+      );
+    } catch {
+      finished = undefined;
+    }
+    setBatchProgress(undefined);
+    const batch = finished?.workflowBatches?.find(
+      (item) => item.id === batchId,
+    );
+    if (!finished || !batch) {
+      setSourceId('all');
+      setNotice(
+        cancelled
+          ? 'Batch cancelled before any recording was processed. Nothing was added.'
+          : `No recordings were processed. ${failures[0] ? `${failures[0].name}: ${failures[0].message}` : ''}`,
+      );
+      return;
+    }
+    const steps = new Map(
+      (finished.workflowSteps ?? []).map((item) => [item.id, item]),
+    );
+    const flagged = batch.runs.filter(
+      (run) => liveRunStatus(run, steps) !== 'pass',
+    ).length;
+    announceChange(
+      `${cancelled ? 'Batch cancelled · ' : ''}${batch.runs.length} ${batch.runs.length === 1 ? 'recording' : 'recordings'} processed · ${flagged} flagged${failures.length ? ` · ${failures.length} not imported` : ''}.`,
+    );
+    if (plan.exportSummary) exportSummary(finished, batch);
+    if (plan.exportReports && !cancelled)
+      await exportReports(finished, batch, batch.runs);
+  }
+  function cancelBatch() {
+    batchStop.current = true;
+    engine.cancel();
+  }
+  /** Scope History to one item and select its first flagged output. */
+  function openItem(run: WorkflowRun, recipeStepId?: string, position = 0) {
+    switchSource(run.sourceId);
+    const runSteps = Object.entries(run.steps).flatMap(([recipeId, id]) => {
+      const item = index.steps.get(id);
+      return item ? [[recipeId, item] as const] : [];
+    });
+    let target: WorkflowSelection | undefined;
+    const kept = runSteps.find(([recipeId]) => recipeId === recipeStepId)?.[1];
+    if (kept)
+      target = kept.outputIds.length
+        ? {
+            kind: 'output',
+            id: kept.outputIds[Math.min(position, kept.outputIds.length - 1)],
+          }
+        : { kind: 'step', id: kept.id };
+    if (!target)
+      for (const [, item] of runSteps) {
+        const status = stepStatus(item);
+        if (status && status !== 'pass') {
+          const failing = currentResults(item).find(
+            (result) => result.status !== 'pass' && result.outputId,
+          );
+          target = failing?.outputId
+            ? { kind: 'output', id: failing.outputId }
+            : { kind: 'step', id: item.id };
+          break;
+        }
+      }
+    const last = runSteps.at(-1)?.[1];
+    if (!target && last) target = { kind: 'step', id: last.id };
+    if (target) {
+      setChosen(target);
+      setView(target.kind === 'step' ? 'outputs' : 'result');
+    }
+  }
+  /** Move to the previous or next item, keeping the same recipe step. */
+  function stepItem(offset: -1 | 1) {
+    if (!itemRun) return;
+    const { batch, run } = itemRun;
+    const next =
+      batch.runs[batch.runs.findIndex((item) => item.id === run.id) + offset];
+    if (!next) return;
+    const owner =
+      selection.kind === 'step'
+        ? index.steps.get(selection.id)
+        : index.owner.get(selection.id);
+    const position =
+      owner && selection.kind === 'output'
+        ? owner.outputIds.indexOf(selection.id)
+        : 0;
+    openItem(next, owner?.recipeStepId, Math.max(0, position));
+  }
+  async function previewReport(batch: WorkflowBatch, run: WorkflowRun) {
+    try {
+      const document = await renderRunReport({ project, batch, run, request });
+      report.current?.loadReport(document);
+      openReports();
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'The report could not be rendered.',
+      );
+    }
+  }
+  function plotAcross(
+    batch: WorkflowBatch,
+    recipeStepId: string,
+    runs: WorkflowRun[],
+  ) {
+    const traces = runs.flatMap((run) => {
+      const item = index.steps.get(run.steps[recipeStepId] ?? '');
+      return item
+        ? item.outputIds
+            .filter((id) => index.nodes.has(id))
+            .map((id) => ({ id, label: `${run.itemId} · ${index.label(id)}` }))
+        : [];
+    });
+    const first = runs
+      .map((run) => index.steps.get(run.steps[recipeStepId] ?? ''))
+      .find(Boolean);
+    setBatchPanel(false);
+    plots.current?.createPlotFromTraces(
+      `${first ? stepName(first) : recipeStepId} · ${runs.length} items`,
+      traces,
+      { zeroTime: true },
+    );
+  }
+  async function setChecks(stepId: string, checks: CheckDefinition[]) {
+    await engine.mutate(
+      { type: 'set-checks', stepId, checks },
+      'Saving checks…',
+    );
+    announceChange(
+      checks.length ? 'Checks saved and evaluated.' : 'Checks removed.',
+    );
+  }
   function undo() {
     if (!engine.canUndo || engine.busy) return;
     void manage({ type: 'undo' }, 'Undid last change.').catch(() => {});
@@ -524,6 +901,23 @@ export default function WorkflowWorkbench() {
       ) {
         setHistoryOpen(false);
         setInspectorDrawer(false);
+        return;
+      }
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+        itemRun &&
+        !engine.busy &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest('input, textarea, select, [contenteditable]')
+        ) &&
+        !document.querySelector('[role="dialog"], [role="alertdialog"]')
+      ) {
+        event.preventDefault();
+        stepItem(event.key === 'ArrowLeft' ? -1 : 1);
         return;
       }
       const mod = event.ctrlKey || event.metaKey;
@@ -933,6 +1327,54 @@ export default function WorkflowWorkbench() {
       run: () => file.current?.click(),
     },
     {
+      id: 'command:run-workflow',
+      label: 'Run a workflow on recordings…',
+      hint: 'Process many files with saved steps and checks',
+      icon: Play,
+      disabled: engine.busy || !engine.ready,
+      run: () => void openRunDialog(),
+    },
+    {
+      id: 'command:open-workflow',
+      label: 'Open a workflow file…',
+      icon: FolderOpen,
+      disabled: engine.busy || !engine.ready,
+      run: () => workflowInput.current?.click(),
+    },
+    {
+      id: 'command:save-workflow',
+      label: 'Save workflow…',
+      hint: 'Steps, checks and report layout as a .stratum.yaml file',
+      icon: Save,
+      disabled: engine.busy || !project.sources.length,
+      run: () => setSaveOpen(true),
+    },
+    ...batches.slice(-5).map((batch) => ({
+      id: `command:batch:${batch.id}`,
+      label: `Open batch results · ${batch.name}`,
+      hint: `${batch.runs.length} items`,
+      icon: ListChecks,
+      run: () => switchSource(`batch:${batch.id}`),
+    })),
+    ...(itemRun
+      ? [
+          {
+            id: 'command:next-item',
+            label: 'Next batch item',
+            shortcut: 'Alt →',
+            icon: ChevronRight,
+            run: () => stepItem(1),
+          },
+          {
+            id: 'command:previous-item',
+            label: 'Previous batch item',
+            shortcut: 'Alt ←',
+            icon: ChevronLeft,
+            run: () => stepItem(-1),
+          },
+        ]
+      : []),
+    {
       id: 'command:export',
       label: 'Export / report…',
       icon: Download,
@@ -1042,21 +1484,83 @@ export default function WorkflowWorkbench() {
         ? stepName(step)
         : 'Your workflow';
   const allValues = step?.kind === 'value';
-  const originalCount =
-    sourceId === 'all'
-      ? project.sources.reduce((sum, item) => sum + item.channels.length, 0)
-      : (source?.channels.length ?? 0);
+  const countAll = allScope || !!scopeBatch;
+  const originalCount = countAll
+    ? project.sources.reduce((sum, item) => sum + item.channels.length, 0)
+    : (source?.channels.length ?? 0);
   const derivedCount = project.nodes.filter(
     (node) =>
-      (sourceId === 'all' || node.sourceId === source?.id) &&
-      node.operation !== 'raw',
+      (countAll || node.sourceId === source?.id) && node.operation !== 'raw',
   ).length;
   const valueCount = (project.values ?? []).filter(
-    (value) => sourceId === 'all' || value.sourceId === source?.id,
+    (value) => countAll || value.sourceId === source?.id,
   ).length;
+  // Until its first item commits, a starting batch is shown from its progress.
+  const displayBatch: WorkflowBatch | undefined =
+    scopeBatch ??
+    (batchProgress && sourceId === `batch:${batchProgress.batchId}`
+      ? {
+          id: batchProgress.batchId,
+          name: batchProgress.name,
+          recipeHash: '',
+          createdAt: batchProgress.startedAt,
+          state: 'running',
+          runs: [],
+        }
+      : undefined);
+  const batchShown = !!displayBatch && batchPanel;
+  const itemBatch = itemRun?.batch;
+  const itemLabel = useMemo(() => {
+    if (!itemBatch) return 'Item';
+    try {
+      return batchRecipe(project, itemBatch).recipe.item.label;
+    } catch {
+      return 'Item';
+    }
+  }, [project, itemBatch]);
+  const itemInfo = itemRun && {
+    label: itemLabel,
+    status: liveRunStatus(itemRun.run, index.steps),
+    problems: runProblems(itemRun.run, index.steps),
+    edited: runEdited(itemRun.run, index.steps),
+  };
+  const canReport = (batch: WorkflowBatch) => {
+    try {
+      return !!batchRecipe(project, batch).recipe.report;
+    } catch {
+      return false;
+    }
+  };
+  const runStatuses = new Map(
+    batches.flatMap((batch) =>
+      batch.runs.map(
+        (run) => [run.sourceId, liveRunStatus(run, index.steps)] as const,
+      ),
+    ),
+  );
   return (
     <div
       className="workflow-app"
+      onDragOver={(event) => {
+        if (!reportsShown && event.dataTransfer.types.includes('Files'))
+          event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (reportsShown || !event.dataTransfer.files.length) return;
+        const files = Array.from(event.dataTransfer.files);
+        const workflow = files.find((item) => /\.ya?ml$/i.test(item.name));
+        // Never let the browser navigate away to a dropped file.
+        event.preventDefault();
+        if (engine.busy || !engine.ready) return;
+        // A workflow (with or without recordings) opens the Run dialog;
+        // recordings alone are imported like the Import button.
+        if (workflow)
+          void openWorkflowFile(
+            workflow,
+            files.filter((item) => item !== workflow),
+          );
+        else importFiles(files.filter((item) => /\.csv$/i.test(item.name)));
+      }}
       data-workspace={workspaceView}
       data-history={historyOpen}
       data-inspector={inspectorOpen}
@@ -1134,11 +1638,17 @@ export default function WorkflowWorkbench() {
                   />
                 }
               >
-                <FileSpreadsheet size={14} />
+                {scopeBatch ? (
+                  <ListChecks size={14} />
+                ) : (
+                  <FileSpreadsheet size={14} />
+                )}
                 <span>
-                  {sourceId === 'all'
-                    ? 'All recordings & results'
-                    : `${source.name}${source.synthetic ? ' · Example' : ''}`}
+                  {scopeBatch
+                    ? `Batch · ${scopeBatch.name}`
+                    : allScope
+                      ? 'All recordings & results'
+                      : `${source.name}${source.synthetic ? ' · Example' : ''}`}
                 </span>
                 <ChevronDown size={14} />
               </DropdownMenuTrigger>
@@ -1147,18 +1657,39 @@ export default function WorkflowWorkbench() {
                 align="start"
               >
                 <DropdownMenuRadioGroup
-                  value={sourceId === 'all' ? 'all' : source.id}
+                  value={scopeBatch ? sourceId : allScope ? 'all' : source.id}
                   onValueChange={(value: string) => switchSource(value)}
                 >
-                  <DropdownMenuRadioItem value="all">
+                  <DropdownMenuRadioItem value="all" closeOnClick>
                     All recordings & results
                   </DropdownMenuRadioItem>
-                  {project.sources.map((item) => (
-                    <DropdownMenuRadioItem key={item.id} value={item.id}>
-                      {item.name}
-                      {item.synthetic ? ' · Example' : ''}
+                  {!!batches.length && <DropdownMenuSeparator />}
+                  {batches.map((batch) => (
+                    <DropdownMenuRadioItem
+                      key={batch.id}
+                      value={`batch:${batch.id}`}
+                      closeOnClick
+                    >
+                      <ListChecks size={13} />
+                      Batch · {batch.name} · {batch.runs.length}{' '}
+                      {batch.runs.length === 1 ? 'item' : 'items'}
                     </DropdownMenuRadioItem>
                   ))}
+                  {!!batches.length && <DropdownMenuSeparator />}
+                  {project.sources.map((item) => {
+                    const status = runStatuses.get(item.id);
+                    return (
+                      <DropdownMenuRadioItem
+                        key={item.id}
+                        value={item.id}
+                        closeOnClick
+                      >
+                        {status && <StatusIcon status={status} size={12} />}
+                        {item.name}
+                        {item.synthetic ? ' · Example' : ''}
+                      </DropdownMenuRadioItem>
+                    );
+                  })}
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1218,6 +1749,40 @@ export default function WorkflowWorkbench() {
               <ArrowDownToLine size={14} />
               <span>Import</span>
             </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    className="secondary-button workflow-import-more"
+                    aria-label="Workflow and batch options"
+                    title="Run a workflow on many recordings"
+                    disabled={engine.busy || !engine.ready}
+                  />
+                }
+              >
+                <ChevronDown size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="workflow-scope-popup">
+                <DropdownMenuItem onClick={() => void openRunDialog()}>
+                  <Play size={14} /> Run a workflow on recordings…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => workflowInput.current?.click()}
+                >
+                  <FolderOpen size={14} /> Open a workflow file…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!project.sources.length}
+                  onClick={() => setSaveOpen(true)}
+                >
+                  <Save size={14} /> Save a recording&apos;s workflow…
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={openBatchExample}>
+                  <ListChecks size={14} /> Try the batch example (8 motors)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <WorkflowStorage
               disabled={engine.busy || !engine.ready}
               recordings={project.sources.length}
@@ -1231,6 +1796,9 @@ export default function WorkflowWorkbench() {
               cancel={engine.cancel}
               example={openExample}
               exampleName={source?.synthetic ? source.name : undefined}
+              onSaveWorkflow={() => setSaveOpen(true)}
+              onOpenWorkflow={(chosen) => void openWorkflowFile(chosen)}
+              onBatchExample={openBatchExample}
             />
           </div>
           <button
@@ -1271,15 +1839,19 @@ export default function WorkflowWorkbench() {
           onChange={(event) => {
             const selected = Array.from(event.target.files ?? []);
             event.target.value = '';
-            if (selected.length)
-              void (async () => {
-                for (const file of selected)
-                  await perform(
-                    { type: 'import', file },
-                    `Importing ${file.name}…`,
-                  );
-                if (selected.length > 1) setSourceId('all');
-              })().catch(() => {});
+            importFiles(selected);
+          }}
+        />
+        <input
+          ref={workflowInput}
+          type="file"
+          accept=".yaml,.yml,application/yaml"
+          className="sr-only"
+          aria-label="Open workflow file"
+          onChange={(event) => {
+            const chosenFile = event.target.files?.[0];
+            event.target.value = '';
+            if (chosenFile) void openWorkflowFile(chosenFile);
           }}
         />
       </header>
@@ -1335,6 +1907,13 @@ export default function WorkflowWorkbench() {
                 {text}
               </button>
             ))}
+            <button
+              aria-pressed={flaggedOnly}
+              title="Show only operations with failed or warning checks"
+              onClick={() => setFlaggedOnly((on) => !on)}
+            >
+              <AlertTriangle size={11} /> Flagged
+            </button>
           </fieldset>
           {lineageRoot && (
             <div className="workflow-filter">
@@ -1379,7 +1958,7 @@ export default function WorkflowWorkbench() {
         </aside>
         <WorkflowPaneResizer pane="history" />
         <div className="workflow-document">
-          <main className="workflow-main">
+          <main className="workflow-main" data-batch-view={batchShown}>
             {!engine.ready ? (
               <div className="workflow-empty">
                 {engine.error || 'Opening your workflow…'}
@@ -1422,6 +2001,62 @@ export default function WorkflowWorkbench() {
               </section>
             ) : (
               <>
+                {displayBatch && batchShown && (
+                  <WorkflowBatchView
+                    project={project}
+                    batch={displayBatch}
+                    progress={batchProgress}
+                    busy={engine.busy || !!reportJob}
+                    canReport={canReport(displayBatch)}
+                    onOpen={(run) => openItem(run)}
+                    onClose={() => setBatchPanel(false)}
+                    onCancel={cancelBatch}
+                    onExportSummary={() => exportSummary(project, displayBatch)}
+                    onExportReports={(runs, mode) =>
+                      void exportReports(project, displayBatch, runs, mode)
+                    }
+                    onPreviewReport={(run) =>
+                      void previewReport(displayBatch, run)
+                    }
+                    onPlotAcross={(recipeStepId, runs) =>
+                      plotAcross(displayBatch, recipeStepId, runs)
+                    }
+                    reportJob={reportJob}
+                    onCancelReports={() => reportAbort.current?.abort()}
+                  />
+                )}
+                {displayBatch && !batchPanel && (
+                  <section className="workflow-item-bar" aria-label="Batch">
+                    <ListChecks size={14} />
+                    <span className="workflow-item-bar-name">
+                      <strong>{displayBatch.name}</strong>
+                      <small>
+                        {displayBatch.runs.length}{' '}
+                        {displayBatch.runs.length === 1 ? 'item' : 'items'} in
+                        History
+                      </small>
+                    </span>
+                    <span className="workflow-item-bar-problem" />
+                    <button
+                      className="secondary-button"
+                      onClick={() => setBatchPanel(true)}
+                    >
+                      <ListChecks size={14} /> Batch results
+                    </button>
+                  </section>
+                )}
+                {itemRun && itemInfo && (
+                  <WorkflowItemBar
+                    batch={itemRun.batch}
+                    run={itemRun.run}
+                    itemLabel={itemInfo.label}
+                    status={itemInfo.status}
+                    problems={itemInfo.problems}
+                    edited={itemInfo.edited}
+                    onStep={stepItem}
+                    onBatch={() => switchSource(`batch:${itemRun.batch.id}`)}
+                  />
+                )}
                 <PlotScratchpad
                   ref={plots}
                   project={project}
@@ -1907,6 +2542,7 @@ export default function WorkflowWorkbench() {
                   if (narrow) setInspectorDrawer(false);
                   else setInspectorOpen(false);
                 }}
+                onSetChecks={setChecks}
                 busy={engine.busy}
               />
             </aside>
@@ -1985,6 +2621,36 @@ export default function WorkflowWorkbench() {
       >
         <ReportBuilderMockup ref={report} workspace={reportWorkspace} />
       </div>
+      {saveOpen && (
+        <WorkflowSaveDialog
+          open={saveOpen}
+          onOpenChange={setSaveOpen}
+          project={project}
+          initialSourceId={
+            itemRun?.run.sourceId ??
+            (allScope || scopeBatch ? undefined : source?.id)
+          }
+          report={readReport}
+          onRun={(text, name) => {
+            setSaveOpen(false);
+            void openRunDialog(text, name);
+          }}
+        />
+      )}
+      {runDialog && (
+        <WorkflowRunDialog
+          key={runDialog.key}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRunDialog(null);
+          }}
+          project={project}
+          initialText={runDialog.text}
+          initialName={runDialog.name}
+          initialItems={runDialog.items}
+          onStart={(plan) => void runBatch(plan)}
+        />
+      )}
       <Dialog
         open={!!detailPanel}
         onOpenChange={(open) => {

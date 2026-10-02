@@ -427,7 +427,15 @@ export function validateWorkflowRecords(
       typeof batch.createdAt !== 'string' ||
       !hashes.has(batch.recipeHash) ||
       !['running', 'complete', 'cancelled'].includes(batch.state) ||
-      !Array.isArray(batch.runs)
+      !Array.isArray(batch.runs) ||
+      (batch.failures !== undefined &&
+        (!Array.isArray(batch.failures) ||
+          batch.failures.some(
+            (failure) =>
+              !failure ||
+              typeof failure.name !== 'string' ||
+              typeof failure.message !== 'string',
+          )))
     )
       throw new Error('Invalid batch record.');
     for (const run of batch.runs)
@@ -460,7 +468,39 @@ type WorkflowBatchLike = {
   recipeHash: string;
   state: string;
   runs: (WorkflowRun & { status: string })[];
+  failures?: { name: unknown; message: unknown }[];
 };
+
+/** Table rows for a report: one row per evaluated check, worst first. */
+export function checkTableRows(
+  steps: WorkflowStep[],
+  stepLabel: (step: WorkflowStep) => string,
+  options: { flaggedOnly?: boolean; flags?: RunFlag[] } = {},
+): string[][] {
+  const rows: { rank: number; cells: string[] }[] = [];
+  for (const flag of options.flags ?? [])
+    rows.push({
+      rank: flag.severity === 'error' ? 3 : 1,
+      cells: ['Processing', flag.message, STATUS_LABELS[flag.severity]],
+    });
+  for (const step of steps)
+    for (const result of currentResults(step)) {
+      if (options.flaggedOnly && result.status === 'pass') continue;
+      const check = step.checks?.[result.check];
+      rows.push({
+        rank: RANK[result.status],
+        cells: [
+          `${stepLabel(step)} · ${check ? CHECK_NAMES[check.kind] : 'Check'}`,
+          result.message,
+          STATUS_LABELS[result.status],
+        ],
+      });
+    }
+  return [
+    ['Check', 'Result', 'Status'],
+    ...rows.sort((a, b) => b.rank - a.rank).map((row) => row.cells),
+  ];
+}
 
 export const STATUS_LABELS: Record<RunStatus, string> = {
   pass: 'Pass',

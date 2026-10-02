@@ -188,6 +188,7 @@ export type EngineRequest =
       type: 'finish-batch';
       batchId: string;
       state: 'complete' | 'cancelled';
+      failures?: { name: string; message: string }[];
     }
   | {
       type: 'set-checks';

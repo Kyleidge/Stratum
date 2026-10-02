@@ -27,6 +27,8 @@ export type PlotTrace = {
   id: string;
   visible: boolean;
   color: string;
+  /** Display name overriding the output label, such as the batch item. */
+  label?: string;
   style?: 'line' | 'points' | 'step';
   width?: number;
   axisId?: string;
@@ -156,6 +158,9 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
                 : {}),
               ...(typeof t.width === 'number' && Number.isFinite(t.width)
                 ? { width: Math.min(4, Math.max(1, t.width)) }
+                : {}),
+              ...(typeof t.label === 'string' && t.label.trim()
+                ? { label: t.label.trim().slice(0, 160) }
                 : {}),
               ...(typeof t.axisId === 'string' &&
               /^(unit:|axis:)/.test(t.axisId) &&

@@ -143,6 +143,47 @@ export function useSignalEngine(
       setBusy(false);
     }
   }
+  /**
+   * Run several mutations as one busy period, applying each committed project
+   * as it arrives. `step` sees each result and may stop the sequence early.
+   */
+  async function sequence(
+    messages: EngineRequest[],
+    labels: string[],
+    step: (
+      index: number,
+      result: { project?: Project; error?: Error },
+    ) => boolean | void,
+  ) {
+    setBusy(true);
+    setError('');
+    try {
+      for (const [index, message] of messages.entries()) {
+        setStatus(labels[index] ?? 'Processing…');
+        let result: { project?: Project; error?: Error };
+        try {
+          const response = await request(message);
+          if (response.type !== 'project')
+            throw new Error('Unexpected engine response.');
+          setProject(response.project);
+          setCanUndo(!!response.canUndo);
+          setCanRedo(!!response.canRedo);
+          result = { project: response.project };
+        } catch (caught) {
+          result = {
+            error:
+              caught instanceof Error
+                ? caught
+                : new Error('Processing failed.'),
+          };
+        }
+        if (step(index, result) === false) break;
+      }
+      setStatus('Saved · source data unchanged');
+    } finally {
+      setBusy(false);
+    }
+  }
   async function preview(message: EngineRequest) {
     setBusy(true);
     setStatus('Previewing segment boundaries…');
@@ -163,6 +204,7 @@ export function useSignalEngine(
     status,
     request,
     mutate,
+    sequence,
     preview,
     setError,
     cancel: () =>

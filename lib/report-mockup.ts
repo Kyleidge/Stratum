@@ -31,7 +31,7 @@ export interface ReportBlock {
   tableData: string[][];
   striped: boolean;
   source?: {
-    kind: 'signal' | 'values' | 'plot';
+    kind: 'signal' | 'values' | 'plot' | 'checks';
     label: string;
     capturedAt: string;
     outputIds: string[];
@@ -46,6 +46,8 @@ export interface ReportBlock {
     label: string;
   };
   plotSnapshot?: { svg: string; width: number; height: number };
+  /** Saved plot settings of a capture, so a report can become a template. */
+  plotSheet?: import('./plot-scratchpad').PlotSheet;
 }
 
 export interface ReportPage {

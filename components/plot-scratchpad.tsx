@@ -124,6 +124,12 @@ import {
 
 export type PlotScratchpadHandle = {
   createPlot: (target: WorkflowTarget) => void;
+  /** A new saved plot of explicit traces, such as one output across batch items. */
+  createPlotFromTraces: (
+    name: string,
+    traces: { id: string; label?: string }[],
+    options?: { zeroTime?: boolean },
+  ) => void;
 };
 
 type Props = {
@@ -416,7 +422,7 @@ export default function PlotScratchpad({
             plot,
             drawingView: value ? undefined : plotView,
             color: trace.color,
-            label: index.label(trace.id),
+            label: trace.label ?? index.label(trace.id),
             offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
             referenceLine: !!value,
             referenceLabel:
@@ -439,7 +445,7 @@ export default function PlotScratchpad({
     .map((trace) => ({
       ...trace,
       unit: traceUnit(trace.id),
-      name: index.label(trace.id),
+      name: trace.label ?? index.label(trace.id),
       reference: index.values.has(trace.id),
     }));
   const axisGroups = groupPlotAxes(
@@ -970,6 +976,43 @@ export default function PlotScratchpad({
     createPlot(target) {
       if (busy || !loaded) return;
       addTarget(target, 'new');
+    },
+    createPlotFromTraces(name, traces, options) {
+      if (!loaded) return;
+      const unique = traces.filter(
+        (trace, position) =>
+          (index.nodes.has(trace.id) || index.values.has(trace.id)) &&
+          traces.findIndex((item) => item.id === trace.id) === position,
+      );
+      if (!unique.length) {
+        onNotice('There are no outputs to plot.');
+        return;
+      }
+      if (unique.length > MAX_PLOT_TRACES) {
+        onNotice(
+          `A plot supports up to ${MAX_PLOT_TRACES.toLocaleString()} traces. Nothing was added.`,
+        );
+        return;
+      }
+      if (sheets.length >= MAX_PLOT_TABS) {
+        onNotice('Close a plot tab before creating another.');
+        return;
+      }
+      const next: PlotSheet = {
+        ...initialSheet,
+        id: `plot:${crypto.randomUUID()}`,
+        name: name.slice(0, 80),
+        zeroTime: !!options?.zeroTime,
+        traces: unique.map((trace, i) => ({
+          id: trace.id,
+          visible: true,
+          color: TRACE_COLORS[i % TRACE_COLORS.length],
+          ...(trace.label ? { label: trace.label.slice(0, 160) } : {}),
+        })),
+      };
+      setSheets((old) => [...old, next]);
+      onView(next.id);
+      onNotice(`${unique.length} traces plotted from ${name}.`);
     },
   }));
   function dropProps(tabId: string) {
@@ -1525,7 +1568,7 @@ export default function PlotScratchpad({
                           }
                           data-value={index.values.has(trace.id)}
                         />
-                        <span>{index.label(trace.id)}</span>
+                        <span>{trace.label ?? index.label(trace.id)}</span>
                         {trace.visible ? (
                           <Eye size={13} />
                         ) : (
@@ -1892,7 +1935,7 @@ export default function PlotScratchpad({
                             >
                               <button
                                 className="workflow-icon-button"
-                                aria-label={`${trace.visible ? 'Hide' : 'Show'} trace ${index.label(trace.id)}`}
+                                aria-label={`${trace.visible ? 'Hide' : 'Show'} trace ${trace.label ?? index.label(trace.id)}`}
                                 aria-pressed={trace.visible}
                                 onClick={() =>
                                   update({
@@ -1912,7 +1955,7 @@ export default function PlotScratchpad({
                               </button>
                               <input
                                 type="color"
-                                aria-label={`Color for ${index.label(trace.id)}`}
+                                aria-label={`Color for ${trace.label ?? index.label(trace.id)}`}
                                 value={trace.color}
                                 onChange={(event) =>
                                   update({
@@ -1933,7 +1976,7 @@ export default function PlotScratchpad({
                               >
                                 <strong>
                                   {node
-                                    ? index.label(trace.id)
+                                    ? (trace.label ?? index.label(trace.id))
                                     : 'Signal unavailable'}
                                 </strong>
                                 <small>
@@ -1952,7 +1995,7 @@ export default function PlotScratchpad({
                               </span>
                               <button
                                 className="workflow-icon-button"
-                                aria-label={`Isolate trace ${index.label(trace.id)}`}
+                                aria-label={`Isolate trace ${trace.label ?? index.label(trace.id)}`}
                                 title="Show only this trace"
                                 onClick={() =>
                                   update({
@@ -1967,7 +2010,7 @@ export default function PlotScratchpad({
                               </button>
                               <button
                                 className="workflow-icon-button"
-                                aria-label={`Move trace up ${index.label(trace.id)}`}
+                                aria-label={`Move trace up ${trace.label ?? index.label(trace.id)}`}
                                 disabled={sheet.traces.indexOf(trace) === 0}
                                 onClick={() =>
                                   moveTrace(
@@ -1980,7 +2023,7 @@ export default function PlotScratchpad({
                               </button>
                               <button
                                 className="workflow-icon-button"
-                                aria-label={`Move trace down ${index.label(trace.id)}`}
+                                aria-label={`Move trace down ${trace.label ?? index.label(trace.id)}`}
                                 disabled={
                                   sheet.traces.indexOf(trace) ===
                                   sheet.traces.length - 1
@@ -1996,7 +2039,7 @@ export default function PlotScratchpad({
                               </button>
                               <button
                                 className="workflow-icon-button"
-                                aria-label={`Remove trace ${index.label(trace.id)}`}
+                                aria-label={`Remove trace ${trace.label ?? index.label(trace.id)}`}
                                 onClick={() =>
                                   update({
                                     traces: sheet.traces.filter(

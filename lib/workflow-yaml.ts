@@ -667,6 +667,12 @@ function emit(
   const pad = ' '.repeat(indent);
   const inline = (item: YamlValue, used: number, nested: number) => {
     if (isScalar(item)) return undefined;
+    // Lists of mappings (steps, checks, pages) always use block form.
+    if (
+      Array.isArray(item) &&
+      item.some((entry) => !isScalar(entry) && !Array.isArray(entry))
+    )
+      return undefined;
     const scalars = Array.isArray(item) && item.every(isScalar);
     if (!scalars && nested < flowAfter) return undefined;
     const text = flow(item);

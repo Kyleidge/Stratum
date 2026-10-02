@@ -26,6 +26,8 @@ import type {
 import type { WorkflowSelection } from './workflow-history';
 import type { ToolbarAction } from './workflow-toolbar';
 import WorkflowList from './workflow-list';
+import WorkflowChecksPanel from './workflow-checks-panel';
+import type { CheckDefinition } from '@/lib/workflow-types';
 import { formatValue } from './signal-chart';
 
 /** Lists longer than this page through WorkflowList to bound the DOM. */
@@ -67,6 +69,7 @@ export default function WorkflowProperties({
   onStep,
   onAction,
   onClose,
+  onSetChecks,
   busy,
 }: {
   project: Project;
@@ -85,6 +88,8 @@ export default function WorkflowProperties({
   onStep: (id: string) => void;
   onAction: (action: ToolbarAction) => void;
   onClose: () => void;
+  /** Replace a step's checks; rejected promises keep the form open. */
+  onSetChecks?: (stepId: string, checks: CheckDefinition[]) => Promise<void>;
   busy: boolean;
 }) {
   const node =
@@ -392,6 +397,15 @@ export default function WorkflowProperties({
               </div>
             </dl>
           </section>
+        )}
+        {step && onSetChecks && editable && (
+          <WorkflowChecksPanel
+            key={step.id}
+            step={step}
+            index={index}
+            busy={busy}
+            onSave={(checks) => onSetChecks(step.id, checks)}
+          />
         )}
         {!!inputs.length && (
           <section>

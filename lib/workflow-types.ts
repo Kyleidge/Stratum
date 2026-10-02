@@ -100,6 +100,8 @@ export type WorkflowBatch = {
   createdAt: string;
   state: 'running' | 'complete' | 'cancelled';
   runs: WorkflowRun[];
+  /** Files that could not be imported, so nothing was published for them. */
+  failures?: { name: string; message: string }[];
 };
 /** Exact workflow text used by batches, for provenance and re-runs. */
 export type WorkflowRecipeRecord = {

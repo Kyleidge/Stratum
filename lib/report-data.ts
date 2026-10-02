@@ -5,6 +5,8 @@ import { createBlock, type ReportBlock } from './report-mockup';
 import type { EngineRequest, EngineResponse, Project } from './signal-types';
 import type { PlotSheet } from './plot-scratchpad';
 import type { ReportAsset } from './report-integration';
+import { checkTableRows, currentResults } from './workflow-checks';
+import type { WorkflowStep } from './workflow-types';
 
 const MAX_ASSETS = 30;
 const MAX_VALUES = 330;
@@ -44,6 +46,20 @@ export function reportAssets(
   sheets: PlotSheet[],
 ): ReportAsset[] {
   const index = new WorkflowIndex(project);
+  // With several recordings, say which one each output came from.
+  const names = new Map(
+    project.sources.map((source) => [source.id, source.name]),
+  );
+  const recording = (id: string) => {
+    if (names.size < 2) return '';
+    const node =
+      index.nodes.get(id) ??
+      index.nodes.get(index.values.get(id)?.inputId ?? '');
+    const sourceId =
+      node?.sourceId || index.lineage([id]).originals[0]?.sourceId;
+    const name = sourceId ? names.get(sourceId) : undefined;
+    return name ? ` · ${name}` : '';
+  };
   return [
     ...sheets.map(
       (sheet): ReportAsset => ({
@@ -67,7 +83,7 @@ export function reportAssets(
           id: `signal:${node.id}`,
           kind: 'signal',
           name: index.label(node.id),
-          detail: `${index.kind(node.id)}${node.unit ? ` · ${node.unit}` : ''}`,
+          detail: `${index.kind(node.id)}${node.unit ? ` · ${node.unit}` : ''}${recording(node.id)}`,
           outputIds: [node.id],
         }),
       ),
@@ -76,7 +92,7 @@ export function reportAssets(
         id: `value:${value.id}`,
         kind: 'value',
         name: index.label(value.id),
-        detail: `Calculated value · ${value.value === null ? 'Unavailable' : String(value.value)}${value.unit ? ` ${value.unit}` : ''}`,
+        detail: `Calculated value · ${value.value === null ? 'Unavailable' : String(value.value)}${value.unit ? ` ${value.unit}` : ''}${recording(value.id)}`,
         outputIds: [value.id],
       }),
     ),
@@ -87,11 +103,51 @@ export function reportAssets(
           id: `values:${step.id}`,
           kind: 'values',
           name: stepName(step),
-          detail: `${step.outputIds.length} calculated values · step ${step.sequence + 1}`,
+          detail: `${step.outputIds.length} calculated values · step ${step.sequence + 1}${step.outputIds.length ? recording(step.outputIds[0]) : ''}`,
           outputIds: [...step.outputIds],
         }),
       ),
+    ...checkAssets(project),
   ];
+}
+
+/** Steps with evaluated checks, grouped by the recording they were derived from. */
+function checkedSteps(project: Project): Map<string, WorkflowStep[]> {
+  const index = new WorkflowIndex(project);
+  const runs = new Map(
+    (project.workflowBatches ?? []).flatMap((batch) =>
+      batch.runs.map((run) => [run.id, run.sourceId] as const),
+    ),
+  );
+  const groups = new Map<string, WorkflowStep[]>();
+  for (const step of project.workflowSteps ?? []) {
+    if (!currentResults(step).length) continue;
+    const sourceId =
+      step.sourceId ||
+      runs.get(step.runId ?? '') ||
+      index.lineage(step.outputIds).originals[0]?.sourceId;
+    if (!sourceId) continue;
+    groups.set(sourceId, [...(groups.get(sourceId) ?? []), step]);
+  }
+  return groups;
+}
+
+function checkAssets(project: Project): ReportAsset[] {
+  return [...checkedSteps(project)].flatMap(([sourceId, steps]) => {
+    const source = project.sources.find((item) => item.id === sourceId);
+    if (!source) return [];
+    const results = steps.flatMap(currentResults);
+    const flagged = results.filter((result) => result.status !== 'pass').length;
+    return [
+      {
+        id: `checks:${sourceId}`,
+        kind: 'checks' as const,
+        name: `Check results · ${source.name}`,
+        detail: `${results.length} ${results.length === 1 ? 'check' : 'checks'} · ${flagged} flagged`,
+        outputIds: steps.flatMap((step) => step.outputIds),
+      },
+    ];
+  });
 }
 
 function sourceMetadata(
@@ -171,7 +227,7 @@ export async function resolveReportAssets(
       throw new Error('A selected report asset is no longer available.');
     if (!asset.outputIds.length)
       throw new Error(`“${asset.name}” has no visible outputs to capture.`);
-    for (const outputId of asset.outputIds) {
+    for (const outputId of asset.kind === 'checks' ? [] : asset.outputIds) {
       const available =
         asset.kind === 'value' || asset.kind === 'values'
           ? index.values.has(outputId)
@@ -251,6 +307,33 @@ export async function resolveReportAssets(
         }),
       );
     }
+  }
+  for (const asset of selected) {
+    if (asset.kind !== 'checks') continue;
+    const sourceId = asset.id.slice('checks:'.length);
+    const steps = checkedSteps(project).get(sourceId) ?? [];
+    const rows = checkTableRows(steps, (step) => stepName(step));
+    blocks.push(
+      createBlock('table', {
+        name: asset.name,
+        text: 'Checks',
+        width: 698,
+        height: Math.min(900, 62 + rows.length * 40),
+        fontSize: 11,
+        padding: 14,
+        tableData: rows.slice(0, 41),
+        source: {
+          kind: 'checks',
+          label: asset.name,
+          capturedAt: new Date().toISOString(),
+          outputIds: [...asset.outputIds],
+          sourceNames: project.sources
+            .filter((source) => source.id === sourceId)
+            .map((source) => source.name),
+          timeReferences: [],
+        },
+      }),
+    );
   }
   for (let offset = 0; offset < valueIds.length; offset += VALUES_PER_TABLE) {
     const tableIds = valueIds.slice(offset, offset + VALUES_PER_TABLE);

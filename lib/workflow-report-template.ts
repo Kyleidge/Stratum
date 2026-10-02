@@ -18,7 +18,7 @@ export type TemplateBinding =
   | { kind: 'checks'; scope: 'all' | 'flagged' };
 export type TemplateBlock = Omit<
   ReportBlock,
-  'id' | 'source' | 'signalPlot' | 'plotSnapshot'
+  'id' | 'source' | 'signalPlot' | 'plotSnapshot' | 'plotSheet'
 > & { bind?: TemplateBinding };
 export type ReportTemplate = Omit<ReportDocument, 'pages'> & {
   pages: { blocks: TemplateBlock[] }[];
@@ -77,7 +77,7 @@ const camel = (key: string) =>
 
 type BlockField = keyof Omit<
   ReportBlock,
-  'id' | 'source' | 'signalPlot' | 'plotSnapshot'
+  'id' | 'source' | 'signalPlot' | 'plotSnapshot' | 'plotSheet'
 >;
 const BLOCK_FIELDS = Object.keys(createBlock('text')).filter(
   (key) => key !== 'id',
@@ -102,9 +102,10 @@ export function templateBlock(
     source: _source,
     signalPlot: _plot,
     plotSnapshot: _snapshot,
+    plotSheet: _sheet,
     ...rest
   } = block;
-  void [_id, _source, _plot, _snapshot];
+  void [_id, _source, _plot, _snapshot, _sheet];
   return bind ? { ...rest, bind } : rest;
 }
 
@@ -418,6 +419,74 @@ function readBinding(
     return { kind: 'plot', sheet: read };
   }
   fail(`${context}: bind needs signal, values, plot or checks.`, value);
+}
+
+/**
+ * Turn a report draft into a template. Captured blocks are bound to the recipe
+ * outputs they came from; blocks from elsewhere are reported and left out.
+ */
+export function templateFromReport(
+  report: ReportDocument,
+  refs: ReadonlyMap<string, string>,
+  recordingNames: readonly string[],
+): { template: ReportTemplate; problems: string[] } {
+  const problems: string[] = [];
+  const pages = report.pages.map((page, pageIndex) => ({
+    blocks: page.blocks.flatMap((block): TemplateBlock[] => {
+      const where = `Page ${pageIndex + 1} · ${block.name}`;
+      const source = block.source;
+      if (!source) return [templateBlock(block)];
+      const mapped = source.outputIds.map((id) => refs.get(id));
+      const missing = () => {
+        problems.push(
+          `${where} uses data from outside this workflow, so it was left out.`,
+        );
+        return [];
+      };
+      if (source.kind === 'checks') {
+        if (!source.sourceNames.every((name) => recordingNames.includes(name)))
+          return missing();
+        return [templateBlock(block, { kind: 'checks', scope: 'all' })];
+      }
+      if (mapped.some((ref) => ref === undefined)) return missing();
+      if (source.kind === 'signal')
+        return [templateBlock(block, { kind: 'signal', ref: mapped[0]! })];
+      if (source.kind === 'values')
+        return [
+          templateBlock(block, { kind: 'values', refs: mapped as string[] }),
+        ];
+      if (!block.plotSheet) {
+        problems.push(
+          `${where} is an extra panel of a saved plot; the template redraws all panels from the first one.`,
+        );
+        return [];
+      }
+      const traces = block.plotSheet.traces.filter((trace) => trace.visible);
+      if (traces.some((trace) => !refs.has(trace.id))) return missing();
+      return [
+        templateBlock(block, {
+          kind: 'plot',
+          sheet: {
+            ...block.plotSheet,
+            traces: traces.map((trace) => ({
+              ...trace,
+              id: refs.get(trace.id)!,
+            })),
+          },
+        }),
+      ];
+    }),
+  }));
+  return {
+    template: {
+      title: report.title.trim() ? report.title : 'Report · {{item.id}}',
+      pageSize: report.pageSize,
+      orientation: report.orientation,
+      background: report.background,
+      pages,
+    },
+    problems,
+  };
 }
 
 /** Every recipe reference a template uses, for validation against the steps. */

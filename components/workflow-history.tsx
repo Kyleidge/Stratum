@@ -30,6 +30,8 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import type { WorkflowManagementAction } from './workflow-management';
+import { outputFlags, stepStatus, STATUS_LABELS } from '@/lib/workflow-checks';
+import { StatusIcon } from './workflow-batch-view';
 import {
   startWorkflowDrag,
   targetPlotOutputs,
@@ -361,6 +363,14 @@ export default function WorkflowHistory({
                 : { kind: 'step', id: step.id };
             const select = () =>
               row.kind === 'more' ? showOutputs(step.id) : onSelect(target);
+            // Failed or warning checks mark the step and each affected output.
+            const flag =
+              row.kind === 'step'
+                ? stepStatus(step)
+                : row.outputId
+                  ? outputFlags(step).get(row.outputId)
+                  : undefined;
+            const flagged = flag && flag !== 'pass' ? flag : undefined;
             const action = (action: WorkflowManagementAction) =>
               onAction(target, action);
             const item = (
@@ -381,6 +391,7 @@ export default function WorkflowHistory({
                 data-kind={row.kind}
                 data-step-kind={step.kind === 'regions' ? 'segment' : step.kind}
                 data-selected={row.key === selectedKey}
+                data-flag={flagged}
                 data-lineage={
                   !!lineageOutputs &&
                   (row.kind === 'output'
@@ -402,13 +413,13 @@ export default function WorkflowHistory({
                 }}
                 onDragEnd={() => onDragSelection?.(null)}
                 title={row.label}
-                aria-label={
+                aria-label={`${
                   row.kind === 'step'
                     ? `${row.label} · ${step.outputIds.length} outputs${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
                     : row.outputId
                       ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}`
                       : row.label
-                }
+                }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
                 style={{
                   position: 'absolute',
                   top: position * ROW_HEIGHT,
@@ -507,6 +518,7 @@ export default function WorkflowHistory({
                         className={`workflow-icon ${index.values.has(row.outputId!) ? 'value' : index.nodes.get(row.outputId!)?.operation === 'raw' ? 'import' : 'derive'}`}
                       />
                     )}
+                    {flagged && <StatusIcon status={flagged} size={12} />}
                     <span className="workflow-row-copy">
                       <strong>{row.label}</strong>
                       <small>
