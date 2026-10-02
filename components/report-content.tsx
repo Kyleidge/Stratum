@@ -6,58 +6,11 @@ import {
   type ReportPage,
 } from '@/lib/report-mockup';
 import { formatAxisTick, niceDomain, niceTicks } from '@/lib/plot-ticks';
-
-const fontFamilies = {
-  sans: 'Arial, Helvetica, sans-serif',
-  serif: 'Georgia, Times New Roman, serif',
-  mono: 'Courier New, Courier, monospace',
-};
-
-function estimateWidth(value: string, block: ReportBlock): number {
-  if (block.fontFamily === 'mono') return value.length * block.fontSize * 0.61;
-  let width = 0;
-  for (const character of value) {
-    width += /[ilI1.,' :;!|]/.test(character)
-      ? 0.28
-      : /[MW@%]/.test(character)
-        ? 0.88
-        : /[A-Z0-9]/.test(character)
-          ? 0.63
-          : 0.53;
-  }
-  return width * block.fontSize * (block.bold ? 1.055 : 1);
-}
-
-function wrapText(value: string, width: number, block: ReportBlock): string[] {
-  const lines: string[] = [];
-  for (const paragraph of value.split('\n')) {
-    if (!paragraph.trim()) {
-      lines.push('');
-      continue;
-    }
-    let current = '';
-    for (const word of paragraph.trim().split(/\s+/)) {
-      const next = current ? `${current} ${word}` : word;
-      if (estimateWidth(next, block) <= width) {
-        current = next;
-        continue;
-      }
-      if (current) {
-        lines.push(current);
-        current = '';
-      }
-      for (const character of word) {
-        if (current && estimateWidth(current + character, block) > width) {
-          lines.push(current);
-          current = '';
-        }
-        current += character;
-      }
-    }
-    if (current) lines.push(current);
-  }
-  return lines;
-}
+import {
+  REPORT_FONTS as fontFamilies,
+  wrapTextLines as wrapText,
+} from '@/lib/report-text';
+import { ReportFrameArt } from '@/components/report-frame';
 
 function TextLines({
   block,
@@ -755,6 +708,10 @@ export function ReportPageSvg({
       viewBox={`0 0 ${width} ${height}`}
     >
       <rect width={width} height={height} fill={report.background} />
+      <ReportFrameArt
+        report={report}
+        pageIndex={report.pages.findIndex((item) => item.id === page.id)}
+      />
       {page.blocks.map((block) => (
         <g key={block.id} transform={`translate(${block.x} ${block.y})`}>
           <ReportBlockContent block={block} />

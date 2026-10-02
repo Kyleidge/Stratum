@@ -57,6 +57,34 @@ page, then drag plots, text, images, or tables
 from the content library onto the page. Blocks can be moved, resized, and
 formatted through the inspector. Uploaded images stay on the device.
 
+## Templates and page designs
+
+The **Templates** tab offers four page designs: **Classic** (double-rule border,
+serif type), **Drawing sheet** (zoned engineering border with a title block),
+**Banner** (a colour band with modern type) and **Sidebar** (an accent stripe).
+Choosing a template starts a new draft with that design and an editable title
+page: eyebrow, title, subtitle, prepared by/date/reference details, and Summary
+and Results headings. It keeps the current paper size and orientation, and a
+title you already typed. Undo restores the previous draft. A blank report's
+canvas also offers **Browse templates**.
+
+To restyle an existing report without replacing its content, choose a design
+under **Page design** in the Templates tab or Page settings, and an accent
+colour. The editor reports blocks that reach into the new border, header or
+footer; it never moves them. A design is drawn behind every page's blocks and
+cannot be selected. It repeats the report title and page numbers (the Banner
+and Sidebar title pages leave the title to the page itself), so renaming the
+report updates every page. Starter text uses neutral ink so it stays legible
+when the design or accent changes. New blocks, captured data and overflow pages
+are placed inside the design's clear area.
+
+The canvas, page previews and PDF export draw the same artwork
+(`components/report-frame.tsx`); `lib/report-templates.ts` holds the designs,
+their clear areas and starter pages. Saved workflow report templates keep the
+design as `frame: { style, accent }`, so batch reports share it.
+
+## Pages and paper
+
 The canvas supports multiple pages, A4 or Letter paper, and portrait or landscape
 orientation. The report's page dimensions and block positions are shared by the
 canvas and PDF renderer. The standalone preview's plots and values remain

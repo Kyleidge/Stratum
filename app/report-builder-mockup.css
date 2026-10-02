@@ -297,15 +297,17 @@
 .rb-tabs {
   display: flex;
   align-items: stretch;
-  padding: 0 19px;
+  padding: 0 16px;
   min-height: 48px;
-  gap: 24px;
+  gap: 12px;
   border-bottom: 1px solid var(--rb-border);
 }
 .rb-tabs button {
   position: relative;
+  flex-shrink: 0;
   color: var(--rb-muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 .rb-tabs button.is-active {
   color: var(--rb-ink);
@@ -540,6 +542,122 @@
 .rb-page-thumbnail-label svg:last-child {
   margin-left: auto;
 }
+.rb-template-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 12px 10px;
+  margin-top: 17px;
+}
+.rb-template {
+  min-width: 0;
+  text-align: left;
+}
+.rb-template-sheet {
+  display: block;
+  padding: 7px;
+  margin-bottom: 7px;
+  border: 1px solid var(--rb-border);
+  border-radius: 6px;
+  background: var(--rb-field);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+.rb-template-sheet > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  box-shadow: 0 1px 4px var(--shadow-color);
+}
+.rb-template:hover .rb-template-sheet,
+.rb-template:focus-visible .rb-template-sheet {
+  border-color: var(--rb-accent);
+  background: var(--rb-wash);
+}
+.rb-template strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 550;
+}
+.rb-template small {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--rb-muted);
+}
+.rb-design-options,
+.rb-accent-swatches {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.rb-design-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.rb-design-options button {
+  padding: 4px 9px;
+  border: 1px solid var(--rb-border);
+  border-radius: 999px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.rb-app .rb-design-options button.is-active {
+  border-color: var(--rb-accent);
+  background: var(--rb-wash);
+  color: var(--rb-accent);
+  font-weight: 600;
+}
+.rb-accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.rb-accent-swatches > button,
+.rb-accent-custom {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* Swatches show page colours, so their rings follow the editor theme. */
+.rb-accent-swatches > button {
+  box-shadow: inset 0 0 0 1px #00000026;
+}
+.rb-accent-swatches > button.is-active {
+  box-shadow:
+    0 0 0 2px var(--rb-panel),
+    0 0 0 3.5px var(--rb-accent);
+}
+.rb-accent-custom {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--rb-muted);
+  color: var(--rb-muted);
+  cursor: pointer;
+}
+.rb-accent-custom:hover {
+  border-color: var(--rb-accent);
+  color: var(--rb-accent);
+}
+.rb-accent-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.rb-accent-custom:focus-within {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 2px;
+}
 .rb-workspace {
   display: flex;
   flex-direction: column;
@@ -605,6 +723,14 @@
 }
 .rb-paper.is-arranging .rb-page-margin {
   opacity: 1;
+}
+/* The page design is drawn behind the blocks and never takes the pointer. */
+.rb-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  pointer-events: none;
 }
 .rb-block {
   padding: 0;
@@ -728,6 +854,21 @@
   padding: 9px 16px;
   border-radius: 5px;
   font-size: 13px;
+}
+.rb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+.rb-empty-actions button {
+  margin-top: 0;
+}
+.rb-empty-actions button + button {
+  color: #4f6378;
+  background: #ffffff;
+  border-color: #dfe6ee;
 }
 .rb-add-page {
   display: flex;
@@ -1106,6 +1247,19 @@
   .rb-library-scroll {
     padding: 18px 12px;
   }
+  /* Narrow libraries scroll their tabs rather than wrapping them. */
+  .rb-tabs {
+    padding: 0 10px;
+    gap: 9px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .rb-tabs button {
+    font-size: 11px;
+  }
+  .rb-tabs button.is-active::after {
+    bottom: 0;
+  }
   .rb-color-field {
     padding: 5px;
     gap: 4px;
@@ -1117,6 +1271,10 @@
 @media (max-width: 950px) {
   .rb-body {
     grid-template-columns: 174px minmax(0, 1fr) 210px;
+  }
+  .rb-tabs button > span,
+  .rb-template small {
+    display: none;
   }
   .rb-brand > span:not(.rb-brand-mark),
   .rb-editing-label,
@@ -1178,7 +1336,8 @@
   .rb-header-actions {
     gap: 5px;
   }
-  .rb-block-library {
+  .rb-block-library,
+  .rb-template-grid {
     grid-template-columns: 1fr;
   }
   .rb-asset {

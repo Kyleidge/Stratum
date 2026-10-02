@@ -3,7 +3,9 @@ import {
   type ReportBlock,
   type ReportBlockType,
   type ReportDocument,
+  type ReportFrame,
 } from './report-mockup';
+import { FRAME_ACCENT, REPORT_DESIGNS } from './report-templates';
 import { readPlotSheets, type PlotSheet } from './plot-scratchpad';
 import type { YamlMap, YamlValue } from './workflow-yaml';
 
@@ -153,6 +155,11 @@ export function templateYaml(template: ReportTemplate): YamlMap {
     'page-size': template.pageSize,
     orientation: template.orientation,
     background: template.background,
+    ...(template.frame
+      ? {
+          frame: { style: template.frame.style, accent: template.frame.accent },
+        }
+      : {}),
     pages: template.pages.map((page) => ({
       blocks: page.blocks.map((block) => {
         const base = defaults(block.type);
@@ -201,6 +208,7 @@ export function readTemplate(
     'page-size',
     'orientation',
     'background',
+    'frame',
     'pages',
   ]);
   for (const key of Object.keys(report))
@@ -222,6 +230,8 @@ export function readTemplate(
   const background = report.background ?? '#ffffff';
   if (typeof background !== 'string' || !COLOR.test(background))
     fail('background must be a colour such as #ffffff.', report);
+  const frame =
+    report.frame === undefined ? undefined : readFrame(report.frame, fail);
   const pages = report.pages ?? [];
   if (!Array.isArray(pages) || pages.length > 50)
     fail('pages must be a list of at most 50 pages.', report);
@@ -231,6 +241,7 @@ export function readTemplate(
     pageSize,
     orientation,
     background,
+    ...(frame ? { frame } : {}),
     pages: pages.map((rawPage, pageIndex) => {
       const page = map(rawPage, `Page ${pageIndex + 1}`);
       for (const key of Object.keys(page))
@@ -331,6 +342,24 @@ export function readTemplate(
       };
     }),
   };
+}
+
+function readFrame(value: YamlValue, fail: TemplateIssue): ReportFrame {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    fail('frame must be a mapping with a style and an accent.');
+  for (const key of Object.keys(value))
+    if (key !== 'style' && key !== 'accent')
+      fail(`Unknown frame setting "${key}".`, value);
+  const design = REPORT_DESIGNS.find((item) => item.style === value.style);
+  if (!design)
+    fail(
+      `frame style must be one of ${REPORT_DESIGNS.map((item) => item.style).join(', ')}.`,
+      value,
+    );
+  const accent = value.accent ?? design.accent;
+  if (typeof accent !== 'string' || !FRAME_ACCENT.test(accent))
+    fail('frame accent must be a colour such as #1f3b5c.', value);
+  return { style: design.style, accent };
 }
 
 function readBinding(
@@ -483,6 +512,7 @@ export function templateFromReport(
       pageSize: report.pageSize,
       orientation: report.orientation,
       background: report.background,
+      ...(report.frame ? { frame: { ...report.frame } } : {}),
       pages,
     },
     problems,

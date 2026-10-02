@@ -60,6 +60,10 @@ There are no server API routes or cloud signal uploads.
   editor maps its `--rb-*` tokens to the theme's role tokens; paper keeps its
   document colors. `/report-mockup` remains an isolated synthetic preview. See
   `docs/report-builder-mockup.md` for PDF limits and validation.
+  `lib/report-templates.ts` defines page designs (border, header, footer),
+  their clear areas and starter title pages; `components/report-frame.tsx`
+  draws them behind blocks for canvas, previews and PDF alike. A design is
+  document-level (`frame`), never blocks; starter text stays neutral ink.
 - `lib/workflow-history.ts`: chronological invocation history, legacy adaptation,
   output ownership, and iterative lineage including binary and trigger inputs.
   `lib/workflow-types.ts`: immutable scalar records and explicit operation records.

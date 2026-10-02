@@ -305,6 +305,7 @@ export async function renderRunReport(options: {
     pageSize: template.pageSize,
     orientation: template.orientation,
     background: template.background,
+    ...(template.frame ? { frame: { ...template.frame } } : {}),
     pages: pages.length ? pages : [{ id: crypto.randomUUID(), blocks: [] }],
   };
 }

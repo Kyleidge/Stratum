@@ -3,6 +3,7 @@
 import {
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -56,8 +57,19 @@ import {
   type ReportBlock,
   type ReportBlockType,
   type ReportDocument,
+  type ReportFrameStyle,
 } from '@/lib/report-mockup';
+import {
+  blocksOutsideFrame,
+  createTemplateReport,
+  FRAME_ACCENTS,
+  frameInsets,
+  REPORT_DESIGNS,
+  reportDesign,
+  switchFrame,
+} from '@/lib/report-templates';
 import { ReportBlockContent, ReportPageSvg } from '@/components/report-content';
+import { ReportFrameArt } from '@/components/report-frame';
 import { downloadReportPdf } from '@/lib/report-pdf';
 import type {
   ReportBuilderHandle,
@@ -244,9 +256,9 @@ export default function ReportBuilderMockup({
   const { report } = history;
   const [pageIndex, setPageIndex] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [libraryTab, setLibraryTab] = useState<'data' | 'insert' | 'pages'>(
-    workspace ? 'data' : 'insert',
-  );
+  const [libraryTab, setLibraryTab] = useState<
+    'data' | 'insert' | 'templates' | 'pages'
+  >(workspace ? 'data' : 'insert');
   const [capturing, setCapturing] = useState(false);
   const captureRef = useRef<AbortController | null>(null);
   const currentRef = useRef({ report, workspace });
@@ -269,8 +281,21 @@ export default function ReportBuilderMockup({
   const gesture = useRef<Gesture | null>(null);
   const { width, height } = pageDimensions(report);
   const scale = zoom ?? fitZoom;
-  const page = report.pages[Math.min(pageIndex, report.pages.length - 1)];
+  const shownPageIndex = Math.min(pageIndex, report.pages.length - 1);
+  const page = report.pages[shownPageIndex];
+  const insets = frameInsets(report, shownPageIndex);
   const selected = page.blocks.find((block) => block.id === selectedId);
+  // Gallery previews follow the draft's paper, so a template keeps its format.
+  const templatePreviews = useMemo(
+    () =>
+      REPORT_DESIGNS.map((design) =>
+        createTemplateReport(design.style, {
+          pageSize: report.pageSize,
+          orientation: report.orientation,
+        }),
+      ),
+    [report.pageSize, report.orientation],
+  );
 
   useEffect(() => {
     currentRef.current = { report, workspace };
@@ -385,12 +410,12 @@ export default function ReportBuilderMockup({
     block.width = Math.min(block.width, width - 80);
     block.height = Math.min(block.height, height - 80);
     block.x = clamp(
-      at?.x ?? 48 + (page.blocks.length % 5) * 16,
+      at?.x ?? insets.left + (page.blocks.length % 5) * 16,
       0,
       width - block.width,
     );
     block.y = clamp(
-      at?.y ?? 64 + (page.blocks.length % 5) * 32,
+      at?.y ?? insets.top + 16 + (page.blocks.length % 5) * 32,
       0,
       height - block.height,
     );
@@ -431,23 +456,34 @@ export default function ReportBuilderMockup({
         blocks: [...item.blocks],
       }));
       let targetIndex = index;
+      let area = frameInsets(current, index);
       let y =
         at?.y ??
         Math.max(
-          48,
+          area.top,
           ...pages[index].blocks.map((block) => block.y + block.height + 24),
         );
       let firstPage = index;
       inserted.forEach((source, blockIndex) => {
         const block = { ...source };
-        block.width = Math.min(block.width, size.width - 96);
-        block.height = Math.min(block.height, size.height - 96);
-        if (y + block.height > size.height - 48 && (!at || blockIndex > 0)) {
+        block.width = Math.min(
+          block.width,
+          size.width - area.left - area.right,
+        );
+        block.height = Math.min(
+          block.height,
+          size.height - area.top - area.bottom,
+        );
+        if (
+          y + block.height > size.height - area.bottom &&
+          (!at || blockIndex > 0)
+        ) {
           pages.push({ id: newPageIds[blockIndex], blocks: [] });
           targetIndex = pages.length - 1;
-          y = 48;
+          area = frameInsets(current, targetIndex);
+          y = area.top;
         }
-        block.x = clamp(at?.x ?? 48, 0, size.width - block.width);
+        block.x = clamp(at?.x ?? area.left, 0, size.width - block.width);
         block.y = clamp(y, 0, size.height - block.height);
         pages[targetIndex].blocks.push(block);
         y = block.y + block.height + 24;
@@ -576,6 +612,40 @@ export default function ReportBuilderMockup({
     setSelectedId(null);
     setPreview(false);
     setZoom(null);
+  }
+  function startFromTemplate(style: ReportFrameStyle) {
+    // A title the user already typed carries over to the new title page.
+    const title = report.title.trim();
+    replaceReport(
+      createTemplateReport(style, report, {
+        title: title === createBlankReport().title ? undefined : title,
+      }),
+    );
+    setNotice(
+      `Started from the ${reportDesign(style).name} template. Undo restores your previous draft.`,
+    );
+  }
+  function applyDesign(style: ReportFrameStyle | 'none') {
+    if (style === (report.frame?.style ?? 'none')) return;
+    if (style === 'none') {
+      const { frame: _frame, ...plain } = report;
+      void _frame;
+      commit(plain);
+      return;
+    }
+    const next = { ...report, frame: switchFrame(report.frame, style) };
+    commit(next);
+    // Designs keep about 16 px clear around their artwork.
+    const overlapping = blocksOutsideFrame(next, 16);
+    setNotice(
+      overlapping
+        ? `${reportDesign(style).name} page design applied. ${overlapping} ${overlapping === 1 ? 'block overlaps' : 'blocks overlap'} its border, header or footer.`
+        : `${reportDesign(style).name} page design applied.`,
+    );
+  }
+  function setFrameAccent(accent: string) {
+    if (report.frame && accent !== report.frame.accent)
+      commit({ ...report, frame: { ...report.frame, accent } });
   }
   useImperativeHandle(ref, () => ({
     addAssets,
@@ -771,10 +841,19 @@ export default function ReportBuilderMockup({
         )
           return current;
         const size = pageDimensions(current);
+        const area = frameInsets(current, current.pages.indexOf(targetPage));
         imageBlock.width = Math.min(imageBlock.width, size.width - 80);
         imageBlock.height = Math.min(imageBlock.height, size.height - 80);
-        imageBlock.x = clamp(at?.x ?? 48, 0, size.width - imageBlock.width);
-        imageBlock.y = clamp(at?.y ?? 64, 0, size.height - imageBlock.height);
+        imageBlock.x = clamp(
+          at?.x ?? area.left,
+          0,
+          size.width - imageBlock.width,
+        );
+        imageBlock.y = clamp(
+          at?.y ?? area.top + 16,
+          0,
+          size.height - imageBlock.height,
+        );
         return {
           ...current,
           pages: current.pages.map((item) =>
@@ -1034,6 +1113,12 @@ export default function ReportBuilderMockup({
                 Insert
               </button>
               <button
+                className={cn(libraryTab === 'templates' && 'is-active')}
+                onClick={() => setLibraryTab('templates')}
+              >
+                Templates
+              </button>
+              <button
                 className={cn(libraryTab === 'pages' && 'is-active')}
                 onClick={() => setLibraryTab('pages')}
               >
@@ -1163,6 +1248,102 @@ export default function ReportBuilderMockup({
                     </>
                   )}
                 </>
+              ) : libraryTab === 'templates' ? (
+                <>
+                  <div className="rb-section-heading">
+                    <h2>Start from a template</h2>
+                    <p>
+                      A designed border, header and title page to build on. Undo
+                      restores your current draft.
+                    </p>
+                  </div>
+                  <div className="rb-template-grid">
+                    {REPORT_DESIGNS.map((design, index) => (
+                      <button
+                        key={design.style}
+                        className="rb-template"
+                        aria-label={`Start from the ${design.name} template`}
+                        onClick={() => startFromTemplate(design.style)}
+                      >
+                        <span className="rb-template-sheet">
+                          <ReportPageSvg
+                            report={templatePreviews[index]}
+                            page={templatePreviews[index].pages[0]}
+                          />
+                        </span>
+                        <strong>{design.name}</strong>
+                        <small>{design.detail}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rb-section-heading rb-library-subheading">
+                    <h2>Page design</h2>
+                  </div>
+                  <p className="rb-field-note">
+                    Change the border and header on every page. Your content
+                    stays where it is.
+                  </p>
+                  <fieldset
+                    className="rb-design-options"
+                    aria-label="Page design"
+                  >
+                    {[
+                      { style: 'none' as const, name: 'None' },
+                      ...REPORT_DESIGNS,
+                    ].map((design) => {
+                      const active =
+                        (report.frame?.style ?? 'none') === design.style;
+                      return (
+                        <button
+                          key={design.style}
+                          aria-pressed={active}
+                          className={cn(active && 'is-active')}
+                          onClick={() => applyDesign(design.style)}
+                        >
+                          {design.name}
+                        </button>
+                      );
+                    })}
+                  </fieldset>
+                  {report.frame && (
+                    <>
+                      <div className="rb-section-heading rb-library-subheading">
+                        <h2>Accent colour</h2>
+                      </div>
+                      <fieldset
+                        className="rb-accent-swatches"
+                        aria-label="Accent colour"
+                      >
+                        {FRAME_ACCENTS.map((accent) => {
+                          const active =
+                            report.frame?.accent.toLowerCase() === accent.value;
+                          return (
+                            <button
+                              key={accent.value}
+                              aria-pressed={active}
+                              aria-label={accent.name}
+                              title={accent.name}
+                              className={cn(active && 'is-active')}
+                              style={{ background: accent.value }}
+                              onClick={() => setFrameAccent(accent.value)}
+                            />
+                          );
+                        })}
+                        <label className="rb-accent-custom" title="Custom">
+                          <input
+                            type="color"
+                            aria-label="Custom accent colour"
+                            value={report.frame.accent}
+                            onChange={(event) =>
+                              setFrameAccent(event.target.value)
+                            }
+                          />
+                          <Plus size={12} />
+                        </label>
+                      </fieldset>
+                    </>
+                  )}
+                </>
               ) : (
                 <>
                   <div className="rb-section-heading">
@@ -1281,7 +1462,29 @@ export default function ReportBuilderMockup({
                   onDragLeave={() => setDragOver(false)}
                   onDrop={onDrop}
                 >
-                  <div className="rb-page-margin" />
+                  {report.frame && (
+                    <svg
+                      className="rb-frame"
+                      width={width}
+                      height={height}
+                      viewBox={`0 0 ${width} ${height}`}
+                      aria-hidden="true"
+                    >
+                      <ReportFrameArt
+                        report={report}
+                        pageIndex={shownPageIndex}
+                      />
+                    </svg>
+                  )}
+                  <div
+                    className="rb-page-margin"
+                    style={{
+                      top: insets.top - 8,
+                      right: insets.right - 8,
+                      bottom: insets.bottom - 8,
+                      left: insets.left - 8,
+                    }}
+                  />
                   {!page.blocks.length && (
                     <div className="rb-empty">
                       <span>
@@ -1293,9 +1496,21 @@ export default function ReportBuilderMockup({
                         <br />
                         and bring your analysis together.
                       </p>
-                      <button onClick={() => addBlock('text')}>
-                        Add your first block <Plus size={15} />
-                      </button>
+                      <div className="rb-empty-actions">
+                        <button onClick={() => addBlock('text')}>
+                          Add your first block <Plus size={15} />
+                        </button>
+                        {report.pages.every((item) => !item.blocks.length) && (
+                          <button
+                            onClick={() => {
+                              setLibraryTab('templates');
+                              setSelectedId(null);
+                            }}
+                          >
+                            Browse templates <LayoutTemplate size={15} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                   {page.blocks.map((block) => (
@@ -1921,6 +2136,36 @@ export default function ReportBuilderMockup({
                         commit({ ...report, background })
                       }
                     />
+                    <Field label="Page design">
+                      <select
+                        value={report.frame?.style ?? 'none'}
+                        onChange={(event) =>
+                          applyDesign(
+                            event.target.value as ReportFrameStyle | 'none',
+                          )
+                        }
+                      >
+                        <option value="none">None</option>
+                        {REPORT_DESIGNS.map((design) => (
+                          <option key={design.style} value={design.style}>
+                            {design.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    {report.frame && (
+                      <ColorField
+                        label="Design accent"
+                        value={report.frame.accent}
+                        onChange={setFrameAccent}
+                      />
+                    )}
+                    <button
+                      className="rb-text-button"
+                      onClick={() => setLibraryTab('templates')}
+                    >
+                      Browse templates
+                    </button>
                   </section>
                   <section className="rb-property-section">
                     <h3>Canvas helpers</h3>

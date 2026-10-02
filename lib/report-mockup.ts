@@ -55,12 +55,21 @@ export interface ReportPage {
   blocks: ReportBlock[];
 }
 
+export type ReportFrameStyle = 'classic' | 'drawing' | 'banner' | 'sidebar';
+
+/** A page design: border, header and footer drawn behind every page's blocks. */
+export interface ReportFrame {
+  style: ReportFrameStyle;
+  accent: string;
+}
+
 export interface ReportDocument {
   title: string;
   pages: ReportPage[];
   pageSize: 'a4' | 'letter';
   orientation: 'portrait' | 'landscape';
   background: string;
+  frame?: ReportFrame;
 }
 
 const sampleIllustration = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" viewBox="0 0 720 440">
