@@ -29,7 +29,8 @@ There are no server API routes or cloud signal uploads.
   `components/workflow-history.tsx` is a virtualized two-level chronological tree;
   `lib/workflow-tree.ts` bounds output previews and reveals selected members.
   Do not encode dependency depth as recursive indentation or regroup by names.
-  Inspection and checked processing inputs are independent. Explicit parent
+  Inspection and checked processing inputs are independent; Ctrl/Shift+click
+  and row check boxes in History edit only the checked inputs. Explicit parent
   navigation clears search; opening a search result preserves matching context.
   Lineage-filtered trees show only contributing outputs, not batch siblings.
   One top bar holds the recording scope, Undo/Redo (Ctrl+Z/Ctrl+Y), the four

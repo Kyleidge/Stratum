@@ -89,7 +89,11 @@ or cancelling a drag does not change the selection.
 
 Select a step to plot its outputs. The dock below the plot lists them under
 **Outputs**, with exact **Samples** and saved **Settings**; use checkboxes for
-batch selection. Browsing normally preserves checked inputs. The inspector on the
+batch selection. In History, **Ctrl+click** signals (or their row check boxes)
+to check several from any steps or recordings, **Shift+click** to check a range,
+or **Ctrl+click** a step for all its signals. A bar below the tree then offers
+**Value** and **Derive**, and right-clicking a checked row offers Value, Derive
+and Segment for every checked signal. Browsing normally preserves checked inputs. The inspector on the
 right shows the selection's properties, its lineage back to the original
 recordings and the operations that use it. **Inputs and originals**, **Show
 lineage in tree**, and **Used by later operations** are also in Inspect / export.
