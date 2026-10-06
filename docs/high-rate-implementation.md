@@ -90,9 +90,13 @@ after the leaves. An abandoned import is recovered using the existing source
 ownership rules, including its index data. Undo/Redo retain indexes alongside
 their original source columns.
 
-The index read cache is capped at 8 MiB using conservative object accounting.
-Root construction stops when its base-block accounting exceeds 4 MiB; those
-recordings continue through the streaming path. Import accounts all channels
+Index format version 2 packs each block into 13 doubles in a `Float64Array`
+(104 bytes per 4,096 samples at the base level), replacing version 1's objects.
+The index read cache is capped at 32 MiB. Root construction stops when its base
+blocks exceed 64 MiB, about 2.6 billion channel samples; those recordings
+continue through the streaming path. Version 1 allowed about 54 million, so a
+15-minute 100 kHz channel had no index. See
+[plot interaction performance](plot-interaction.md). Import accounts all channels
 together; later rebuilds account one channel at a time. This keeps index
 construction bounded rather than allowing unbounded auxiliary memory growth.
 Index disk storage grows with imported samples and counts against browser quota.

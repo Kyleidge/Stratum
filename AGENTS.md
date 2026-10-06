@@ -247,8 +247,13 @@ There are no server API routes or cloud signal uploads.
   Index keys share source ownership with raw chunks but are excluded from backups.
   Publish roots only after their leaves; index recovery never changes workflow
   history. Summaries cover original samples; partial boundary blocks use exact
-  data. Drawing candidates are not measurement or export samples. The index read
-  cache is capped at 8 MiB; oversized index builds fall back to streaming reads.
+  data. Drawing candidates are not measurement or export samples. Blocks are
+  packed in `Float64Array`s (v2 keys; a rebuild deletes the v1 entry). The read
+  cache is capped at 32 MiB and builds at 64 MiB of base blocks (about 2.6
+  billion channel samples); larger builds fall back to streaming reads.
+  `lib/plot-view.ts` draws loaded detail where it reaches while a moved view
+  loads, with overview points only beyond it. `docs/plot-interaction.md` has
+  the UI pan/zoom benchmark.
 - `lib/engine-yield.ts`: cooperative worker yielding with `scheduler.yield()` and
   a timer fallback. Preserve actual task boundaries so cancellation can arrive.
 - `components/segmentation-editor.tsx`: trigger/range/window editor and saved

@@ -176,6 +176,15 @@ void test('live plots retain full coverage and coalesce slow pan reads without s
   assert.deepEqual(calls[1].message.ranges!.trace, [20, 30]);
   await finish(1);
   const exact = view.detail;
+  // A view moved partly beyond loaded detail keeps that detail where it reaches.
+  assert.deepEqual(plotDrawing('trace', [25, 35], view)!.points, [
+    [0, 1],
+    [20, 1],
+    [25, NaN],
+    [30, 2],
+    [50, NaN],
+    [100, 2],
+  ]);
   loader.update(jobs(31, 41), true);
   t.mock.timers.tick(100);
   assert.deepEqual(calls[2].message.ranges!.trace, [26, 46]);

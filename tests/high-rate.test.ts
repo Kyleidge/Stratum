@@ -5,6 +5,15 @@ import { SignalEngine } from '../lib/signal-engine';
 import { Envelope } from '../lib/signal-math';
 import { measurePlot } from '../lib/plot-measurement';
 import { chunkWindow } from '../lib/signal-range';
+import {
+  IndexBuilder,
+  PLOT_BLOCK_SIZE,
+  blockCount,
+  groupBlocks,
+  indexLeaves,
+  readBlock,
+  usableIndex,
+} from '../lib/plot-index';
 import type { Point, Summary } from '../lib/signal-types';
 
 const rows = 300123;
@@ -128,6 +137,68 @@ void test('100 kHz persisted overviews preserve extrema, gaps and exact sample s
     }
   } finally {
     IDBObjectStore.prototype.get = originalGet;
+  }
+});
+
+void test('packed plot index blocks match a direct scan of their samples', () => {
+  const length = 16384 * 3 + 777;
+  const time = new Float64Array(length),
+    values = new Float64Array(length);
+  for (let i = 0; i < length; i++) {
+    time[i] = i / 100000;
+    values[i] = i % 211 === 0 || (i >= 300 && i < 600) ? NaN : Math.sin(i / 7);
+  }
+  values[40000] = 50;
+  values[40001] = -50;
+  const builder = new IndexBuilder();
+  for (let start = 0; start < length; start += 16384)
+    builder.push(
+      groupBlocks(
+        indexLeaves({
+          time: time.subarray(start, start + 16384),
+          values: values.subarray(start, start + 16384),
+        }),
+      ),
+    );
+  const index = builder.finish(length);
+  assert.equal(usableIndex(index, length + 1), false);
+  assert.ok(usableIndex(index, length));
+  for (const [level, blocks] of index.levels.entries()) {
+    const size = PLOT_BLOCK_SIZE * 16 ** level;
+    assert.equal(blockCount(blocks), Math.ceil(length / size));
+    for (let b = 0; b < blockCount(blocks); b++) {
+      const block = readBlock(blocks, b);
+      const from = b * size,
+        to = Math.min(length, from + size);
+      let count = 0,
+        total = 0,
+        integral = 0,
+        min = Infinity,
+        max = -Infinity,
+        gap: number | undefined;
+      for (let i = from; i < to; i++) {
+        if (!Number.isFinite(values[i])) {
+          gap = time[i];
+          continue;
+        }
+        count++;
+        total += values[i];
+        min = Math.min(min, values[i]);
+        max = Math.max(max, values[i]);
+        if (i > from && Number.isFinite(values[i - 1]))
+          integral += (values[i - 1] + values[i]) / 2 / 100000;
+      }
+      assert.equal(block.count, count);
+      assert.equal(block.first[0], time[from]);
+      assert.equal(block.last[0], time[to - 1]);
+      assert.equal(block.min[1], min);
+      assert.equal(block.max[1], max);
+      assert.equal(block.gap?.[0], gap);
+      assert.ok(Math.abs(block.total - total) < 1e-9 * Math.max(1, count));
+      assert.ok(
+        Math.abs(block.integral - integral) < 1e-12 * Math.max(1, count),
+      );
+    }
   }
 });
 
@@ -259,16 +330,31 @@ void test('missing indexes rebuild without journaling, survive Undo and stay out
   const before = structuredClone(engine.project);
   const db = await openDatabase(database);
   t.after(() => db.close());
+  // A workspace from before the packed format: only unreadable v1 entries.
   await transaction(db, (store) => {
-    store.delete([source.id, 0, 'plot-index-v1:0']);
-    store.delete([source.id, 0, 'plot-leaves-v1:0']);
+    store.delete([source.id, 0, 'plot-index-v2:0']);
+    store.delete([source.id, 0, 'plot-leaves-v2:0']);
+    store.put({ version: 1 }, [source.id, 0, 'plot-index-v1:0']);
+    store.put([], [source.id, 3, 'plot-leaves-v1:0']);
   });
   const expected = expectedPlot([source.start, source.end]);
   summaryEqual((await engine.plot(id)).summary, expected.summary);
+  const legacy = await new Promise<string[]>((resolve, reject) => {
+    const request = db.transaction('chunks').objectStore('chunks').getAllKeys();
+    request.onsuccess = () =>
+      resolve(
+        request.result
+          .map((key) => String((key as unknown[])[2]))
+          .filter((name) => name.startsWith('plot-')),
+      );
+    request.onerror = () => reject(request.error);
+  });
+  assert.equal(legacy.length, source.chunks + 1);
+  assert.ok(legacy.every((name) => name.includes('-v2:')));
   assert.deepEqual(engine.project, before);
   const archive = await (await engine.backupWorkspace()).text();
   assert.ok(
-    !archive.includes('plot-index-v1:') && !archive.includes('plot-leaves-v1:'),
+    !archive.includes('plot-index-v2:') && !archive.includes('plot-leaves-v2:'),
   );
   await engine.travel('undo');
   assert.equal(
@@ -279,7 +365,7 @@ void test('missing indexes rebuild without journaling, survive Undo and stay out
   await engine.travel('redo');
   summaryEqual((await engine.plot(id)).summary, expected.summary);
   await transaction(db, (store) =>
-    store.delete([source.id, 0, 'plot-leaves-v1:0']),
+    store.delete([source.id, 0, 'plot-leaves-v2:0']),
   );
   engine.close();
   const reopened = new SignalEngine(undefined, database);
@@ -297,7 +383,7 @@ void test('cancelled index recovery leaves samples and history intact', async (t
   const db = await openDatabase(database);
   t.after(() => db.close());
   await transaction(db, (store) =>
-    store.delete([source.id, 0, 'plot-index-v1:0']),
+    store.delete([source.id, 0, 'plot-index-v2:0']),
   );
   const before = structuredClone(engine.project);
   const timer = setTimeout(() => {
