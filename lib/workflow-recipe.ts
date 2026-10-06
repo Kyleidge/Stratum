@@ -1307,12 +1307,29 @@ export async function recipeHash(recipe: WorkflowRecipe): Promise<string> {
 // Binding a recipe to one recording
 
 /** CSV header parsing shared with the importer: "Torque [Nm]" → name and unit. */
-export function headerChannel(header: string): { name: string; unit: string } {
-  const match = header.match(/^(.*?)\s*\[([^\]]+)\]$/);
-  return { name: match?.[1].trim() || header, unit: match?.[2] || '—' };
-}
+export { headerChannel } from './formats/recording';
 
 const comparable = (text: string) => text.trim().toLowerCase();
+
+/**
+ * The table of a multi-group file (MDF, TDMS …) that binds the most recipe
+ * channels; the first wins a tie. A batch item processes one recording.
+ */
+export function bestTable(
+  recipe: Pick<WorkflowRecipe, 'channels'>,
+  tables: { channels: { name: string; unit: string }[] }[],
+  mapping: Readonly<Record<string, string>> = {},
+): number {
+  let best = 0;
+  let bound = -1;
+  tables.forEach((table, index) => {
+    const count = bindChannels(recipe, table.channels, mapping).filter(
+      (binding) => !binding.problem,
+    ).length;
+    if (count > bound) [best, bound] = [index, count];
+  });
+  return best;
+}
 
 export type ChannelBinding = {
   alias: string;

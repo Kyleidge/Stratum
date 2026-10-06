@@ -258,6 +258,17 @@ There are no server API routes or cloud signal uploads.
   display offsets, but keep workspace outputs on their current time axis.
   Start and end triggers
   independently select raw/derived signals, edges, thresholds, and signed offsets.
+- `lib/formats/`: recording-file readers (see `docs/file-formats.md`).
+  `index.ts` is the registry (content signatures before extensions, lazily
+  loaded parsers, `RECORDING_ACCEPT`); `recording.ts` the contract: a file
+  holds tables, each one time axis in seconds, streamed as bounded blocks via
+  `BlobBytes`. Readers: `delimited.ts` (CSV, semicolons with decimal commas,
+  tabs, UTF-16/Windows-1252), `mdf.ts` (MDF 4/3), `tdms.ts`, `mat.ts`,
+  `xlsx.ts`, `wav.ts`. Never load a whole file; skip unsupported channels with
+  a note rather than guessing. `SignalEngine.importRecording` validates times
+  and publishes every chosen table in one commit; multi-table files open
+  `components/workflow-import-dialog.tsx`, and batch items use `bestTable`.
+  Fixtures in `tests/fixtures/formats/` come from its `generate_*.py` scripts.
 - `lib/signal-engine.ts`: append-only IndexedDB columns, CSV import, lazy derived
   evaluation, segmentation, and samples/summary exports. `signal-math.ts` holds numerical
   helpers; `signal-types.ts` defines the domain and worker protocol.
@@ -385,8 +396,9 @@ Do not claim multi-gigabyte throughput from architectural design alone. Raw
 columns use 16,384-sample chunks and a 16 MiB read cache. New raw imports have
 persistent plot indexes; older/restored recordings build them on a full plot.
 Stateful derived evaluation still scans its required history, and browser storage
-quota applies. There is no plugin runtime or native binary measurement-file
-importer yet. See `docs/high-rate-performance.md` and `tests/high-rate.test.ts`.
+quota applies. There is no plugin runtime; binary measurement files are read
+by the TypeScript readers in `lib/formats/`. See `docs/high-rate-performance.md`
+and `tests/high-rate.test.ts`.
 
 ## Development conventions
 

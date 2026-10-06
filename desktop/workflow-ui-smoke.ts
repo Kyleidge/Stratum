@@ -1982,7 +1982,7 @@ export async function workflowUiSmoke() {
       new File(['t,time-b [V]\n100,1\n100.5,2\n101,3\n102,5'], 'Time B.csv'),
     );
     const timeImport = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Import CSV recording"]',
+      'input[aria-label="Import recordings"]',
     )!;
     timeImport.files = timeFiles.files;
     timeImport.dispatchEvent(new Event('change', { bubbles: true }));

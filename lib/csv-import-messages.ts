@@ -1,3 +1,5 @@
+import { MAX_RECORDING_CHANNELS } from './formats/recording';
+
 /**
  * Plain-language CSV import messages. Each names the cause and, where it
  * helps, the expected format; the engine prefixes the file name.
@@ -11,24 +13,12 @@ function quote(text: string) {
   return `“${trimmed.length > 40 ? `${trimmed.slice(0, 40)}…` : trimmed}”`;
 }
 
-/** The delimiter of a header row that did not split on commas, if any. */
-function otherDelimiter(line: string) {
-  if (line.includes(';')) return 'semicolons (;)';
-  if (line.includes('\t')) return 'tabs';
-  if (line.includes('|')) return 'vertical bars (|)';
-  return '';
-}
-
 /** Validates the header row; returns a message for the first problem. */
 export function headerProblem(headers: string[]): string | undefined {
-  if (headers.length === 1) {
-    const delimiter = otherDelimiter(headers[0]);
-    return delimiter
-      ? `Columns are separated by ${delimiter}, not commas. Export it again as comma-separated CSV with decimal points. ${FORMAT_HINT}`
-      : `The header row has only one column. ${FORMAT_HINT}`;
-  }
-  if (headers.length > 256)
-    return `The header row has ${headers.length.toLocaleString()} columns; a recording can have time and at most 255 signals.`;
+  if (headers.length === 1)
+    return `The header row has only one column. Separate columns with commas, semicolons or tabs. ${FORMAT_HINT}`;
+  if (headers.length > MAX_RECORDING_CHANNELS + 1)
+    return `The header row has ${headers.length.toLocaleString()} columns; a recording can have time and at most ${MAX_RECORDING_CHANNELS.toLocaleString()} signals.`;
   const empty = headers.findIndex((header) => !header);
   if (empty >= 0)
     return `Column ${empty + 1} has no header. Give every column a name, such as Torque [Nm].`;
@@ -67,6 +57,19 @@ export function timeProblem(
       ? `Row ${row}: time ${quote(text)} uses a decimal comma. Use a decimal point (0.5).`
       : `Row ${row}: time ${quote(text)} is not a number of seconds.`;
   return `Row ${row}: time ${value.toLocaleString()} s does not come after the previous time ${previous.toLocaleString()} s. Times must increase from row to row.`;
+}
+
+/** Binary formats count samples from 1 within a named table. */
+export function sampleTimeProblem(
+  table: string,
+  sample: number,
+  time: number,
+  previous: number,
+) {
+  const where = `${table ? `${table}, s` : 'S'}ample ${sample.toLocaleString()}`;
+  return Number.isFinite(time)
+    ? `${where}: time ${time.toLocaleString()} s does not come after the previous time ${previous.toLocaleString()} s. Times must increase from sample to sample.`
+    : `${where} has no valid time.`;
 }
 
 export function valueProblem(row: number, header: string, cell: string) {

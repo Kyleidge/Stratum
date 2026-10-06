@@ -10,7 +10,7 @@ creates new signals or values.
 ### Start with the example recording
 
 Launch Stratum. The welcome screen offers three ways to start: **Explore the
-example recording**, **Import a CSV** and **Test many recordings**. Choose
+example recording**, **Import a recording** and **Test many recordings**. Choose
 **Explore the example recording**. The motor-test example loads seven completed
 steps, from original signals to smoothing, segments and values.
 
@@ -34,9 +34,9 @@ recordings.
 
 ### Import your own data
 
-Choose **Import a CSV** on the welcome screen or **Import** in the top bar, or
-drop .csv files on the window. Use a comma-separated UTF-8 file, with time in
-seconds in the first column and units in square brackets in the header:
+Choose **Import a recording** on the welcome screen or **Import** in the top
+bar, or drop files on the window. For CSV, use time in seconds in the first
+column and units in square brackets in the header:
 
 ```csv
 Time [s],Speed [rpm],Torque [Nm]
@@ -46,12 +46,21 @@ Time [s],Speed [rpm],Torque [Nm]
 ```
 
 Times must increase strictly, with no duplicates. Leave missing signal cells
-empty. The import step is named after the file, such as **Import
-SN-24001.csv**. If a file cannot be imported, the message names the file, the
-row and the cause: for example a file separated by semicolons, a date or clock
-time instead of seconds, or text in a number column. A header without a unit
-still imports, with a reminder to add one. Work is saved locally on this
-device.
+empty. Semicolon-separated files with decimal commas, tab-separated .tsv/.txt
+(including Excel's Unicode text) and Windows-1252 text also import. The import
+step is named after the file, such as **Import SN-24001.csv**. If a file cannot
+be imported, the message names the file, the row and the cause: for example a
+date or clock time instead of seconds, or text in a number column. A header
+without a unit still imports, with a reminder to add one. Work is saved locally
+on this device.
+
+Measurement files import directly too: **MDF 4 and 3** (.mf4, .mdf, .dat),
+**NI TDMS**, **MATLAB .mat** (v4 to v7), **WAV** and **Excel .xlsx**. Their
+channel names and units come from the file. When a file holds several groups
+with their own time axes, such as an MDF file with a fast DAQ group and a slow
+CAN group, a dialog lists them: each group you choose becomes a recording,
+named like **Run 7.mf4 · Fast DAQ**, and the whole import is one Undo step. See
+[file-formats.md](file-formats.md) for what each reader supports.
 
 After the first import, a **Next: Derive · Segment · Value** strip above the
 plot opens each operation. The screenshots in this guide use the example

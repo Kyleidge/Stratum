@@ -130,7 +130,7 @@ globalThis.onmessage = (
             await engine.example(r.key);
             break;
           case 'import':
-            await engine.importCsv(r.file);
+            await engine.importRecording(r.file, { tables: r.tables });
             break;
           case 'derive':
             await engine.derive(r.parentId, r.operation, r.parameter);

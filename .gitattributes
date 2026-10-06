@@ -3,3 +3,10 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.pdf binary
+# Recording-format test fixtures are byte-exact.
+*.mf4 binary
+*.mdf binary
+*.tdms binary
+*.mat binary
+*.wav binary
+*.xlsx binary

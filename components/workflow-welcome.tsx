@@ -15,7 +15,7 @@ import { WorkflowAlert } from '@/components/workflow-alert';
 
 /**
  * The empty workspace: what Stratum is for and three ways to start. Dropped
- * CSV files are imported by the workspace's own drop handler.
+ * Recordings are imported by the workspace's own drop handler.
  */
 export function WorkflowWelcome({
   busy,
@@ -52,7 +52,7 @@ export function WorkflowWelcome({
         <li>
           <Upload size={15} aria-hidden />
           <strong>Import</strong>
-          <span>a CSV recording</span>
+          <span>a recording</span>
         </li>
         <li aria-hidden className="workflow-welcome-arrow">
           <ArrowRight size={14} />
@@ -124,17 +124,21 @@ export function WorkflowWelcome({
               aria-describedby="workflow-welcome-import"
               onClick={onImport}
             >
-              Import a CSV
+              Import a recording
             </button>
           </h2>
           <div id="workflow-welcome-import">
             <p>
-              Time in seconds first, then one column per signal with its unit in
-              brackets:
+              A CSV holds time in seconds first, then one column per signal with
+              its unit in brackets:
             </p>
             <code>{CSV_FORMAT_EXAMPLE},…</code>
+            <p>
+              MDF 4 and 3, TDMS, MATLAB .mat, WAV, Excel .xlsx and tab- or
+              semicolon-separated text import directly.
+            </p>
             <p className="workflow-welcome-drop">
-              <Upload size={13} aria-hidden /> Or drop .csv files here
+              <Upload size={13} aria-hidden /> Or drop files here
             </p>
           </div>
         </div>

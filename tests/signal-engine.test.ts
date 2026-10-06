@@ -50,10 +50,9 @@ void test('CSV errors name the file, the row and the cause', async (t) => {
   t.after(() => e.close());
   const failures: [string, RegExp][] = [
     [
-      'Time [s];Speed [rpm]\n0;1\n1;2',
-      /SN\.csv: Columns are separated by semicolons \(;\), not commas\..*Time \[s\],Speed \[rpm\]/,
+      'Time [s] Speed [rpm]\n0 1\n1 2',
+      /SN\.csv: The header row has only one column\. Separate columns with commas, semicolons or tabs\..*Time \[s\],Speed \[rpm\]/,
     ],
-    ['Time [s]\tSpeed\n0\t1\n1\t2', /separated by tabs/],
     [
       'Time,Speed\n2024-01-02 10:00:00,1\n2024-01-02 10:00:01,2',
       /SN\.csv: Row 2: time “2024-01-02 10:00:00” is a date or clock time\./,
@@ -69,6 +68,63 @@ void test('CSV errors name the file, the row and the cause', async (t) => {
   for (const [text, message] of failures)
     await assert.rejects(e.importCsv(new File([text], 'SN.csv')), message);
   assert.equal(e.project.sources.length, 0);
+});
+void test('semicolon, tab and bar text import with decimal commas and encodings', async (t) => {
+  const e = new SignalEngine(undefined, crypto.randomUUID());
+  await e.open();
+  t.after(() => e.close());
+  const read = async (file: File) => {
+    const source = await e.importCsv(file);
+    const nodes = source.channels.map((id) => e.find(id));
+    return {
+      source,
+      labels: nodes.map((node) => `${node.name} [${node.unit}]`),
+      values: await Promise.all(nodes.map((node) => values(e, node.id))),
+    };
+  };
+  const semicolon = await read(
+    new File(
+      [
+        'Zeit [s];Drehzahl [1/min];Moment [Nm]\r\n0;1,5;2\r\n0,5;-2,25;\r\n1;3e2;4',
+      ],
+      'de.csv',
+    ),
+  );
+  assert.deepEqual(semicolon.labels, ['Drehzahl [1/min]', 'Moment [Nm]']);
+  assert.deepEqual(semicolon.values, [
+    [1.5, -2.25, 300],
+    [2, NaN, 4],
+  ]);
+  assert.deepEqual([semicolon.source.start, semicolon.source.end], [0, 1]);
+  const tabbed = await read(new File(['t\ta [V]\n0\t1\n1\t2'], 'run.tsv'));
+  assert.deepEqual(tabbed.values, [[1, 2]]);
+  const bars = await read(new File(['t|"a|b [V]"\n0|1\n1|2'], 'bars.txt'));
+  assert.deepEqual(bars.labels, ['a|b [V]']);
+  // Excel's “Unicode text” is tab-separated UTF-16 with a byte-order mark.
+  const utf16 = new Uint8Array([
+    0xff,
+    0xfe,
+    ...'t\tTemp [°C]\r\n0\t20,5\r\n1\t21\r\n'
+      .split('')
+      .flatMap((c) => [c.charCodeAt(0), 0]),
+  ]);
+  const unicode = await read(new File([utf16], 'excel.txt'));
+  assert.deepEqual(unicode.labels, ['Temp [°C]']);
+  assert.deepEqual(unicode.values, [[20.5, 21]]);
+  // Windows-1252 text (° is 0xB0) is read without an encoding error.
+  const latin = new Uint8Array([
+    ...new TextEncoder().encode('t,Temp ['),
+    0xb0,
+    ...new TextEncoder().encode('C]\n0,1\n1,2\n'),
+  ]);
+  assert.deepEqual((await read(new File([latin], 'latin.csv'))).labels, [
+    'Temp [°C]',
+  ]);
+  // Decimal commas are not numbers where commas separate columns.
+  await assert.rejects(
+    e.importCsv(new File(['t,a\n0,1\n"0,5",2'], 'comma.csv')),
+    /comma\.csv: Row 3: time “0,5” uses a decimal comma/,
+  );
 });
 void test('power and BSFC use correct units and reject nonpositive power', () => {
   assert.ok(Math.abs(power(100, 3000) - Math.PI * 10) < 1e-10);

@@ -1,9 +1,9 @@
-import { CsvParser } from './signal-math';
+import { openRecording } from './formats/index';
 import { csvText } from './workflow-delivery';
 import { WorkflowIndex } from './workflow-history';
 import {
+  bestTable,
   bindChannels,
-  headerChannel,
   itemIdFromFileName,
   parseWorkflow,
   type ChannelBinding,
@@ -27,16 +27,6 @@ import type {
   WorkflowStep,
 } from './workflow-types';
 
-/** Column names from the first line only; the file is not imported. */
-export async function readHeader(file: Blob): Promise<string[]> {
-  const text = await file.slice(0, 65536).text();
-  const end = text.search(/\r?\n/);
-  const first = (end < 0 ? text : text.slice(0, end)).replace(/^﻿/, '');
-  const parser = new CsvParser();
-  const [record] = parser.feed(`${first}\n`, true);
-  return (record ?? []).map((cell) => cell.trim());
-}
-
 export type PreflightColumn = { name: string; unit: string };
 export type PreflightItem = {
   key: string;
@@ -44,8 +34,12 @@ export type PreflightItem = {
   sourceId?: string;
   name: string;
   itemId: string;
-  /** Signal columns found in the header (the time column excluded). */
+  /** Signal columns found in the file (the time column excluded). */
   columns: PreflightColumn[];
+  /** The group processed in a multi-group file (MDF, TDMS …). */
+  table?: number;
+  /** That group's name, shown beside the file. */
+  group?: string;
   /** Columns chosen for missing channels: alias → column name. */
   mapping: Record<string, string>;
   bindings: ChannelBinding[];
@@ -53,13 +47,7 @@ export type PreflightItem = {
   error?: string;
 };
 
-export function preflightHeaders(
-  recipe: Pick<WorkflowRecipe, 'channels'>,
-  headers: string[],
-): ChannelBinding[] {
-  return bindChannels(recipe, headers.slice(1).map(headerChannel));
-}
-
+/** Reads the file's metadata only; the file is not imported. */
 export async function preflightFile(
   recipe: WorkflowRecipe,
   file: File,
@@ -72,22 +60,31 @@ export async function preflightFile(
     mapping: {},
   };
   try {
-    const headers = await readHeader(file);
-    if (headers.length < 2)
+    const { tables } = await openRecording(file);
+    const table = bestTable(recipe, tables);
+    const columns = tables[table]?.channels ?? [];
+    if (!columns.length)
       return {
         ...base,
         columns: [],
         bindings: [],
-        error: 'The first line has no signal columns.',
+        error: 'The file has no signal columns.',
       };
-    const columns = headers.slice(1).map(headerChannel);
-    return { ...base, columns, bindings: bindChannels(recipe, columns) };
-  } catch {
+    return {
+      ...base,
+      columns,
+      ...(tables.length > 1 ? { table, group: tables[table].name } : {}),
+      bindings: bindChannels(recipe, columns),
+    };
+  } catch (error) {
     return {
       ...base,
       columns: [],
       bindings: [],
-      error: 'The file could not be read as text.',
+      error:
+        error instanceof Error && error.message
+          ? error.message
+          : 'The file could not be read.',
     };
   }
 }
