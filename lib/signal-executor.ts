@@ -13,9 +13,58 @@ import type { Point, SeriesChunk, SignalNode } from './signal-types';
 
 type Instruction =
   | { kind: 'input'; index: number }
+  /** Read this input over a new window, replacing any earlier reader. */
+  | { kind: 'open'; index: number; range?: [number, number] }
   | { kind: 'output'; chunk: SeriesChunk };
 type Process = AsyncGenerator<Instruction, void, SeriesChunk | undefined>;
 const SIZE = 16384;
+
+/**
+ * Exact filter state, recorded every 16,384 inputs during a complete pass:
+ * the next input's time, inputs consumed before it, and up to three values.
+ */
+export const CHECKPOINT_INTERVAL = 16384;
+export const CHECKPOINT_FIELDS = 5;
+/** Running state that a window can only resume from a recorded checkpoint. */
+export const CHECKPOINTED = new Set([
+  'smooth',
+  'exponential',
+  'low-pass',
+  'high-pass',
+  'integral',
+  'resample',
+]);
+/** Stateful operations that evaluate a window from look-back alone. */
+const LOOKBACK = new Set(['median', 'derivative']);
+/** Inputs immediately before a resumed sample that the state depends on. */
+function historySize(node: SignalNode): number {
+  if (node.operation === 'smooth' || node.operation === 'median')
+    return node.parameters.value;
+  return ['derivative', 'integral', 'resample'].includes(node.operation)
+    ? 1
+    : 0;
+}
+
+export type ExecutionOptions = {
+  /** Checkpoints saved by an earlier complete pass of this exact recipe. */
+  checkpoints?: (node: SignalNode) => Float64Array | undefined;
+  /** Receives every checkpoint of a complete pass when its input ends. */
+  record?: (node: SignalNode, checkpoints: Float64Array) => void;
+  /** Typical sample spacing of a recorded channel, to size look-back reads. */
+  spacing?: (node: SignalNode) => number | undefined;
+};
+
+/** First index whose time is not before `time`. */
+function lowerBound(times: Float64Array, time: number): number {
+  let low = 0,
+    high = times.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (times[middle] < time) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 const pause = yieldEngine;
 const arrays = (points: Point[]): SeriesChunk => ({
   time: Float64Array.from(points.map((point) => point[0])),
@@ -28,13 +77,37 @@ export async function* executeSignal(
   raw: (id: string, range?: [number, number]) => AsyncGenerator<SeriesChunk>,
   check: () => void,
   range?: [number, number],
+  options: ExecutionOptions = {},
 ): AsyncGenerator<SeriesChunk> {
+  /** Estimated input spacing, from checkpoints or the nearest known rate. */
+  function inputSpacing(node: SignalNode, checkpoints?: Float64Array) {
+    const F = CHECKPOINT_FIELDS;
+    if (checkpoints && checkpoints.length >= 2 * F) {
+      const n = checkpoints.length - F;
+      const spacing =
+        (checkpoints[n] - checkpoints[n - F]) /
+        (checkpoints[n + 1] - checkpoints[n + 1 - F]);
+      if (spacing > 0) return spacing;
+    }
+    let current = graph.find(node.parents[0]);
+    for (let depth = 0; depth < 100000; depth++) {
+      if (current.operation === 'resample') return 1 / current.parameters.value;
+      if (
+        current.timeRecipe?.kind === 'resample' &&
+        current.timeRecipe.grid.kind === 'uniform'
+      )
+        return 1 / current.timeRecipe.grid.rate;
+      if (!current.parents.length) return options.spacing?.(current);
+      current = graph.find(current.parents[0]);
+    }
+    return undefined;
+  }
   async function* process(
     node: SignalNode,
     inputRange?: [number, number],
   ): Process {
     if (node.timeRecipe) {
-      yield* executeTime(node, graph, check);
+      yield* executeTime(node, graph, check, inputRange);
       return;
     }
     if (node.operation === 'raw') {
@@ -47,6 +120,17 @@ export async function* executeSignal(
       let b = yield { kind: 'input', index: 1 };
       let ai = 0;
       let bi = 0;
+      // Windowed inputs cover the window but may begin at different samples.
+      while (inputRange && a && b && a.time[ai] !== b.time[bi])
+        if (a.time[ai] < b.time[bi]) {
+          if (++ai === a.time.length) {
+            a = yield { kind: 'input', index: 0 };
+            ai = 0;
+          }
+        } else if (++bi === b.time.length) {
+          b = yield { kind: 'input', index: 1 };
+          bi = 0;
+        }
       let output: Point[] = [];
       while (a && b) {
         check();
@@ -73,7 +157,7 @@ export async function* executeSignal(
           output = [];
         }
       }
-      if (a || b) throw new Error('Input lengths differ.');
+      if ((a || b) && !inputRange) throw new Error('Input lengths differ.');
       if (output.length) yield { kind: 'output', chunk: arrays(output) };
       return;
     }
@@ -99,7 +183,144 @@ export async function* executeSignal(
     let gridIndex = 0;
     let minimum: Point | undefined;
     let maximum: Point | undefined;
-    let chunk = yield { kind: 'input', index: 0 };
+    let chunk: SeriesChunk | undefined;
+    const checkpointed = CHECKPOINTED.has(node.operation);
+    if (inputRange && (checkpointed || LOOKBACK.has(node.operation))) {
+      // Resume exactly: restore the state a complete pass would hold at a
+      // sample before the window, then process from there to the window end.
+      const F = CHECKPOINT_FIELDS;
+      const margin =
+        node.operation === 'resample' ? 2 / node.parameters.value : 0;
+      const start = inputRange[0] - margin,
+        end = inputRange[1] + margin;
+      const history = historySize(node);
+      const checkpoints = checkpointed
+        ? options.checkpoints?.(node)
+        : undefined;
+      let row = -1;
+      if (checkpoints) {
+        let low = 0,
+          high = checkpoints.length / F;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if (checkpoints[middle * F] < start) low = middle + 1;
+          else high = middle;
+        }
+        row = low - 1;
+      }
+      if (checkpointed && row < 0) {
+        // No saved state before the window: evaluate from the first sample.
+        yield { kind: 'open', index: 0, range: [-Infinity, end] };
+        chunk = yield { kind: 'input', index: 0 };
+      } else {
+        const anchor = checkpointed ? checkpoints![row * F] : start;
+        // A look-back operation also emits the sample before the window.
+        const need = checkpointed
+          ? Math.min(history, checkpoints![row * F + 1])
+          : history + 1;
+        const spacing = inputSpacing(node, checkpoints);
+        const parentStart = graph.ranges.get(node.parents[0])![0];
+        let span = !need
+          ? 0
+          : spacing && Number.isFinite(spacing)
+            ? (need + 2) * spacing * 1.25
+            : Infinity;
+        const times = new Float64Array(need),
+          values = new Float64Array(need);
+        while (true) {
+          const from = anchor - span;
+          yield { kind: 'open', index: 0, range: [from, end] };
+          const complete = from <= parentStart;
+          let seen = 0;
+          chunk = yield { kind: 'input', index: 0 };
+          let split = 0;
+          while (chunk) {
+            check();
+            split = lowerBound(chunk.time, anchor);
+            for (let i = Math.max(0, split - need); i < split; i++) {
+              times[seen % need] = chunk.time[i];
+              values[seen % need] = chunk.values[i];
+              seen++;
+            }
+            if (split < chunk.time.length) break;
+            chunk = yield { kind: 'input', index: 0 };
+          }
+          if (seen < need && !complete) {
+            // Too little look-back before the anchor: widen and read again.
+            span = Math.max(span * 4, (need + 2) * 1e-9);
+            if (!Number.isFinite(anchor - span)) span = Infinity;
+            continue;
+          }
+          const count = Math.min(seen, need);
+          const ordered = (source: Float64Array) =>
+            Float64Array.from({ length: count }, (_, k) => {
+              const position = seen - count + k;
+              return source[position % need];
+            });
+          let oldTimes = ordered(times),
+            oldValues = ordered(values);
+          let replay: Point | undefined;
+          if (!checkpointed && count) {
+            // The newest look-back sample is the neighbor before the window.
+            replay = [oldTimes[count - 1], oldValues[count - 1]];
+            oldTimes = oldTimes.subarray(0, count - 1);
+            oldValues = oldValues.subarray(0, count - 1);
+          }
+          const state = checkpointed ? row * F + 2 : 0;
+          if (mean)
+            mean.restore(
+              oldValues,
+              checkpoints![state],
+              checkpoints![state + 1],
+            );
+          median?.restore(oldValues);
+          exponential?.restore(checkpoints![state]);
+          rc?.restore(
+            checkpoints![state],
+            checkpoints![state + 1],
+            checkpoints![state + 2],
+          );
+          if (node.operation === 'integral') integrated = checkpoints![state];
+          if (node.operation === 'resample') gridIndex = checkpoints![state];
+          if (oldTimes.length) previous = [oldTimes.at(-1)!, oldValues.at(-1)!];
+          // Continue with the replayed neighbor and the rest of this chunk.
+          const rest = chunk
+            ? {
+                time: chunk.time.subarray(split),
+                values: chunk.values.subarray(split),
+              }
+            : { time: new Float64Array(), values: new Float64Array() };
+          const length = rest.time.length + (replay ? 1 : 0);
+          const time = new Float64Array(length),
+            value = new Float64Array(length);
+          if (replay) {
+            time[0] = replay[0];
+            value[0] = replay[1];
+          }
+          time.set(rest.time, replay ? 1 : 0);
+          value.set(rest.values, replay ? 1 : 0);
+          chunk = length ? { time, values: value } : undefined;
+          if (!chunk) chunk = yield { kind: 'input', index: 0 };
+          break;
+        }
+      }
+    } else chunk = yield { kind: 'input', index: 0 };
+    // A complete pass records exact state for later windows.
+    const recording = !inputRange && checkpointed && !!options.record;
+    const saved: number[] = [];
+    let consumed = 0;
+    const save = (time: number) => {
+      const state: number[] = mean
+        ? mean.state()
+        : exponential
+          ? [exponential.state()]
+          : rc
+            ? rc.state()
+            : node.operation === 'integral'
+              ? [integrated]
+              : [gridIndex];
+      saved.push(time, consumed, state[0] ?? 0, state[1] ?? 0, state[2] ?? 0);
+    };
     while (chunk) {
       check();
       if (node.operation === 'resample') {
@@ -107,6 +328,10 @@ export async function* executeSignal(
         for (let i = 0; i < chunk.time.length; i++) {
           const t = chunk.time[i];
           const input = chunk.values[i];
+          if (recording) {
+            if (consumed && consumed % CHECKPOINT_INTERVAL === 0) save(t);
+            consumed++;
+          }
           let next = origin + gridIndex / node.parameters.value;
           while (next <= t) {
             check();
@@ -151,6 +376,10 @@ export async function* executeSignal(
         for (let i = 0; i < chunk.time.length; i++) {
           let t = chunk.time[i];
           const input = chunk.values[i];
+          if (recording) {
+            if (consumed && consumed % CHECKPOINT_INTERVAL === 0) save(t);
+            consumed++;
+          }
           let value = input;
           switch (node.operation) {
             case 'crop':
@@ -221,6 +450,8 @@ export async function* executeSignal(
       }
       chunk = yield { kind: 'input', index: 0 };
     }
+    if (recording && saved.length)
+      options.record!(node, Float64Array.from(saved));
     if (node.operation === 'min-max' && minimum && maximum)
       yield {
         kind: 'output',
@@ -258,6 +489,14 @@ export async function* executeSignal(
       current.response = undefined;
       if (result.done) {
         stack.pop();
+        continue;
+      }
+      if (result.value.kind === 'open') {
+        const index = result.value.index;
+        current.inputs.set(
+          index,
+          frame(graph.find(current.node.parents[index]), result.value.range),
+        );
         continue;
       }
       if (result.value.kind === 'input') {

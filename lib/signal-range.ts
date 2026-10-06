@@ -1,5 +1,6 @@
 import type { SignalGraph } from './signal-graph';
 import type { SignalNode } from './signal-types';
+import { isBinaryOperation } from './signal-arithmetic';
 
 export type SignalRange = [number, number];
 
@@ -40,6 +41,8 @@ export function parentWindow(
       ) as SignalRange | undefined;
     if (recipe.kind === 'crop')
       return cropWindow([recipe.start, recipe.end], range);
+    // Shared-timestamp math reads both inputs over the same window.
+    if (recipe.kind === 'combine') return range;
     return undefined;
   }
   if (node.operation === 'crop')
@@ -51,8 +54,13 @@ export function parentWindow(
     const origin = graph.ranges.get(node.parents[0])![0];
     return [range[0] + origin, range[1] + origin];
   }
-  if (['scale', 'offset', 'absolute'].includes(node.operation)) return range;
-  // Filters, reductions, resampling and binary grids retain complete input state.
+  if (
+    ['scale', 'offset', 'absolute'].includes(node.operation) ||
+    isBinaryOperation(node.operation)
+  )
+    return range;
+  // Filters, reductions and resampling retain complete input state unless their
+  // process resumes from look-back or a checkpoint (see signal-executor.ts).
   return undefined;
 }
 

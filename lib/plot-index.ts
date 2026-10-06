@@ -255,9 +255,10 @@ export function indexBytes(value: PlotIndex | PlotBlocks): number {
     : value.levels.reduce((sum, level) => sum + level.byteLength, 0);
 }
 
+/** Summary blocks, or exact samples by storage position and time span. */
 export type PlotSlice =
   | { block: PlotBlock }
-  | { chunk: number; start: number; end: number };
+  | { chunk: number; start: number; end: number; from: number; to: number };
 
 /** Descend only overlapping branches; partial leaf blocks always read exact data. */
 export async function* indexSlices(
@@ -297,6 +298,8 @@ export async function* indexSlices(
             firstLeaf * PLOT_LEAF_SIZE + PLOT_BLOCK_SIZE,
             index.rows - chunk * STORAGE_CHUNK_SIZE,
           ),
+          from: first,
+          to: last,
         };
         continue;
       }
@@ -323,8 +326,79 @@ export async function* indexSlices(
               (i + 1) * PLOT_LEAF_SIZE,
               index.rows - chunk * STORAGE_CHUNK_SIZE,
             ),
+            from: childFirst,
+            to: childLast,
           };
       }
     }
+  }
+}
+
+/**
+ * Regroups a derived signal's output, which arrives in arbitrary pieces, into
+ * storage-sized index leaves. Leaves are held until the signal is long enough
+ * to index, so short outputs never write anything.
+ */
+export class LeafWriter {
+  private time = new Float64Array(STORAGE_CHUNK_SIZE);
+  private values = new Float64Array(STORAGE_CHUNK_SIZE);
+  private length = 0;
+  private pending: PlotBlocks[] = [];
+  private written = 0;
+  readonly builder = new IndexBuilder();
+  rows = 0;
+  constructor(
+    private minimumRows: number,
+    /** Store leaves for consecutive chunks starting at `first`, in one write. */
+    private write: (first: number, leaves: PlotBlocks[]) => Promise<void>,
+  ) {}
+  // Leaf writes are batched and not awaited one by one; finish() awaits them
+  // all, so a root is only published after every leaf it describes.
+  private writes: Promise<void>[] = [];
+  async add(chunk: SeriesChunk) {
+    for (let offset = 0; offset < chunk.time.length;) {
+      const count = Math.min(
+        STORAGE_CHUNK_SIZE - this.length,
+        chunk.time.length - offset,
+      );
+      this.time.set(chunk.time.subarray(offset, offset + count), this.length);
+      this.values.set(
+        chunk.values.subarray(offset, offset + count),
+        this.length,
+      );
+      this.length += count;
+      offset += count;
+      if (this.length === STORAGE_CHUNK_SIZE) await this.flush();
+    }
+  }
+  private async flush() {
+    if (!this.length) return;
+    const leaves = indexLeaves({
+      time: this.time.subarray(0, this.length),
+      values: this.values.subarray(0, this.length),
+    });
+    this.builder.push(groupBlocks(leaves));
+    this.rows += this.length;
+    this.length = 0;
+    this.pending.push(leaves);
+    if (this.rows >= this.minimumRows && this.pending.length >= 64)
+      this.store();
+  }
+  private store() {
+    if (!this.pending.length) return;
+    const write = this.write(this.written, this.pending);
+    // Surface a failure from finish(), not as an unhandled rejection.
+    write.catch(() => {});
+    this.writes.push(write);
+    this.written += this.pending.length;
+    this.pending = [];
+  }
+  /** The finished index, or undefined when the output is too short to need one. */
+  async finish(): Promise<PlotIndex | undefined> {
+    await this.flush();
+    if (this.rows < this.minimumRows) return undefined;
+    this.store();
+    await Promise.all(this.writes);
+    return this.builder.finish(this.rows);
   }
 }

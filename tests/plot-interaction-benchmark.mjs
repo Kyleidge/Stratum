@@ -9,6 +9,8 @@
 // BENCH_SECONDS (default 900) sets the 100 kHz one-channel fixture length.
 // BENCH_LABEL names the result file. BENCH_PROFILE reuses a browser profile and
 // skips the import when it already holds the recording (same BENCH_PORT).
+// BENCH_RAW=0 skips the recording's own scenarios; BENCH_DERIVED adds derived
+// signals (see below). BENCH_DIST serves another renderer build.
 // Results: outputs/plot-interaction-benchmark/<label>.json. See
 // docs/plot-interaction.md for the metrics.
 import { createServer } from 'node:http';
@@ -64,7 +66,7 @@ if (!existsSync(csv)) {
   closeSync(fd);
 }
 
-const dist = join(root, 'dist-desktop');
+const dist = process.env.BENCH_DIST ?? join(root, 'dist-desktop');
 const types = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -364,34 +366,92 @@ async function scenario(name, fn) {
   }
 }
 
-// Full-recording view.
-await fit();
-await scenario('hover-full', () => hover());
-await scenario('wheel-in-full', () => wheelBurst(-100));
-await scenario('wheel-out-to-full', () => wheelBurst(100, 16));
-for (const [name, span] of [
-  ['60s', 60],
-  ['1s', 1],
-  ['10ms', 0.01],
-]) {
-  await zoomTo(span);
-  log(`window ${name}:`, await windowSpan(), 's');
-  await scenario(`drag-${name}`, () => drag(0.75, 0.25));
-  await scenario(`drag-long-${name}`, async () => {
-    for (let i = 0; i < 3; i++) await drag(0.85, 0.15, 45);
-  });
-  await scenario(`wheel-in-${name}`, () => wheelBurst(-100, 6));
-  await scenario(`wheel-out-${name}`, () => wheelBurst(100, 10));
-  await scenario(`keys-pan-${name}`, async () => {
-    await focusChart();
-    for (let i = 0; i < 10; i++) {
-      await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(60);
-    }
-  });
+async function suite(prefix = '') {
+  // Full-recording view.
+  await fit();
+  await scenario(`${prefix}hover-full`, () => hover());
+  await scenario(`${prefix}wheel-in-full`, () => wheelBurst(-100));
+  await scenario(`${prefix}wheel-out-to-full`, () => wheelBurst(100, 16));
+  for (const [name, span] of [
+    ['60s', 60],
+    ['1s', 1],
+    ['10ms', 0.01],
+  ]) {
+    await zoomTo(span);
+    log(`window ${name}:`, await windowSpan(), 's');
+    await scenario(`${prefix}drag-${name}`, () => drag(0.75, 0.25));
+    await scenario(`${prefix}drag-long-${name}`, async () => {
+      for (let i = 0; i < 3; i++) await drag(0.85, 0.15, 45);
+    });
+    await scenario(`${prefix}wheel-in-${name}`, () => wheelBurst(-100, 6));
+    await scenario(`${prefix}wheel-out-${name}`, () => wheelBurst(100, 10));
+    await scenario(`${prefix}keys-pan-${name}`, async () => {
+      await focusChart();
+      for (let i = 0; i < 10; i++) {
+        await page.keyboard.press('ArrowRight');
+        await page.waitForTimeout(60);
+      }
+    });
+  }
+  await fit();
+  await scenario(`${prefix}drag-full`, () => drag(0.75, 0.25));
 }
-await fit();
-await scenario('drag-full', () => drag(0.75, 0.25));
+if (process.env.BENCH_RAW !== '0') await suite();
+
+// BENCH_DERIVED=smooth:101,low-pass:50 derives each from the recording through
+// the Derive dialog, times its first overview, then repeats the suite on it.
+const FILTERS = {
+  smooth: 'Moving average',
+  median: 'Median filter',
+  exponential: 'Exponential smoothing',
+  'low-pass': 'Low-pass RC filter',
+  'high-pass': 'High-pass RC filter',
+};
+for (const spec of (process.env.BENCH_DERIVED ?? '')
+  .split(',')
+  .filter(Boolean)) {
+  const [kind, value] = spec.split(':');
+  await page
+    .locator('[role=treeitem][aria-label*="Original signal"]')
+    .first()
+    .click();
+  await settle();
+  await page.click("role=button[name='Derive signal']");
+  await page
+    .locator('[role=dialog] [role=tabpanel]')
+    .getByText(FILTERS[kind], { exact: true })
+    .first()
+    .click();
+  const field = page
+    .locator(
+      '[role=dialog] input:not([type=range]):not([type=radio]):not([type=checkbox])',
+    )
+    .first();
+  await field.fill(value);
+  await page.waitForTimeout(300);
+  const before = await page.locator(chart).getAttribute('aria-label');
+  const start = Date.now();
+  await page.click('role=button[name=/^Create 1 derived signal/]');
+  await page.waitForFunction(
+    ({ selector, before }) =>
+      document.querySelector(selector)?.getAttribute('aria-label') !== before,
+    { selector: chart, before },
+    { timeout: 30 * 60000, polling: 50 },
+  );
+  await page.waitForFunction(
+    (selector) =>
+      (document
+        .querySelector(selector)
+        ?.querySelector('g[clip-path] path')
+        ?.getAttribute('d')?.length ?? 0) > 1000,
+    chart,
+    { timeout: 30 * 60000, polling: 50 },
+  );
+  await settle(450, 30 * 60000);
+  results[`${spec} createToPlotMs`] = Date.now() - start;
+  log(spec, 'create → overview drawn', results[`${spec} createToPlotMs`], 'ms');
+  await suite(`${spec} `);
+}
 
 results.totalMs = Date.now() - t0;
 writeFileSync(join(output, `${label}.json`), JSON.stringify(results, null, 2));

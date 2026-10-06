@@ -1,4 +1,7 @@
+import { fillRing } from './signal-math';
+
 // Causal filters keep bounded state for one complete signal evaluation.
+// Windowed evaluation restores exactly the state a full pass would hold.
 export class RollingMedian {
   private values: Float64Array;
   private sorted: number[] = [];
@@ -36,6 +39,15 @@ export class RollingMedian {
     const sum = lower + upper;
     return Number.isFinite(sum) ? sum / 2 : lower / 2 + upper / 2;
   }
+
+  /** The median depends only on the last `size` inputs, oldest first. */
+  restore(history: ArrayLike<number>) {
+    fillRing(this.values, history);
+    this.cursor = history.length % this.values.length;
+    this.sorted = [...this.values]
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+  }
 }
 
 export class ExponentialSmoother {
@@ -50,6 +62,12 @@ export class ExponentialSmoother {
         ? this.alpha * input + (1 - this.alpha) * this.value
         : input;
     return this.value;
+  }
+  state(): number {
+    return this.value;
+  }
+  restore(value: number) {
+    this.value = value;
   }
 }
 
@@ -101,5 +119,13 @@ export class RcFilter {
     this.previousTime = time;
     this.previousInput = input;
     return this.value;
+  }
+  state(): [previousTime: number, previousInput: number, value: number] {
+    return [this.previousTime, this.previousInput, this.value];
+  }
+  restore(previousTime: number, previousInput: number, value: number) {
+    this.previousTime = previousTime;
+    this.previousInput = previousInput;
+    this.value = value;
   }
 }

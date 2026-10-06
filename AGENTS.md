@@ -240,10 +240,24 @@ There are no server API routes or cloud signal uploads.
 - `lib/signal-graph.ts` and `lib/signal-executor.ts`: iterative graph indexing and
   stack-based streaming evaluation. Do not reintroduce recursion or depth caps.
 - `lib/signal-range.ts`: binary-search chunk selection, with boundary neighbors,
-  and range propagation through stateless unary/crop/time-alignment paths.
-  Stateful filters, reductions, resampling and binary grids must retain complete
-  input history unless an equivalent state/checkpoint strategy is implemented.
-- `lib/plot-index.ts`: versioned, rebuildable raw-signal min/max hierarchies.
+  and range propagation through stateless unary/crop/time-alignment paths and
+  shared-timestamp math. A window yields an exact contiguous run covering it
+  plus one neighbor each side, and stops after it. Median and derivative read
+  look-back; moving average, exponential, RC, integral and resample resume from
+  checkpoints (`CHECKPOINTED` in `signal-executor.ts`) that a complete pass
+  records, restoring the exact state, else they start at the first sample.
+  Min-max, reference-grid and FIR resampling keep complete history. Windowed
+  results must equal a complete pass sample for sample
+  (`tests/windowed-evaluation.test.ts`).
+- `lib/signal-recipe.ts`: content key of a signal's whole upstream recipe
+  (not names, IDs or revisions). Derived plot indexes and checkpoints are
+  stored under `derived-v1:<key>`; an Edit gets a new key. They are disposable,
+  excluded from backups and pruned on open unless current, Undo or Redo
+  signals use them. Bump the `derived-v1` version whenever an operation's
+  numerical results change, so no stored index or checkpoint outlives it.
+  Committing a Derive/Segment/Value/time dialog cancels its queued previews.
+- `lib/plot-index.ts`: versioned, rebuildable min/max hierarchies for raw
+  signals and, built by their first complete plot pass, derived signals.
   Index keys share source ownership with raw chunks but are excluded from backups.
   Publish roots only after their leaves; index recovery never changes workflow
   history. Summaries cover original samples; partial boundary blocks use exact

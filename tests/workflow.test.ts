@@ -1254,6 +1254,28 @@ void test('worker cancellation includes queued mutations, coalesces inspections,
         [1, 2],
       ]);
     }
+    // Committing a dialog cancels its queued live preview instead of waiting.
+    const blocker = send({ type: 'backup-workspace' });
+    const preview = send({
+      type: 'derive-preview',
+      inputId: id,
+      operation: 'smooth',
+      parameter: 2,
+      inspection: true,
+    });
+    const created = send({
+      type: 'derive-many',
+      parentIds: [id],
+      operation: 'smooth',
+      parameter: 2,
+    });
+    assert.equal((await blocker.response).type, 'export');
+    assert.equal((await preview.response).type, 'error');
+    const derived = await created.response;
+    assert.equal(derived.type, 'project');
+    if (derived.type === 'project')
+      assert.equal(derived.project.nodes.length, 2);
+    await send({ type: 'undo' }).response;
     const backup = send({ type: 'backup-workspace' });
     const cancelled = send({
       type: 'derive-many',

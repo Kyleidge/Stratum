@@ -6,13 +6,20 @@ import { SignalGraph } from './signal-graph';
 import { timeNodes, workspaceTimeScope } from './time-model';
 import { TIME_OPERATIONS, timeInputs } from './time-types';
 import type { TimeSettings } from './time-types';
-import { executeSignal } from './signal-executor';
+import {
+  CHECKPOINT_FIELDS,
+  CHECKPOINTED,
+  executeSignal,
+  type ExecutionOptions,
+} from './signal-executor';
+import { recipeKey } from './signal-recipe';
 import { yieldEngine } from './engine-yield';
 import { chunkWindow } from './signal-range';
 import {
   blockCount,
   groupBlocks,
   IndexBuilder,
+  LeafWriter,
   indexBytes,
   indexLeaves,
   indexSlices,
@@ -123,6 +130,12 @@ const INDEX_BUDGET = 32 * 1024 * 1024;
 const INDEX_BUILD_BUDGET = 64 * 1024 * 1024;
 const indexKey = (channel: number) => `plot-index-v2:${channel}`;
 const leavesKey = (channel: number) => `plot-leaves-v2:${channel}`;
+// Rebuildable artifacts of a derived signal, owned by its recipe key rather
+// than a source: plot index (channel 0) and filter checkpoints.
+const DERIVED = 'derived-v1:';
+const derivedOwner = (recipe: string) => `${DERIVED}${recipe}`;
+const CHECKPOINTS_KEY = 'checkpoints-v1';
+const CHECKPOINT_BUDGET = 16 * 1024 * 1024;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
 const uid = () => crypto.randomUUID();
@@ -200,6 +213,9 @@ export class SignalEngine {
     { value: PlotIndex | PlotBlocks; bytes: number }
   >();
   private indexCacheBytes = 0;
+  /** Filter checkpoints by recipe key; null records a confirmed absence. */
+  private checkpointCache = new Map<string, Float64Array | null>();
+  private checkpointBytes = 0;
   private revision = 0;
   private undoStack: Project[] = [];
   private redoStack: Project[] = [];
@@ -237,6 +253,8 @@ export class SignalEngine {
     this.cacheBytes = 0;
     this.indexCache.clear();
     this.indexCacheBytes = 0;
+    this.checkpointCache.clear();
+    this.checkpointBytes = 0;
     this.segmentPreviewCache = undefined;
     this.indexedProject = undefined;
     this.indexedGraph = undefined;
@@ -1234,6 +1252,18 @@ export class SignalEngine {
       key[1],
       key[2].replace(/-v\d+:/, '-v1:'),
     ]);
+    await done;
+    const cacheKey = JSON.stringify(key);
+    const cached = this.indexCache.get(cacheKey);
+    if (cached) {
+      this.indexCacheBytes -= cached.bytes;
+      this.indexCache.delete(cacheKey);
+    }
+  }
+  private async deleteIndex(key: [string, number, string]) {
+    const tx = this.db.transaction('chunks', 'readwrite'),
+      done = complete(tx);
+    tx.objectStore('chunks').delete(key);
     await done;
     const cacheKey = JSON.stringify(key);
     const cached = this.indexCache.get(cacheKey);
@@ -2301,18 +2331,159 @@ export class SignalEngine {
       yield { time: time.slice(), values: values.slice() };
     }
   }
+  /**
+   * Every sample, or for a window an exact contiguous run covering it plus
+   * the neighboring sample on each side. Complete passes record filter
+   * checkpoints; windows resume from them instead of the first sample.
+   */
   evaluate(
     id: string,
     _visiting = new Set<string>(),
     sourceRange?: [number, number],
   ): AsyncGenerator<SeriesChunk> {
-    return executeSignal(
-      id,
-      this.graph(),
-      (input, range) => this.raw(input, range),
-      () => this.check(),
-      sourceRange,
+    return this.execute(id, this.graph(), sourceRange);
+  }
+  /** Evaluate in a given graph, such as one with an unsaved preview node. */
+  private execute(
+    id: string,
+    graph: SignalGraph,
+    sourceRange?: [number, number],
+  ): AsyncGenerator<SeriesChunk> {
+    const options: ExecutionOptions = {
+      checkpoints: (node) =>
+        this.checkpointCache.get(recipeKey(graph, node.id)) ?? undefined,
+      record: (node, checkpoints) =>
+        this.saveCheckpoints(recipeKey(graph, node.id), checkpoints),
+      spacing: (node) => {
+        const source = this.project.sources.find(
+          (item) => item.id === node.sourceId,
+        );
+        return source && source.rows > 1
+          ? (source.end - source.start) / (source.rows - 1)
+          : undefined;
+      },
+    };
+    const run = () =>
+      executeSignal(
+        id,
+        graph,
+        (input, range) => this.raw(input, range),
+        () => this.check(),
+        sourceRange,
+        options,
+      );
+    return sourceRange ? this.afterCheckpoints(id, graph, run) : run();
+  }
+  private async *afterCheckpoints(
+    id: string,
+    graph: SignalGraph,
+    run: () => AsyncGenerator<SeriesChunk>,
+  ): AsyncGenerator<SeriesChunk> {
+    // Load saved state for every checkpointed step this window depends on.
+    const seen = new Set<string>();
+    const stack = [id];
+    while (stack.length) {
+      const node = graph.find(stack.pop()!);
+      if (seen.has(node.id)) continue;
+      seen.add(node.id);
+      stack.push(...node.parents);
+      if (!CHECKPOINTED.has(node.operation) || node.timeRecipe) continue;
+      const recipe = recipeKey(graph, node.id);
+      if (this.checkpointCache.has(recipe)) continue;
+      let value: unknown;
+      try {
+        value = await result(
+          this.db
+            .transaction('chunks')
+            .objectStore('chunks')
+            .get([derivedOwner(recipe), 0, CHECKPOINTS_KEY]),
+        );
+      } catch {
+        value = undefined;
+      }
+      this.check();
+      this.rememberCheckpoints(
+        recipe,
+        value instanceof Float64Array && value.length % CHECKPOINT_FIELDS === 0
+          ? value
+          : null,
+      );
+    }
+    yield* run();
+  }
+  private rememberCheckpoints(recipe: string, value: Float64Array | null) {
+    const bytes = value?.byteLength ?? 0;
+    if (bytes > CHECKPOINT_BUDGET) return;
+    const old = this.checkpointCache.get(recipe);
+    if (old !== undefined) {
+      this.checkpointBytes -= old?.byteLength ?? 0;
+      this.checkpointCache.delete(recipe);
+    }
+    while (
+      this.checkpointBytes + bytes > CHECKPOINT_BUDGET &&
+      this.checkpointCache.size
+    ) {
+      const [first, evicted] = this.checkpointCache.entries().next().value!;
+      this.checkpointBytes -= evicted?.byteLength ?? 0;
+      this.checkpointCache.delete(first);
+    }
+    this.checkpointCache.set(recipe, value);
+    this.checkpointBytes += bytes;
+  }
+  /** Disposable: a failed write only means a later window starts earlier. */
+  private saveCheckpoints(recipe: string, checkpoints: Float64Array) {
+    if (checkpoints.length < 2 * CHECKPOINT_FIELDS) return;
+    this.rememberCheckpoints(recipe, checkpoints);
+    try {
+      const tx = this.db.transaction('chunks', 'readwrite');
+      tx.objectStore('chunks').put(checkpoints, [
+        derivedOwner(recipe),
+        0,
+        CHECKPOINTS_KEY,
+      ]);
+      void complete(tx).catch(() => {});
+    } catch {
+      // The database may be closing; the in-memory copy still serves windows.
+    }
+  }
+  /**
+   * Remove derived indexes and checkpoints that no current, Undo or Redo
+   * signal uses. Caller must hold the shared workspace writer lock.
+   */
+  async pruneDerivedIndexes() {
+    const live = new Set<string>();
+    try {
+      for (const project of [
+        this.project,
+        ...this.undoStack,
+        ...this.redoStack,
+      ]) {
+        const graph = new SignalGraph(project);
+        for (const node of project.nodes)
+          live.add(derivedOwner(recipeKey(graph, node.id)));
+      }
+    } catch {
+      return; // Never delete anything while any snapshot is unreadable.
+    }
+    const keys = await result(
+      this.db
+        .transaction('chunks')
+        .objectStore('chunks')
+        .getAllKeys(IDBKeyRange.bound([DERIVED], [DERIVED.replace(/:$/, ';')])),
     );
+    const stale = keys.filter(
+      (key) =>
+        Array.isArray(key) && typeof key[0] === 'string' && !live.has(key[0]),
+    );
+    if (!stale.length) return;
+    const tx = this.db.transaction('chunks', 'readwrite'),
+      done = complete(tx);
+    for (const key of stale) tx.objectStore('chunks').delete(key);
+    await done;
+    this.indexCache.clear();
+    this.indexCacheBytes = 0;
+    this.checkpointCache.clear();
+    this.checkpointBytes = 0;
   }
   /** Count the full output, including missing values; never count plot points. */
   async sampleCount(id: string): Promise<number> {
@@ -2547,13 +2718,7 @@ export class SignalEngine {
     let plot = empty(node.id);
     if (outputRange) {
       const envelope = new Envelope(...outputRange);
-      for await (const chunk of executeSignal(
-        node.id,
-        graph,
-        (id, range) => this.raw(id, range),
-        () => this.check(),
-        outputRange,
-      ))
+      for await (const chunk of this.execute(node.id, graph, outputRange))
         for (let i = 0; i < chunk.time.length; i++)
           envelope.add(chunk.time[i], chunk.values[i]);
       plot = { id: node.id, ...envelope.finish() };
@@ -3204,7 +3369,10 @@ export class SignalEngine {
     side: 'before' | 'after',
   ): Promise<Point | undefined> {
     let previous: Point | undefined;
-    for await (const chunk of this.raw(id, [time, time]))
+    const node = this.find(id);
+    for await (const chunk of node.operation === 'raw' && !node.timeRecipe
+      ? this.raw(id, [time, time])
+      : this.evaluate(id, undefined, [time, time]))
       for (let i = 0; i < chunk.time.length; i++) {
         const t = chunk.time[i];
         if (side === 'before') {
@@ -3302,6 +3470,99 @@ export class SignalEngine {
       return undefined;
     }
   }
+  private async indexedDerivedPlot(
+    node: SignalNode,
+    recipe: string,
+    bounds: [number, number],
+    context: boolean,
+  ): Promise<Plot | undefined> {
+    const owner = derivedOwner(recipe);
+    try {
+      const index = await this.readIndex<PlotIndex>([owner, 0, indexKey(0)]);
+      if (!usableIndex(index, index?.rows ?? -1)) return;
+      const root = readBlock(index.levels.at(-1)!, 0);
+      if (
+        !Number.isFinite(root.total) ||
+        !Number.isFinite(root.integral) ||
+        (root.count &&
+          Math.max(Math.abs(root.min[1]), Math.abs(root.max[1])) > 1e150)
+      )
+        return;
+      const envelope = new Envelope(...bounds);
+      // Partial leaves at the window edges evaluate exact samples, resuming
+      // from checkpoints rather than the first sample.
+      let span: [number, number] | undefined;
+      const exact = async () => {
+        if (!span) return;
+        const [from, to] = span;
+        span = undefined;
+        let past = false;
+        for await (const chunk of this.evaluate(node.id, undefined, [
+          from,
+          to,
+        ])) {
+          for (let i = 0; i < chunk.time.length; i++) {
+            const time = chunk.time[i];
+            if (time > to) {
+              past = true;
+              break;
+            }
+            if (time >= from) envelope.add(time, chunk.values[i]);
+          }
+          if (past) break;
+        }
+      };
+      let ticks = 0;
+      for await (const slice of indexSlices(
+        index,
+        bounds,
+        async (chunk) => {
+          const leaves = await this.readIndex<PlotBlocks>([
+            owner,
+            chunk,
+            leavesKey(0),
+          ]);
+          if (
+            !(leaves instanceof Float64Array) ||
+            blockCount(leaves) !==
+              Math.ceil(
+                Math.min(CHUNK_SIZE, index.rows - chunk * CHUNK_SIZE) /
+                  PLOT_LEAF_SIZE,
+              )
+          )
+            throw new Error('Rebuild the incomplete plot index.');
+          return leaves;
+        },
+        () => this.check(),
+      )) {
+        if (++ticks % 128 === 0) {
+          await yieldEngine();
+          this.check();
+        }
+        if ('block' in slice) {
+          await exact();
+          envelope.addBlock(slice.block);
+        } else span = span ? [span[0], slice.to] : [slice.from, slice.to];
+      }
+      await exact();
+      const plot = { id: node.id, ...envelope.finish() };
+      if (context && bounds[0] > root.first[0]) {
+        const before = await this.neighbor(node.id, bounds[0], 'before');
+        if (before) plot.points.unshift(before);
+      }
+      if (context && bounds[1] < root.last[0]) {
+        const after = await this.neighbor(node.id, bounds[1], 'after');
+        if (after) plot.points.push(after);
+      }
+      this.check();
+      return plot;
+    } catch {
+      // Indexes are disposable; a damaged one is rebuilt by the next overview.
+      this.check();
+      await this.deleteIndex([owner, 0, indexKey(0)]).catch(() => {});
+      return undefined;
+    }
+  }
   private rememberPlot(key: string, plot: Plot) {
     if (this.cache.size >= 64)
       this.cache.delete(this.cache.keys().next().value!);
@@ -3322,6 +3583,36 @@ export class SignalEngine {
       const indexed = await this.indexedRawPlot(node, bounds, context);
       if (indexed) return this.rememberPlot(key, indexed);
     }
+    const graph = this.graph();
+    const recipe =
+      node.operation === 'raw' && !node.timeRecipe
+        ? undefined
+        : recipeKey(graph, id);
+    if (recipe) {
+      const indexed = await this.indexedDerivedPlot(
+        node,
+        recipe,
+        bounds,
+        context,
+      );
+      if (indexed) return this.rememberPlot(key, indexed);
+    }
+    // A complete pass of a derived signal records its filter checkpoints and
+    // plot index, so later windows and overviews need not repeat it.
+    const extent = graph.ranges.get(id)!;
+    const whole = !!recipe && bounds[0] <= extent[0] && bounds[1] >= extent[1];
+    let writer: LeafWriter | undefined = whole
+      ? new LeafWriter(PLOT_LEAF_SIZE * 700, async (first, leaves) => {
+          const tx = this.db.transaction('chunks', 'readwrite'),
+            done = complete(tx);
+          leaves.forEach((blocks, i) =>
+            tx
+              .objectStore('chunks')
+              .put(blocks, [derivedOwner(recipe!), first + i, leavesKey(0)]),
+          );
+          await done;
+        })
+      : undefined;
     const envelope = new Envelope(...bounds);
     let before: Point | undefined, after: Point | undefined;
     const source =
@@ -3337,7 +3628,19 @@ export class SignalEngine {
         ? new IndexBuilder()
         : undefined;
     let rebuiltChunks = 0;
-    for await (const chunk of this.evaluate(id, undefined, bounds)) {
+    for await (const chunk of this.evaluate(
+      id,
+      undefined,
+      whole ? undefined : bounds,
+    )) {
+      if (writer)
+        try {
+          await writer.add(chunk);
+          if (writer.builder.bytes > INDEX_BUILD_BUDGET) writer = undefined;
+        } catch {
+          this.check();
+          writer = undefined;
+        }
       if (rebuilding) {
         try {
           const leaves = indexLeaves(chunk);
@@ -3353,14 +3656,29 @@ export class SignalEngine {
           rebuilding = undefined;
         }
       }
+      let past = false;
       for (let i = 0; i < chunk.time.length; i++) {
         const time = chunk.time[i],
           value = chunk.values[i];
+        if (time > bounds[1]) {
+          if (context) after = [time, value];
+          past = true;
+          break;
+        }
         if (context && time < bounds[0]) before = [time, value];
-        if (context && time > bounds[1] && !after) after = [time, value];
         envelope.add(time, value);
       }
+      // Later samples cannot change this window; stop reading them.
+      if (past && !writer && !rebuilding) break;
     }
+    if (writer)
+      try {
+        const index = await writer.finish();
+        if (index)
+          await this.writeIndex([derivedOwner(recipe!), 0, indexKey(0)], index);
+      } catch {
+        this.check();
+      }
     if (rebuilding && rebuiltChunks === source!.chunks)
       try {
         await this.writeIndex(

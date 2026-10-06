@@ -13,6 +13,19 @@ const pending = new Set<number>(),
 type InspectionLane = 'view' | 'rows' | 'measure-plot' | 'sample-count';
 type PreviewLane = 'segment-preview' | 'derive-preview' | 'value-preview';
 const inspections = new Map<number, InspectionLane | PreviewLane>();
+const PREVIEWS = new Set<string>([
+  'segment-preview',
+  'derive-preview',
+  'value-preview',
+]);
+const COMMITS = new Set<string>([
+  'derive-many',
+  'segment',
+  'calculate-values',
+  'region-function',
+  'time-operation',
+  'edit-operation',
+]);
 globalThis.onmessage = (
   event: MessageEvent<EngineRequest & { requestId: number }>,
 ) => {
@@ -38,6 +51,14 @@ globalThis.onmessage = (
     if (cancelled.has(requestId)) engine.cancelled = true;
     inspections.set(r.requestId, r.type);
   }
+  // Committing a dialog supersedes its live previews, which can take seconds
+  // on long recordings; the commit must not wait for them to finish.
+  if (COMMITS.has(r.type))
+    for (const [id, lane] of inspections)
+      if (PREVIEWS.has(lane)) {
+        cancelled.add(id);
+        if (id === requestId) engine.cancelled = true;
+      }
   pending.add(r.requestId);
   queue = queue.then(async () => {
     const run = async () => {
@@ -89,8 +110,10 @@ globalThis.onmessage = (
             break;
           case 'init-workflow':
             await engine.open();
-            if (typeof navigator !== 'undefined' && navigator.locks)
+            if (typeof navigator !== 'undefined' && navigator.locks) {
               await engine.recoverImports();
+              await engine.pruneDerivedIndexes().catch(() => {});
+            }
             await engine.initializeWorkflow();
             if (r.refreshExample) await engine.workflowExample(true);
             break;
