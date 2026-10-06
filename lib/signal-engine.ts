@@ -10,15 +10,17 @@ import { executeSignal } from './signal-executor';
 import { yieldEngine } from './engine-yield';
 import { chunkWindow } from './signal-range';
 import {
-  finishIndex,
+  blockCount,
   groupBlocks,
+  IndexBuilder,
   indexBytes,
   indexLeaves,
   indexSlices,
+  readBlock,
   usableIndex,
   PLOT_LEAF_SIZE,
 } from './plot-index';
-import type { PlotBlock, PlotIndex } from './plot-index';
+import type { PlotBlocks, PlotIndex } from './plot-index';
 import { FUNCTIONS } from './signal-functions';
 import {
   ARITHMETIC_SYMBOLS,
@@ -114,9 +116,13 @@ import type {
 } from './signal-types';
 
 const CHUNK_SIZE = 16384;
-const INDEX_BUDGET = 8 * 1024 * 1024;
-const indexKey = (channel: number) => `plot-index-v1:${channel}`;
-const leavesKey = (channel: number) => `plot-leaves-v1:${channel}`;
+// Index read cache. A packed root costs 104 bytes per 4,096 samples.
+const INDEX_BUDGET = 32 * 1024 * 1024;
+// Base blocks built in memory at once: all channels of an import, or one
+// channel of a rebuild. 64 MiB covers 2.6 billion channel samples.
+const INDEX_BUILD_BUDGET = 64 * 1024 * 1024;
+const indexKey = (channel: number) => `plot-index-v2:${channel}`;
+const leavesKey = (channel: number) => `plot-leaves-v2:${channel}`;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
 const uid = () => crypto.randomUUID();
@@ -191,7 +197,7 @@ export class SignalEngine {
   private cacheBytes = 0;
   private indexCache = new Map<
     string,
-    { value: PlotIndex | PlotBlock[]; bytes: number }
+    { value: PlotIndex | PlotBlocks; bytes: number }
   >();
   private indexCacheBytes = 0;
   private revision = 0;
@@ -1185,7 +1191,7 @@ export class SignalEngine {
     await done;
     return leaves.map(groupBlocks);
   }
-  private async readIndex<T extends PlotIndex | PlotBlock[]>(
+  private async readIndex<T extends PlotIndex | PlotBlocks>(
     key: IDBValidKey,
   ): Promise<T | undefined> {
     const cacheKey = JSON.stringify(key);
@@ -1214,11 +1220,20 @@ export class SignalEngine {
     }
     return value;
   }
-  private async writeIndex(key: IDBValidKey, value: PlotIndex | PlotBlock[]) {
+  private async writeIndex(
+    key: [string, number, string],
+    value: PlotIndex | PlotBlocks,
+  ) {
     this.check();
     const tx = this.db.transaction('chunks', 'readwrite'),
       done = complete(tx);
     tx.objectStore('chunks').put(value, key);
+    // A rebuilt entry replaces its unreadable previous-format counterpart.
+    tx.objectStore('chunks').delete([
+      key[0],
+      key[1],
+      key[2].replace(/-v\d+:/, '-v1:'),
+    ]);
     await done;
     const cacheKey = JSON.stringify(key);
     const cached = this.indexCache.get(cacheKey);
@@ -1426,7 +1441,7 @@ export class SignalEngine {
     let start = 0;
     let end = -Infinity;
     const chunkRanges: [number, number][] = [];
-    let overview: PlotBlock[][] | undefined = [];
+    let overview: IndexBuilder[] | undefined = [];
     const flush = async () => {
       if (!fill) return;
       // Full buffers are stored as they are; a partial one is copied, since
@@ -1441,10 +1456,12 @@ export class SignalEngine {
       chunkRanges.push([chunk.time[0], chunk.time[fill - 1]]);
       const groups = await this.writeChunk(id, chunks++, chunk);
       if (overview) {
-        groups.forEach((blocks, c) => (overview![c] ??= []).push(...blocks));
+        groups.forEach((blocks, c) =>
+          (overview![c] ??= new IndexBuilder()).push(blocks),
+        );
         if (
-          overview.reduce((sum, blocks) => sum + indexBytes(blocks), 0) >
-          INDEX_BUDGET / 2
+          overview.reduce((sum, builder) => sum + builder.bytes, 0) >
+          INDEX_BUILD_BUDGET
         )
           overview = undefined;
       }
@@ -1493,8 +1510,8 @@ export class SignalEngine {
         `${label ? `${label}: ` : ''}A recording needs at least two data rows.`,
       );
     if (overview)
-      for (const [c, blocks] of overview.entries())
-        await this.writeIndex([id, 0, indexKey(c)], finishIndex(blocks, rows));
+      for (const [c, builder] of overview.entries())
+        await this.writeIndex([id, 0, indexKey(c)], builder.finish(rows));
     return { rows, chunks, start, end, chunkRanges };
   }
   async workflowExample(refresh = false, sourceId?: string) {
@@ -3216,7 +3233,7 @@ export class SignalEngine {
         indexKey(node.channel!),
       ]);
       if (!usableIndex(index, source.rows)) return;
-      const root = index.levels.at(-1)![0];
+      const root = readBlock(index.levels.at(-1)!, 0);
       if (
         root.first[0] !== source.start ||
         root.last[0] !== source.end ||
@@ -3235,14 +3252,14 @@ export class SignalEngine {
         index,
         bounds,
         async (chunk) => {
-          const leaves = await this.readIndex<PlotBlock[]>([
+          const leaves = await this.readIndex<PlotBlocks>([
             source.id,
             chunk,
             leavesKey(node.channel!),
           ]);
           if (
-            !leaves ||
-            leaves.length !==
+            !(leaves instanceof Float64Array) ||
+            blockCount(leaves) !==
               Math.ceil(
                 Math.min(CHUNK_SIZE, source.rows - chunk * CHUNK_SIZE) /
                   PLOT_LEAF_SIZE,
@@ -3312,20 +3329,20 @@ export class SignalEngine {
         ? this.project.sources.find((item) => item.id === node.sourceId)
         : undefined;
     // Old workspaces/restores acquire an optional index during a full plot pass.
-    let rebuilding: PlotBlock[] | undefined =
+    let rebuilding: IndexBuilder | undefined =
       source &&
       source.rows >= PLOT_LEAF_SIZE * 700 &&
       bounds[0] === source.start &&
       bounds[1] === source.end
-        ? []
+        ? new IndexBuilder()
         : undefined;
     let rebuiltChunks = 0;
     for await (const chunk of this.evaluate(id, undefined, bounds)) {
       if (rebuilding) {
         try {
           const leaves = indexLeaves(chunk);
-          rebuilding.push(...groupBlocks(leaves));
-          if (indexBytes(rebuilding) > INDEX_BUDGET / 2) rebuilding = undefined;
+          rebuilding.push(groupBlocks(leaves));
+          if (rebuilding.bytes > INDEX_BUILD_BUDGET) rebuilding = undefined;
           else
             await this.writeIndex(
               [source!.id, rebuiltChunks++, leavesKey(node.channel!)],
@@ -3348,7 +3365,7 @@ export class SignalEngine {
       try {
         await this.writeIndex(
           [source!.id, 0, indexKey(node.channel!)],
-          finishIndex(rebuilding, source!.rows),
+          rebuilding.finish(source!.rows),
         );
       } catch {
         this.check();

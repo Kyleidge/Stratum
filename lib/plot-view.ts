@@ -24,11 +24,32 @@ export function plotDrawing(
   range: PlotRange,
   view: PlotView,
 ): Plot | undefined {
+  let partial: { plot: Plot; overlap: number } | undefined;
   for (const layer of [view.detail, view.buffer]) {
     const bounds = layer?.ranges.get(id);
-    if (bounds && coversPlotRange(bounds, range)) return layer!.plots.get(id);
+    const plot = layer?.plots.get(id);
+    if (!bounds || !plot) continue;
+    if (coversPlotRange(bounds, range)) return plot;
+    const overlap =
+      Math.min(bounds[1], range[1]) - Math.max(bounds[0], range[0]);
+    if (overlap > 0 && overlap > (partial?.overlap ?? 0))
+      partial = { plot, overlap };
   }
-  return view.overview?.plots.get(id);
+  const overview = view.overview?.plots.get(id);
+  if (!partial?.plot.points.length || !overview) return overview;
+  // While a moved view loads, keep the finer drawing where it reaches and use
+  // overview candidates only beyond it, rather than coarsening the whole view.
+  const fine = partial.plot.points;
+  const first = fine[0][0],
+    last = fine[fine.length - 1][0];
+  return {
+    ...partial.plot,
+    points: [
+      ...overview.points.filter(([time]) => time < first),
+      ...fine,
+      ...overview.points.filter(([time]) => time > last),
+    ],
+  };
 }
 
 /** One bounded overview, one exact view and one two-screen drawing buffer.
