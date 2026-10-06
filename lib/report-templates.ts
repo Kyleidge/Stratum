@@ -139,6 +139,46 @@ export function blocksOutsideFrame(
   }, 0);
 }
 
+/**
+ * Moves (and, when necessary, shrinks) blocks that reach into a design's
+ * border, header or footer back into its clear area. Used only on request.
+ */
+export function fitBlocksInsideFrame(
+  report: ReportDocument,
+  tolerance = 1,
+): ReportDocument {
+  const { width, height } = pageDimensions(report);
+  return {
+    ...report,
+    pages: report.pages.map((page, pageIndex) => {
+      const insets = frameInsets(report, pageIndex);
+      const right = width - insets.right,
+        bottom = height - insets.bottom;
+      return {
+        ...page,
+        blocks: page.blocks.map((block) => {
+          if (
+            block.x >= insets.left - tolerance &&
+            block.y >= insets.top - tolerance &&
+            block.x + block.width <= right + tolerance &&
+            block.y + block.height <= bottom + tolerance
+          )
+            return block;
+          const blockWidth = Math.min(block.width, right - insets.left);
+          const blockHeight = Math.min(block.height, bottom - insets.top);
+          return {
+            ...block,
+            width: blockWidth,
+            height: blockHeight,
+            x: Math.min(Math.max(block.x, insets.left), right - blockWidth),
+            y: Math.min(Math.max(block.y, insets.top), bottom - blockHeight),
+          };
+        }),
+      };
+    }),
+  };
+}
+
 const INK = '#16222c';
 const BODY = '#44535e';
 const MUTED = '#6b7a86';

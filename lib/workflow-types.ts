@@ -29,6 +29,8 @@ export type WorkflowStep = {
   revision?: number;
   updatedAt?: string;
   name?: string;
+  /** Import steps: the recording's file name, for the default step name. */
+  fileName?: string;
   id: string;
   sourceId: string;
   sequence: number;
@@ -73,7 +75,8 @@ export type CheckResult = {
   message: string;
 };
 
-export type RunStatus = 'pass' | 'warning' | 'fail' | 'error';
+/** `none`: the item ran without problems but no check was evaluated. */
+export type RunStatus = 'none' | 'pass' | 'warning' | 'fail' | 'error';
 /** A problem found while replaying a workflow, separate from check results. */
 export type RunFlag = {
   severity: 'warning' | 'error';
@@ -90,6 +93,11 @@ export type WorkflowRun = {
   /** Recipe step ID → produced workflow step ID. */
   steps: Record<string, string>;
   flags: RunFlag[];
+  /**
+   * Recipe channel alias → column name used instead of the recipe's name for
+   * this item, chosen in pre-flight. The saved workflow text is unchanged.
+   */
+  channelMap?: Record<string, string>;
   startedAt: string;
   finishedAt: string;
 };

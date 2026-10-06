@@ -3,7 +3,11 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
-import { withWorkflowHistory, WorkflowIndex } from '../lib/workflow-history';
+import {
+  stepName,
+  withWorkflowHistory,
+  WorkflowIndex,
+} from '../lib/workflow-history';
 import { workflowRows } from '../lib/workflow-tree';
 import type {
   EngineRequest,
@@ -19,6 +23,8 @@ import {
   navigatePlot,
   plotWindow,
   plotViewport,
+  seriesColor,
+  TRACE_COLORS,
 } from '../lib/plot-scratchpad';
 import { measurePlot } from '../lib/plot-measurement';
 import {
@@ -304,7 +310,19 @@ void test('unit axes name and scale independently and retain their identity acro
   ];
   const groups = groupPlotAxes(inputs);
   assert.equal(groups.length, 3);
-  assert.equal(groups[0].label, 'Speed / Filtered speed (rpm)');
+  // Same-unit traces share an axis titled by their unit, not their names.
+  assert.equal(groups[0].label, 'rpm');
+  assert.equal(
+    groupPlotAxes([
+      { name: 'Ratio A', unit: '', color: '#91e5ba' },
+      { name: 'Ratio B', unit: '', color: '#7ebcff' },
+    ])[0].label,
+    'Unitless · 2 traces',
+  );
+  // Saved palette colours draw through the theme; custom colours stay as set.
+  assert.equal(seriesColor(TRACE_COLORS[2]), 'var(--series-3)');
+  assert.equal(seriesColor(TRACE_COLORS[0].toUpperCase()), 'var(--series-1)');
+  assert.equal(seriesColor('#123456'), '#123456');
   assert.equal(groups[1].label, 'Torque (Nm)');
   assert.equal(groupPlotAxes(inputs.toReversed())[0].key, groups[2].key);
   // A value's reference line names its axis only when no signal shares it.
@@ -996,6 +1014,104 @@ async function samples(engine: SignalEngine, id: string) {
       values.push([chunk.time[i], chunk.values[i]]);
   return values;
 }
+
+void test('Undo and Redo name each action and keep the names across restarts', async () => {
+  const { engine, source, database } = await fixture();
+  assert.equal(engine.undoLabel, 'Import workflow.csv');
+  assert.equal(engine.redoLabel, undefined);
+  const scaled = await engine.derive(source.channels[0], 'scale', 2);
+  const step = new WorkflowIndex(engine.project).owner.get(scaled.id)!;
+  const title = `#002 ${stepName(step)}`;
+  assert.equal(engine.undoLabel, `Add ${title}`);
+  await engine.calculateValues([scaled.id], 'maximum');
+  assert.match(engine.undoLabel!, /^Add #003 /);
+  await engine.editOperation(step.id, {
+    type: 'derive-many',
+    parentIds: [source.channels[0]],
+    operation: 'scale',
+    parameter: 3,
+  });
+  assert.equal(engine.undoLabel, `Edit ${title}`);
+  await engine.rename(step.id, 'Tripled torque');
+  assert.equal(engine.undoLabel, "Rename #002 to 'Tripled torque'");
+  await engine.rename(source.id, 'Bench run.csv');
+  assert.equal(engine.undoLabel, "Rename recording to 'Bench run.csv'");
+  await engine.deleteOperation(step.id);
+  const deleted = 'Delete #002 Tripled torque and 1 dependent step';
+  assert.equal(engine.undoLabel, deleted);
+  // Housekeeping never adds or renames journal entries.
+  await engine.initializeWorkflow();
+  assert.equal(engine.undoLabel, deleted);
+  engine.close();
+  const reopened = new SignalEngine(undefined, database);
+  try {
+    await reopened.open();
+    await reopened.initializeWorkflow();
+    assert.equal(reopened.undoLabel, deleted);
+    await reopened.travel('undo');
+    assert.equal(reopened.redoLabel, deleted);
+    assert.equal(reopened.undoLabel, "Rename recording to 'Bench run.csv'");
+    reopened.close();
+    const again = new SignalEngine(undefined, database);
+    await again.open();
+    assert.equal(again.redoLabel, deleted);
+    await again.travel('redo');
+    assert.equal(again.undoLabel, deleted);
+    assert.equal(again.redoLabel, undefined);
+    again.close();
+  } finally {
+    reopened.close();
+  }
+});
+
+void test('journal entries saved before labels existed still undo as "last change"', async () => {
+  const { engine, source, database } = await fixture();
+  const scaled = await engine.derive(source.channels[0], 'scale', 2);
+  await engine.calculateValues([scaled.id], 'maximum');
+  engine.close();
+  // Rewrite the journal as an older version stored it: no label arrays.
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(database, 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('project', 'readwrite');
+    const store = tx.objectStore('project');
+    const read = store.get('history');
+    read.onsuccess = () => {
+      const { undo, redo, tag } = read.result as {
+        undo: Project[];
+        redo: Project[];
+        tag?: string;
+      };
+      store.put({ undo, redo, tag }, 'history');
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  const reopened = new SignalEngine(undefined, database);
+  try {
+    await reopened.open();
+    await reopened.initializeWorkflow();
+    assert.ok(reopened.canUndo);
+    assert.equal(reopened.undoLabel, undefined);
+    // New actions are named; the older entries beneath them stay unnamed.
+    await reopened.rename(source.id, 'Renamed.csv');
+    assert.equal(reopened.undoLabel, "Rename recording to 'Renamed.csv'");
+    await reopened.travel('undo');
+    assert.equal(reopened.redoLabel, "Rename recording to 'Renamed.csv'");
+    assert.equal(reopened.undoLabel, undefined);
+    await reopened.travel('undo');
+    assert.equal(reopened.project.values?.length ?? 0, 0);
+    assert.equal(reopened.redoLabel, undefined);
+    await reopened.travel('redo');
+    assert.equal(reopened.project.values!.length, 1);
+  } finally {
+    reopened.close();
+  }
+});
 
 void test('Undo to an empty workspace retains Redo after restart and initialization', async () => {
   const { engine, source, database } = await fixture();

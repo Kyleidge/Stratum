@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   FilePlus2,
   FolderOpen,
   Play,
@@ -23,11 +25,16 @@ import {
   type WorkflowRecipe,
 } from '@/lib/workflow-recipe';
 import {
+  headerSignature,
   preflightFile,
   preflightRecording,
   preflightStatus,
+  rankColumns,
+  remapItem,
   type PreflightItem,
+  type PreflightState,
 } from '@/lib/workflow-batch';
+import { formatCount } from '@/lib/format-count';
 import type { Project } from '@/lib/signal-types';
 
 export const MAX_BATCH_ITEMS = 500;
@@ -42,6 +49,19 @@ export type BatchPlan = {
 };
 
 const isWorkflowFile = (file: File) => /\.(ya?ml)$/i.test(file.name);
+/** Problem rows first: can't be read, then will error, then ready. */
+const STATE_ORDER: Record<PreflightState, number> = {
+  unreadable: 0,
+  error: 1,
+  ready: 2,
+};
+const STATE_LABELS: Record<PreflightState, string> = {
+  ready: 'Ready',
+  error: 'Will error',
+  unreadable: "Can't be read",
+};
+const columnLabel = (column: { name: string; unit: string }) =>
+  `${column.name}${column.unit && column.unit !== '—' ? ` [${column.unit}]` : ''}`;
 
 /** Pre-flight files before opening the dialog, so it starts fully checked. */
 export async function prepareItems(
@@ -91,7 +111,10 @@ export default function WorkflowRunDialog({
   const [hash, setHash] = useState('');
   const [batchName, setBatchName] = useState('');
   const [exportSummary, setExportSummary] = useState(true);
-  const [exportReports, setExportReports] = useState(true);
+  const [exportReports, setExportReports] = useState(false);
+  // Problem rows show their column choices unless the user collapses them.
+  const [toggled, setToggled] = useState<Set<string>>(new Set());
+  const [shareHeader, setShareHeader] = useState(true);
   const [notice, setNotice] = useState('');
   const [dragging, setDragging] = useState(false);
   const [space, setSpace] = useState<number>();
@@ -198,7 +221,31 @@ export default function WorkflowRunDialog({
       batch.runs.map((run) => run.itemId),
     ),
   );
+  const states = new Map(
+    items.map((item) => [item.key, preflightStatus(item)]),
+  );
+  const tally = { ready: 0, error: 0, unreadable: 0 };
+  for (const state of states.values()) tally[state]++;
+  // Problem rows first; the sort is stable, so files keep their added order.
+  const ordered = items
+    .map((item, position) => ({ item, position }))
+    .sort(
+      (a, b) =>
+        STATE_ORDER[states.get(a.item.key)!] -
+          STATE_ORDER[states.get(b.item.key)!] || a.position - b.position,
+    )
+    .map((entry) => entry.item);
+  const signatures = new Map<string, number>();
+  for (const item of items)
+    if (!item.error) {
+      const signature = headerSignature(item);
+      signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
+    }
+  const unreadable = items.filter((item) => item.error);
   const runnable = items.filter((item) => !item.error && item.itemId.trim());
+  const willError = runnable.filter(
+    (item) => states.get(item.key) === 'error',
+  ).length;
   const bytes = runnable.reduce((sum, item) => sum + (item.file?.size ?? 0), 0);
   const checks =
     recipe?.steps.reduce((sum, step) => sum + (step.checks?.length ?? 0), 0) ??
@@ -209,6 +256,29 @@ export default function WorkflowRunDialog({
   const unused = project.sources.filter(
     (source) => !items.some((item) => item.sourceId === source.id),
   );
+  const expanded = (item: PreflightItem) =>
+    !item.error && (states.get(item.key) === 'error') !== toggled.has(item.key);
+  /** Choose a column for a channel, here or in every file with this header. */
+  function mapChannel(target: PreflightItem, alias: string, column: string) {
+    if (!recipe) return;
+    const signature = headerSignature(target);
+    setItems((old) =>
+      old.map((item) =>
+        item.key === target.key ||
+        (shareHeader && !item.error && headerSignature(item) === signature)
+          ? remapItem(recipe, item, { [alias]: column })
+          : item,
+      ),
+    );
+  }
+  function toggle(key: string) {
+    setToggled((old) => {
+      const next = new Set(old);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
   function onDrop(event: DragEvent) {
     event.preventDefault();
     setDragging(false);
@@ -231,11 +301,11 @@ export default function WorkflowRunDialog({
         onDrop={onDrop}
         data-drop={dragging || undefined}
       >
-        <DialogTitle>Run workflow on recordings</DialogTitle>
+        <DialogTitle>Run a workflow on recordings</DialogTitle>
         <DialogDescription>
           Each recording is imported and processed with the same steps, then its
-          checks are evaluated. Results appear in History as ordinary
-          operations, and one Undo removes the whole batch.
+          checks are evaluated. Results appear in History as ordinary steps, and
+          one Undo removes the whole batch.
         </DialogDescription>
         <section className="workflow-batch-section">
           <h3>
@@ -266,9 +336,11 @@ export default function WorkflowRunDialog({
               </strong>
               {recipe!.description && <p>{recipe!.description}</p>}
               <small>
-                {recipe!.steps.length} steps · {checks}{' '}
-                {checks === 1 ? 'check' : 'checks'} · {recipe!.channels.length}{' '}
-                inputs ·{' '}
+                {formatCount(recipe!.steps.length, 'step')} ·{' '}
+                {checks
+                  ? formatCount(checks, 'check')
+                  : 'no checks, so items show No checks'}{' '}
+                · {formatCount(recipe!.channels.length, 'input')} ·{' '}
                 {recipe!.report
                   ? 'report template included'
                   : 'no report template'}
@@ -328,101 +400,240 @@ export default function WorkflowRunDialog({
               file&apos;s first line is read until you run the batch.
             </p>
           ) : (
-            <div className="workflow-batch-items">
-              <table aria-label="Recordings to process">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>{recipe?.item.label ?? 'Item'}</th>
-                    <th>Recording</th>
-                    <th>Inputs</th>
-                    <th>
-                      <span className="sr-only">Remove</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => {
-                    const status = preflightStatus(item);
-                    const problems = item.error
-                      ? [item.error]
-                      : item.bindings.flatMap((binding) =>
-                          binding.problem ? [binding.problem] : [],
-                        );
-                    const duplicate = (counts.get(item.itemId) ?? 0) > 1;
-                    return (
-                      <tr key={item.key} data-status={status}>
-                        <td>
-                          {status === 'pass' ? (
-                            <CheckCircle2 size={14} aria-label="Inputs found" />
-                          ) : item.error ? (
-                            <XCircle size={14} aria-label="Cannot process" />
-                          ) : (
-                            <AlertTriangle
-                              size={14}
-                              aria-label="Some inputs missing"
+            <>
+              <p className="workflow-batch-tally" aria-live="polite">
+                <span data-state="ready">
+                  <CheckCircle2 size={13} aria-hidden="true" /> {tally.ready}{' '}
+                  ready
+                </span>
+                {' · '}
+                <span data-state="error">
+                  <XCircle size={13} aria-hidden="true" /> {tally.error} will
+                  error
+                </span>
+                {' · '}
+                <span data-state="unreadable">
+                  <XCircle size={13} aria-hidden="true" /> {tally.unreadable}{' '}
+                  can&apos;t be read
+                </span>
+              </p>
+              <div className="workflow-batch-items">
+                <table aria-label="Recordings to process">
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>{recipe?.item.label ?? 'Item'}</th>
+                      <th>Recording</th>
+                      <th>Inputs</th>
+                      <th>
+                        <span className="sr-only">Remove</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ordered.map((item) => {
+                      const status = states.get(item.key)!;
+                      const problems = item.error
+                        ? [item.error]
+                        : item.bindings.flatMap((binding) =>
+                            binding.problem ? [binding.problem] : [],
+                          );
+                      const mapped = Object.keys(item.mapping).length;
+                      const duplicate = (counts.get(item.itemId) ?? 0) > 1;
+                      const open = expanded(item);
+                      const choosable =
+                        !item.error && (problems.length || mapped);
+                      const shared =
+                        (signatures.get(headerSignature(item)) ?? 0) - 1;
+                      return [
+                        <tr key={item.key} data-status={status}>
+                          <td>
+                            <span className="workflow-batch-state">
+                              {status === 'ready' ? (
+                                <CheckCircle2 size={14} aria-hidden="true" />
+                              ) : (
+                                <XCircle size={14} aria-hidden="true" />
+                              )}
+                              {STATE_LABELS[status]}
+                            </span>
+                          </td>
+                          <td>
+                            <input
+                              aria-label={`Item ID for ${item.name}`}
+                              value={item.itemId}
+                              maxLength={120}
+                              onChange={(event) =>
+                                setItems((old) =>
+                                  old.map((entry) =>
+                                    entry.key === item.key
+                                      ? { ...entry, itemId: event.target.value }
+                                      : entry,
+                                  ),
+                                )
+                              }
                             />
-                          )}
-                        </td>
-                        <td>
-                          <input
-                            aria-label={`Item ID for ${item.name}`}
-                            value={item.itemId}
-                            maxLength={120}
-                            onChange={(event) =>
-                              setItems((old) =>
-                                old.map((entry) =>
-                                  entry.key === item.key
-                                    ? { ...entry, itemId: event.target.value }
-                                    : entry,
-                                ),
-                              )
-                            }
-                          />
-                        </td>
-                        <td title={item.name}>
-                          {item.name}
-                          {item.sourceId ? ' · in workspace' : ''}
-                        </td>
-                        <td title={problems.join(' ')}>
-                          {problems.length
-                            ? problems[0] +
-                              (problems.length > 1
-                                ? ` (+${problems.length - 1})`
-                                : '')
-                            : `All ${item.bindings.length} found`}
-                          {duplicate ? ' · duplicate ID' : ''}
-                          {processed.has(item.itemId)
-                            ? ' · processed before'
-                            : ''}
-                        </td>
-                        <td>
-                          <button
-                            className="workflow-icon-button workflow-quiet"
-                            aria-label={`Remove ${item.name}`}
-                            onClick={() =>
-                              setItems((old) =>
-                                old.filter((entry) => entry.key !== item.key),
-                              )
-                            }
+                          </td>
+                          <td title={item.name}>
+                            {item.name}
+                            {item.sourceId ? ' · in workspace' : ''}
+                          </td>
+                          <td title={problems.join(' ')}>
+                            {choosable ? (
+                              <button
+                                className="workflow-link workflow-batch-disclose"
+                                aria-expanded={open}
+                                onClick={() => toggle(item.key)}
+                              >
+                                {open ? (
+                                  <ChevronDown size={13} aria-hidden="true" />
+                                ) : (
+                                  <ChevronRight size={13} aria-hidden="true" />
+                                )}
+                                {problems.length
+                                  ? problems[0] +
+                                    (problems.length > 1
+                                      ? ` (+${problems.length - 1})`
+                                      : '')
+                                  : `All ${item.bindings.length} found · ${formatCount(mapped, 'column')} chosen`}
+                              </button>
+                            ) : problems.length ? (
+                              problems[0]
+                            ) : (
+                              `All ${item.bindings.length} found`
+                            )}
+                            {duplicate ? ' · duplicate ID' : ''}
+                            {processed.has(item.itemId)
+                              ? ' · processed before'
+                              : ''}
+                          </td>
+                          <td>
+                            <button
+                              className="workflow-icon-button workflow-quiet"
+                              aria-label={`Remove ${item.name}`}
+                              onClick={() =>
+                                setItems((old) =>
+                                  old.filter((entry) => entry.key !== item.key),
+                                )
+                              }
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>,
+                        open && recipe && (
+                          <tr
+                            key={`${item.key}:map`}
+                            className="workflow-batch-map"
+                            data-status={status}
                           >
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                            <td colSpan={5}>
+                              <p>
+                                <span>Columns found:</span>{' '}
+                                {item.columns.map(columnLabel).join(', ') ||
+                                  'none'}
+                              </p>
+                              {recipe.channels.map((channel, position) => {
+                                const binding = item.bindings[position];
+                                const chosen = item.mapping[channel.alias];
+                                if (!binding?.problem && !chosen) return null;
+                                const bound = new Set(
+                                  item.bindings.flatMap((other) =>
+                                    other.channel >= 0 &&
+                                    other.alias !== channel.alias
+                                      ? [
+                                          item.columns[other.channel].name
+                                            .trim()
+                                            .toLowerCase(),
+                                        ]
+                                      : [],
+                                  ),
+                                );
+                                const options = rankColumns(
+                                  channel,
+                                  item.columns,
+                                  bound,
+                                );
+                                return (
+                                  <label
+                                    key={channel.alias}
+                                    className="workflow-batch-map-row"
+                                  >
+                                    <span>
+                                      {channel.name}
+                                      {channel.unit ? ` [${channel.unit}]` : ''}
+                                    </span>
+                                    <select
+                                      aria-label={`Use column for ${channel.name} in ${item.name}`}
+                                      value={chosen ?? ''}
+                                      onChange={(event) =>
+                                        mapChannel(
+                                          item,
+                                          channel.alias,
+                                          event.target.value,
+                                        )
+                                      }
+                                    >
+                                      <option value="">
+                                        {chosen
+                                          ? 'Use the workflow’s column name'
+                                          : 'Use column…'}
+                                      </option>
+                                      {options.map((column) => (
+                                        <option
+                                          key={column.name}
+                                          value={column.name}
+                                        >
+                                          {columnLabel(column)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {binding?.problem && (
+                                      <small>{binding.problem}</small>
+                                    )}
+                                  </label>
+                                );
+                              })}
+                              {shared > 0 && (
+                                <div className="workflow-batch-check">
+                                  <Checkbox
+                                    aria-label="Apply to all files with this header"
+                                    checked={shareHeader}
+                                    onCheckedChange={(checked) =>
+                                      setShareHeader(!!checked)
+                                    }
+                                  />
+                                  <span>
+                                    Apply to all files with this header (
+                                    {formatCount(shared, 'other file')})
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ),
+                      ];
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-          {items.some(
-            (item) => preflightStatus(item) === 'error' && !item.error,
-          ) && (
+          {willError > 0 && (
             <p className="workflow-muted">
-              Recordings with missing or mismatched inputs still run. Steps that
-              need those inputs are skipped and the item is flagged.
+              Recordings that will error still run: steps that need a missing or
+              mismatched input are skipped and the item shows Error. Choose a
+              column for a missing input to run every step.
             </p>
+          )}
+          {!!unreadable.length && (
+            <output className="workflow-batch-error">
+              <XCircle size={14} aria-hidden="true" />
+              <span>
+                Not run, because {unreadable.length === 1 ? 'it' : 'they'}{' '}
+                can&apos;t be read:{' '}
+                {unreadable.map((item) => item.name).join(', ')}.
+              </span>
+            </output>
           )}
         </section>
         <section className="workflow-batch-section workflow-batch-fields">
@@ -454,7 +665,7 @@ export default function WorkflowRunDialog({
               Export a PDF report for each item
               {recipe && !recipe.report
                 ? ' · this workflow has no report template'
-                : ''}
+                : ' · you can also export them later from the results'}
             </span>
           </div>
         </section>
@@ -490,8 +701,8 @@ export default function WorkflowRunDialog({
               })
             }
           >
-            <Play size={14} /> Run {runnable.length}{' '}
-            {runnable.length === 1 ? 'recording' : 'recordings'}
+            <Play size={14} /> Run {formatCount(runnable.length, 'recording')}
+            {willError ? ` (${willError} will error)` : ''}
           </button>
         </div>
         <input

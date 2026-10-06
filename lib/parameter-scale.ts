@@ -46,6 +46,24 @@ export function roundSignificant(value: number, digits = 3): number {
   return Number(value.toPrecision(digits));
 }
 
+/**
+ * A readable trigger threshold halfway between a signal's minimum and maximum,
+ * rounded to a 1/2/5 step near 1 % of the range. `undefined` without a range.
+ */
+export function rangeMidpoint(min?: number, max?: number): number | undefined {
+  if (min === undefined || max === undefined) return undefined;
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  const middle = (min + max) / 2;
+  const span = Math.abs(max - min);
+  if (!span) return roundSignificant(middle, 6);
+  const raw = span / 100;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const fraction = raw / power;
+  const step =
+    (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * power;
+  return Number((Math.round(middle / step) * step).toPrecision(12));
+}
+
 /** Compact number text for hints and preset labels. */
 export function formatQuantity(value: number, digits = 3): string {
   if (!Number.isFinite(value)) return '—';

@@ -1,4 +1,5 @@
 import type { Plot } from './signal-types';
+import { formatCount } from './format-count';
 import {
   validPlotRange,
   type PlotAxes,
@@ -80,15 +81,17 @@ export function groupPlotAxes(
     }
   return [...groups].map(([key, group]) => {
     const names = [...(group.names.size ? group.names : group.references)];
-    const name =
-      names.slice(0, 2).join(' / ') +
-      (names.length > 2 ? ` +${names.length - 2}` : '');
+    // One trace names its axis; several traces share it by unit, so the unit
+    // is the title rather than a list of trace names.
+    const label =
+      names.length === 1
+        ? `${names[0]} (${group.unit || 'unitless'})`
+        : group.unit || `Unitless · ${formatCount(names.length, 'trace')}`;
     return {
       key,
       unit: group.unit,
       color: group.color,
-      label:
-        axes?.values?.[key]?.label || `${name} (${group.unit || 'unitless'})`,
+      label: axes?.values?.[key]?.label || label,
     };
   });
 }

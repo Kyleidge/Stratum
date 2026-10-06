@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Download } from 'lucide-react';
 import {
   Dialog,
@@ -7,9 +7,14 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { RegionSelect } from './region-controls';
-import { WorkflowIndex } from '@/lib/workflow-history';
-import { reportHtml, valuesCsv } from '@/lib/workflow-delivery';
+import { stepName, WorkflowIndex } from '@/lib/workflow-history';
+import {
+  exportFileName,
+  reportHtml,
+  valuesCsv,
+  type ExportKind,
+} from '@/lib/workflow-delivery';
+import { formatCount } from '@/lib/format-count';
 import type {
   EngineRequest,
   EngineResponse,
@@ -29,6 +34,9 @@ type Props = {
   onSaved: (filename: string) => void;
 };
 
+type Scope = 'viewed' | 'checked' | 'step';
+type Format = 'csv' | 'summary' | 'report';
+
 export default function WorkflowExport(props: Props) {
   const [busy, setBusy] = useState(false);
   return (
@@ -39,14 +47,45 @@ export default function WorkflowExport(props: Props) {
       }}
     >
       <DialogContent className="workflow-dialog" showCloseButton={!busy}>
-        <DialogTitle>Export results or create a report</DialogTitle>
+        <DialogTitle>Export data</DialogTitle>
         <DialogDescription>
-          Choose exactly what to include. Exports keep the original signals and
-          workflow unchanged.
+          Download exact results as a file. Exporting never changes your
+          recordings or steps.
         </DialogDescription>
         <ExportForm {...props} busy={busy} setBusy={setBusy} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** One choice of a radio group, shown as a card with a plain description. */
+function Choice({
+  name,
+  value,
+  checked,
+  title,
+  children,
+  onChange,
+}: {
+  name: string;
+  value: string;
+  checked: boolean;
+  title: string;
+  children: ReactNode;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="workflow-choice-card" data-checked={checked}>
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={() => onChange(value)}
+      />
+      <strong>{title}</strong>
+      <small>{children}</small>
+    </label>
   );
 }
 
@@ -63,7 +102,7 @@ function ExportForm({
   setBusy,
 }: Props & { busy: boolean; setBusy: (busy: boolean) => void }) {
   const index = new WorkflowIndex(project);
-  const [scope, setScope] = useState(
+  const [scope, setScope] = useState<Scope>(
     viewedId ? 'viewed' : checkedIds.length ? 'checked' : 'step',
   );
   const ids =
@@ -73,20 +112,26 @@ function ExportForm({
         ? checkedIds
         : (step?.outputIds ?? []);
   const allValues = ids.length > 0 && ids.every((id) => index.values.has(id));
-  const [format, setFormat] = useState('csv');
-  const resolvedFormat =
+  const [format, setFormat] = useState<Format>('csv');
+  const kind: ExportKind =
     format === 'csv' ? (allValues ? 'values' : 'samples') : format;
   const [error, setError] = useState('');
   const cancelled = useRef(false);
-  const filename = `Stratum-${resolvedFormat}-${ids.length}.${format === 'report' ? 'html' : 'csv'}`;
-  const description =
-    resolvedFormat === 'values'
-      ? 'One row per calculated value, with its input, unit, calculation and sample coverage.'
-      : resolvedFormat === 'samples'
-        ? 'Every evaluated sample. Columns: signal, ID, recording, unit, time (s), value. Each signal keeps its own time axis; missing values are blank.'
-        : resolvedFormat === 'summary'
-          ? 'One summary row per signal: minimum, maximum, sample average and time integral. Individual samples are not included.'
-          : 'A standalone HTML report with selected results, signal plots and contributing history. Open it in a browser to print or save as PDF.';
+  const stepRef = step ? `#${String(step.sequence + 1).padStart(3, '0')}` : '';
+  const viewedKind =
+    viewedId && index.values.has(viewedId) ? 'value' : 'signal';
+  const checkedNoun = checkedIds.every((id) => index.values.has(id))
+    ? 'value'
+    : 'signal';
+  const scopeName =
+    scope === 'viewed' && viewedId
+      ? index.label(viewedId)
+      : scope === 'checked'
+        ? `checked ${formatCount(checkedIds.length, checkedNoun)}`
+        : step
+          ? `${stepRef} ${stepName(step)}`
+          : '';
+  const filename = exportFileName(project, ids, scopeName, kind);
 
   async function download() {
     if (!ids.length) return;
@@ -95,27 +140,28 @@ function ExportForm({
     cancelled.current = false;
     try {
       let blob: Blob;
-      if (resolvedFormat === 'values')
+      if (kind === 'values')
         blob = new Blob([valuesCsv(project, ids)], {
           type: 'text/csv;charset=utf-8',
         });
-      else if (resolvedFormat === 'report') {
+      else if (kind === 'report') {
         const signalIds = ids.filter((id) => index.nodes.has(id));
         const response = await request({ type: 'view', ids: signalIds });
         if (response.type !== 'plots')
-          throw new Error('Could not prepare report plots.');
+          throw new Error('Could not prepare the summary plots.');
         blob = new Blob([reportHtml(project, ids, response.plots)], {
           type: 'text/html;charset=utf-8',
         });
       } else {
         const response = await request({
-          type: resolvedFormat === 'samples' ? 'export-samples' : 'export',
+          type: kind === 'samples' ? 'export-samples' : 'export',
           ids,
         });
         if (response.type !== 'export')
           throw new Error('Could not prepare the export.');
         blob = response.blob;
       }
+      // A cancelled request may still resolve; it must never download.
       if (cancelled.current)
         throw new Error('Export cancelled. No file was downloaded.');
       const url = URL.createObjectURL(blob);
@@ -138,68 +184,100 @@ function ExportForm({
       setBusy(false);
     }
   }
+  const chooseScope = (value: string) => {
+    setScope(value as Scope);
+    setFormat('csv');
+    setError('');
+  };
   return (
     <div className="workflow-export-form">
-      <fieldset disabled={busy}>
-        <RegionSelect
-          label="Include"
-          value={scope}
-          items={[
-            ...(viewedId
-              ? [
-                  {
-                    value: 'viewed',
-                    label: `Viewed ${index.values.has(viewedId) ? 'value' : 'signal'} · 1 output`,
-                  },
-                ]
-              : []),
-            ...(checkedIds.length
-              ? [
-                  {
-                    value: 'checked',
-                    label: `Checked signals · ${checkedIds.length} outputs`,
-                  },
-                ]
-              : []),
-            ...(step?.outputIds.length
-              ? [
-                  {
-                    value: 'step',
-                    label: `All outputs from #${String(step.sequence + 1).padStart(3, '0')} · ${step.outputIds.length} outputs`,
-                  },
-                ]
-              : []),
-          ]}
-          onChange={(value) => {
-            setScope(value);
-            setFormat('csv');
-            setError('');
-          }}
-        />
-        <RegionSelect
-          label="File format"
-          value={format}
-          items={[
-            { value: 'csv', label: allValues ? 'Values CSV' : 'Samples CSV' },
-            ...(!allValues
-              ? [{ value: 'summary', label: 'Signal summary CSV' }]
-              : []),
-            { value: 'report', label: 'Printable report (HTML)' },
-          ]}
-          onChange={setFormat}
-        />
+      <fieldset disabled={busy} className="workflow-export-choices">
+        <legend>What to export</legend>
+        {viewedId && (
+          <Choice
+            name="export-scope"
+            value="viewed"
+            checked={scope === 'viewed'}
+            title={`This ${viewedKind}`}
+            onChange={chooseScope}
+          >
+            {index.label(viewedId)}
+          </Choice>
+        )}
+        {checkedIds.length > 0 && (
+          <Choice
+            name="export-scope"
+            value="checked"
+            checked={scope === 'checked'}
+            title={`Checked (${checkedIds.length})`}
+            onChange={chooseScope}
+          >
+            The {formatCount(checkedIds.length, checkedNoun)} checked in History
+          </Choice>
+        )}
+        {!!step?.outputIds.length && (
+          <Choice
+            name="export-scope"
+            value="step"
+            checked={scope === 'step'}
+            title={`Whole step ${stepRef}`}
+            onChange={chooseScope}
+          >
+            {stepName(step)} · {formatCount(step.outputIds.length, 'output')}
+          </Choice>
+        )}
       </fieldset>
-      <p>{description}</p>
-      {resolvedFormat === 'samples' && (
-        <p className="workflow-muted">
-          Samples CSV is limited to 64 MiB per file. For larger recordings,
-          export shorter segments or fewer signals.
-        </p>
-      )}
+      <fieldset disabled={busy} className="workflow-export-choices">
+        <legend>Format</legend>
+        {allValues ? (
+          <Choice
+            name="export-format"
+            value="csv"
+            checked={format === 'csv'}
+            title="Values table (CSV)"
+            onChange={(value) => setFormat(value as Format)}
+          >
+            One row per value with its unit, calculation and input. Exact
+            numbers, for spreadsheets.
+          </Choice>
+        ) : (
+          <>
+            <Choice
+              name="export-format"
+              value="csv"
+              checked={format === 'csv'}
+              title="Every sample (CSV)"
+              onChange={(value) => setFormat(value as Format)}
+            >
+              Time and value of every sample, exactly as evaluated. Missing
+              samples stay blank. Up to 64 MiB per file.
+            </Choice>
+            <Choice
+              name="export-format"
+              value="summary"
+              checked={format === 'summary'}
+              title="Summary per signal (CSV)"
+              onChange={(value) => setFormat(value as Format)}
+            >
+              Minimum, maximum, average and time integral of each signal, one
+              row per signal.
+            </Choice>
+          </>
+        )}
+        <Choice
+          name="export-format"
+          value="report"
+          checked={format === 'report'}
+          title="Quick HTML summary"
+          onChange={(value) => setFormat(value as Format)}
+        >
+          A single web page with results, simple plots and the steps behind
+          them, to view or print. For a designed PDF, use Add to report.
+        </Choice>
+      </fieldset>
       <div className="workflow-export-preview">
         <strong>
-          {ids.length} {allValues ? 'value' : 'signal'}
-          {ids.length === 1 ? '' : 's'} included
+          {formatCount(ids.length, allValues ? 'value' : 'signal')} included
         </strong>
         <ul>
           {ids.slice(0, 30).map((id) => (
@@ -207,7 +285,7 @@ function ExportForm({
           ))}
         </ul>
         {ids.length > 30 && (
-          <small>And {ids.length - 30} more outputs in this scope.</small>
+          <small>And {formatCount(ids.length - 30, 'more output')}.</small>
         )}
         <p>
           File: <b>{filename}</b>

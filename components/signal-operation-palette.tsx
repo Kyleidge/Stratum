@@ -89,7 +89,14 @@ export function SignalOperationPalette({
   return (
     <Tabs
       value={group}
-      onValueChange={(next) => setGroup(String(next))}
+      onValueChange={(next) => {
+        const chosen = groups.find((item) => item.name === String(next));
+        if (!chosen) return;
+        setGroup(chosen.name);
+        // A category tab selects its first operation, so the settings and
+        // preview always match the visible cards.
+        if (!chosen.operations.includes(value)) onChange(chosen.operations[0]);
+      }}
       className="signal-palette"
     >
       <TabsList

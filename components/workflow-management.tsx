@@ -16,7 +16,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { affectedOperations } from '@/lib/workflow-lifecycle';
+import { formatCount } from '@/lib/format-count';
+import { affectedOperations, stepReference } from '@/lib/workflow-lifecycle';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import type { Project } from '@/lib/signal-types';
 import type { WorkflowStep } from '@/lib/workflow-types';
@@ -64,7 +65,7 @@ export default function WorkflowManagement({
           onClick={() => onAction('duplicate')}
         >
           <Copy size={14} />
-          Duplicate operation
+          New version…
         </button>
       )}
       <button
@@ -72,7 +73,7 @@ export default function WorkflowManagement({
         disabled={busy}
         onClick={() => onAction('rename')}
       >
-        Rename {outputId ? 'output' : 'operation'}
+        Rename {outputId ? 'output' : 'step'}
       </button>
       {step.kind === 'import' && (
         <button
@@ -89,7 +90,7 @@ export default function WorkflowManagement({
         onClick={() => onAction('delete')}
       >
         <Trash2 size={14} />
-        {step.kind === 'import' ? 'Remove recording' : 'Delete operation'}
+        {step.kind === 'import' ? 'Remove recording' : 'Delete step'}
       </button>
     </div>
   );
@@ -121,7 +122,7 @@ export function WorkflowManagementDialogs({
         ? project.nodes.some((node) => node.id === outputId)
           ? 'signal'
           : 'value'
-        : 'operation';
+        : 'step';
   const [name, setName] = useState(() =>
     action === 'rename-recording'
       ? (project.sources.find((source) => source.id === step.sourceId)?.name ??
@@ -132,6 +133,34 @@ export function WorkflowManagementDialogs({
   );
   const [error, setError] = useState('');
   const affected = deleting ? affectedOperations(project, step.id) : [];
+  const recording =
+    step.kind === 'import'
+      ? project.sources.find((source) => source.id === step.sourceId)
+      : undefined;
+  const dependents = affected.filter((item) => item.id !== step.id);
+  const outputCount = (items: WorkflowStep[]) =>
+    items.reduce((sum, item) => sum + item.outputIds.length, 0);
+  // A recording that is a batch item leaves that batch when it is removed.
+  const batch = recording
+    ? project.workflowBatches?.find((item) =>
+        item.runs.some((run) => run.sourceId === recording.id),
+      )
+    : undefined;
+  const itemId = batch?.runs.find(
+    (run) => run.sourceId === recording?.id,
+  )?.itemId;
+  const remaining =
+    batch?.runs.filter((run) => run.sourceId !== recording?.id).length ?? 0;
+  const target = recording
+    ? `recording ${recording.name}`
+    : `step ${stepReference(step)} ${stepName(step)}`;
+  const confirm = recording
+    ? dependents.length
+      ? `Remove recording and ${formatCount(dependents.length, 'step')}`
+      : 'Remove recording'
+    : affected.length > 1
+      ? `Delete ${formatCount(affected.length, 'step')}`
+      : 'Delete step';
   return (
     <>
       <AlertDialog
@@ -142,35 +171,47 @@ export function WorkflowManagementDialogs({
       >
         <AlertDialogContent className="workflow-dialog">
           <AlertDialogTitle>
-            {step.kind === 'import'
-              ? 'Remove this recording?'
-              : `Delete ${stepName(step)}?`}
+            {recording ? 'Remove' : 'Delete'} {target}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This removes {affected.length} operation
-            {affected.length === 1 ? '' : 's'} and{' '}
-            {affected.reduce((sum, item) => sum + item.outputIds.length, 0)}{' '}
-            outputs from the workspace. Dependent operations are removed as
-            complete batches, including their other outputs. Unrelated
-            operations stay in place. Undo can restore this change, including
-            after restarting the app (last 20 changes).
+            {recording
+              ? `This removes the recording's ${formatCount(step.outputIds.length, 'original signal')}${
+                  dependents.length
+                    ? ` and the ${formatCount(dependents.length, 'step')} built on them (${formatCount(outputCount(dependents), 'output')})`
+                    : ''
+                }. Unrelated recordings and steps stay in place.`
+              : dependents.length
+                ? `This deletes the step's ${formatCount(step.outputIds.length, 'output')} and the ${formatCount(dependents.length, 'later step')} that ${dependents.length === 1 ? 'uses' : 'use'} them (${formatCount(outputCount(dependents), 'output')}). Later steps are removed whole, including their other outputs. Unrelated steps stay in place.`
+                : `This deletes the step and its ${formatCount(step.outputIds.length, 'output')}. No later steps use them.`}{' '}
+            {batch &&
+              `${itemId ?? recording?.name} will be removed from batch '${batch.name}' (${
+                remaining
+                  ? `${formatCount(remaining, 'item')} ${remaining === 1 ? 'remains' : 'remain'}`
+                  : 'no items remain, so the batch is removed'
+              }). `}
+            Undo can restore this change, including after restarting the app
+            (last 20 changes).
           </AlertDialogDescription>
           <ul className="workflow-impact">
             {affected.slice(0, 30).map((item) => (
               <li key={item.id}>
-                #{String(item.sequence + 1).padStart(3, '0')} {stepName(item)} ·{' '}
-                {item.outputIds.length} outputs
+                {stepReference(item)} {stepName(item)} ·{' '}
+                {formatCount(
+                  item.outputIds.length,
+                  item.kind === 'import' ? 'original signal' : 'output',
+                )}
               </li>
             ))}
           </ul>
           {affected.length > 30 && (
-            <p>And {affected.length - 30} more dependent operations.</p>
+            <p>
+              And {formatCount(affected.length - 30, 'more step', 'more steps')}
+              .
+            </p>
           )}
           {error && <p role="alert">{error}</p>}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>
-              Keep operation
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={busy}
               variant="destructive"
@@ -180,7 +221,7 @@ export function WorkflowManagementDialogs({
                   .catch((caught: Error) => setError(caught.message))
               }
             >
-              {busy ? 'Removing…' : 'Delete listed operations'}
+              {busy ? (recording ? 'Removing…' : 'Deleting…') : confirm}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

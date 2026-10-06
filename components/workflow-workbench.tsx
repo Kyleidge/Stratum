@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
+  CopyPlus,
   Download,
   ScanLine,
   Scissors,
@@ -63,9 +64,7 @@ import TimeWorkbench from './time-workbench';
 import type { TimeSettings } from '@/lib/time-types';
 import { workspaceTimeScope } from '@/lib/time-model';
 import { stepName, WorkflowIndex } from '@/lib/workflow-history';
-import { operationLabels } from '@/lib/signal-explorer';
 import { isBinaryOperation } from '@/lib/signal-arithmetic';
-import { SIGNAL_FUNCTIONS } from './signal-operation-palette';
 import { VALUE_FUNCTIONS } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
@@ -83,12 +82,15 @@ import PlotScratchpad, {
   type ActivePlot,
   type PlotScratchpadHandle,
 } from './plot-scratchpad';
-import WorkflowDock, { type DockTab } from './workflow-dock';
+import WorkflowDock, {
+  WorkflowStepSettings,
+  type DockTab,
+} from './workflow-dock';
 import WorkflowCommandPalette, {
   type PaletteCommand,
   type PaletteTarget,
 } from './workflow-command-palette';
-import { TRACE_COLORS } from '@/lib/plot-scratchpad';
+import { seriesColor, TRACE_COLORS } from '@/lib/plot-scratchpad';
 import WorkflowProperties from './workflow-properties';
 import WorkflowPaneResizer from './workflow-pane-resizer';
 import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
@@ -102,6 +104,7 @@ import {
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
+import OperationInputs, { editImpact, editTitle } from './operation-inputs';
 import { RegionSelect } from './region-controls';
 import WorkflowExport from './workflow-export';
 import {
@@ -111,11 +114,12 @@ import {
 } from './workflow-management';
 import WorkflowStorage from './workflow-storage';
 import WorkflowList from './workflow-list';
-import { affectedOperations } from '@/lib/workflow-lifecycle';
+import { describeChange } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
 import ReportBuilderMockup from './report-builder-mockup';
 import {
   reportAssets,
+  reportSnapshotStates,
   reportTargetAssets,
   resolveReportAssets,
 } from '@/lib/report-data';
@@ -139,7 +143,10 @@ import WorkflowItemBar from './workflow-item-bar';
 import {
   batchSummaryCsv,
   downloadBlob,
+  mappedChannels,
   runForSource,
+  storeBatchView,
+  storedBatchView,
   type PreflightItem,
 } from '@/lib/workflow-batch';
 import {
@@ -150,12 +157,23 @@ import {
 } from '@/lib/workflow-batch-report';
 import {
   currentResults,
+  isFlagged,
   liveRunStatus,
   runEdited,
   runProblems,
   stepStatus,
 } from '@/lib/workflow-checks';
 import { YAML_LIMITS } from '@/lib/workflow-yaml';
+import { formatCount } from '@/lib/format-count';
+import { WorkflowAlert } from './workflow-alert';
+import { WorkflowGuide } from './workflow-guide';
+import { WorkflowNextSteps, WorkflowWelcome } from './workflow-welcome';
+import {
+  dismissTour,
+  ExampleTour,
+  exampleTourStops,
+  tourDismissed,
+} from './example-tour';
 import {
   componentFiles,
   EOL_WORKFLOW,
@@ -171,9 +189,49 @@ const PAGE_SIZE = 30;
 /** Outputs of one operation drawn together on the Active plot. */
 const ACTIVE_LIMIT = 8;
 const INSPECTOR_STORAGE_KEY = 'stratum-inspector-open-v1';
+/** The last inspected step or output on this device; never workflow history. */
+const SELECTION_STORAGE_KEY = 'stratum-workflow-selection-v1';
+function readStoredSelection(): WorkflowSelection | undefined {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(SELECTION_STORAGE_KEY) ?? 'null',
+    );
+    if (
+      saved &&
+      typeof saved === 'object' &&
+      'kind' in saved &&
+      'id' in saved &&
+      (saved.kind === 'step' || saved.kind === 'output') &&
+      typeof saved.id === 'string'
+    )
+      return { kind: saved.kind, id: saved.id };
+  } catch {
+    // A missing or unreadable preference opens the default selection.
+  }
+  return undefined;
+}
 const number = (value: number) => formatValue(value, 3);
 const reference = (step?: WorkflowStep) =>
   step ? `#${String(step.sequence + 1).padStart(3, '0')}` : '';
+const reportBlockCount = (document: { pages: { blocks: unknown[] }[] }) =>
+  document.pages.reduce((sum, page) => sum + page.blocks.length, 0);
+/**
+ * Blocks added to the report since it held `before`. The editor publishes
+ * its draft after rendering, so this waits briefly for the count to change;
+ * a capture that failed leaves it unchanged.
+ */
+async function reportBlocksAdded(
+  read: () => { pages: { blocks: unknown[] }[] } | undefined,
+  before: number,
+) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const report = read();
+    const added = report ? reportBlockCount(report) - before : 0;
+    if (added > 0) return added;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return 0;
+}
 type Editor = {
   editingStepId?: string;
   kind: 'derive' | 'segment' | 'value';
@@ -195,7 +253,7 @@ export default function WorkflowWorkbench() {
     ids: string[];
     saved?: TimeSettings;
     editingId?: string;
-    mode?: 'crop';
+    mode?: 'crop' | 'combine';
   }>();
   const source =
     project.sources.find((item) => item.id === sourceId) ?? project.sources[0];
@@ -352,6 +410,36 @@ export default function WorkflowWorkbench() {
   }
   const [tableQuery, setTableQuery] = useState(''),
     [page, setPage] = useState(0);
+  // Restore the last selection once the workspace opens, if it still exists.
+  const selectionRestored = useRef(false);
+  useEffect(() => {
+    if (!engine.ready || selectionRestored.current) return;
+    selectionRestored.current = true;
+    const saved = readStoredSelection();
+    if (
+      !saved ||
+      !(saved.kind === 'step'
+        ? index.steps.has(saved.id)
+        : index.owner.has(saved.id))
+    )
+      return;
+    const owner =
+      saved.kind === 'output' ? index.owner.get(saved.id) : undefined;
+    queueMicrotask(() => {
+      setChosen((current) => current ?? saved);
+      if (owner)
+        setPage(Math.floor(owner.outputIds.indexOf(saved.id) / PAGE_SIZE));
+      setView(saved.kind === 'step' ? 'outputs' : 'result');
+    });
+  }, [engine.ready, index]);
+  useEffect(() => {
+    if (!chosen) return;
+    try {
+      localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(chosen));
+    } catch {
+      // The selection still applies for this session.
+    }
+  }, [chosen]);
   const file = useRef<HTMLInputElement>(null);
   const workflowInput = useRef<HTMLInputElement>(null);
   const plots = useRef<PlotScratchpadHandle>(null);
@@ -363,19 +451,40 @@ export default function WorkflowWorkbench() {
   const reportsShown = workspaceView === 'reports';
   const [reportSheets, setReportSheets] = useState<PlotSheet[]>([]);
   const openDataInspector = useCallback(() => setWorkspaceView('data'), []);
+  // Adding to the report keeps Data shown: a toast offers Open Reports and
+  // the Reports switch counts snapshots added since it was last opened.
+  const [reportToast, setReportToast] = useState<{
+    id: number;
+    added: number;
+  }>();
+  const [reportAdded, setReportAdded] = useState(0);
   const openReports = useCallback(() => {
     setWorkspaceView('reports');
     setHistoryOpen(false);
     setInspectorDrawer(false);
+    setReportAdded(0);
+    setReportToast(undefined);
   }, []);
+  const announceReport = useCallback((added: number) => {
+    if (added > 0) setReportAdded((count) => count + added);
+    setReportToast({ id: Date.now(), added });
+  }, []);
+  useEffect(() => {
+    if (!reportToast) return;
+    const timer = setTimeout(() => setReportToast(undefined), 8000);
+    return () => clearTimeout(timer);
+  }, [reportToast]);
   // Stable, so the Save dialog reads the latest draft without re-extracting each render.
   const readReport = useCallback(() => report.current?.getReport(), []);
   const addReportBlocks = useCallback(
     (blocks: ReportBlock[]) => {
-      report.current?.addBlocks(blocks);
-      openReports();
+      const editor = report.current;
+      if (!editor || !blocks.length) return;
+      const before = reportBlockCount(editor.getReport());
+      editor.addBlocks(blocks);
+      void reportBlocksAdded(editor.getReport, before).then(announceReport);
     },
-    [openReports],
+    [announceReport],
   );
   const [dragged, setDragged] = useState<WorkflowTarget | null>(null);
   const [detailPanel, setDetailPanel] = useState<
@@ -434,12 +543,23 @@ export default function WorkflowWorkbench() {
       const target = readWorkflowDrag(raw, index);
       return target ? reportTargetAssets(index, target) : [];
     },
+    snapshotStates: (sources) => reportSnapshotStates(project, sources),
   };
-  function addToReport(ids: string[]) {
-    if (!ids.length || engine.busy || !engine.ready) return;
-    openReports();
+  /** Captures `ids` into the report; only a drop on Reports switches to it. */
+  function addToReport(ids: string[], open = false) {
+    const editor = report.current;
+    if (!ids.length || engine.busy || !engine.ready || !editor) return;
+    if (open) openReports();
     setDetailPanel(undefined);
-    void report.current?.addAssets(ids);
+    const before = reportBlockCount(editor.getReport());
+    void editor
+      .addAssets(ids)
+      .then(() =>
+        open ? undefined : reportBlocksAdded(editor.getReport, before),
+      )
+      .then((added) => {
+        if (added !== undefined) announceReport(added);
+      });
   }
 
   function select(next: WorkflowSelection) {
@@ -463,16 +583,18 @@ export default function WorkflowWorkbench() {
       setPage(Math.floor(owner.outputIds.indexOf(next.id) / PAGE_SIZE));
   }
   /**
-   * Checks or unchecks signals from History. The first check keeps a viewed
-   * signal, as Ctrl+click extends a selection; unchecking the last one
-   * follows the selection again.
+   * Checks or unchecks signals. A check box starts from the explicit checks
+   * alone; `extend` (Ctrl/Shift+click) first keeps a viewed signal, as a
+   * file list extends its selection. Unchecking the last one follows the
+   * selection again.
    */
-  function checkSignals(ids: string[], checked: boolean) {
+  function checkSignals(ids: string[], checked: boolean, extend = false) {
     const signals = new Set(ids.filter((id) => index.nodes.has(id)));
     if (!signals.size) return;
+    const current = extend ? inputIds : [...checkedSet];
     const next = checked
-      ? [...new Set([...inputIds, ...signals])]
-      : inputIds.filter((id) => !signals.has(id));
+      ? [...new Set([...current, ...signals])]
+      : current.filter((id) => !signals.has(id));
     setInputs(next.length ? next : null);
   }
   function follow(id: string) {
@@ -501,22 +623,61 @@ export default function WorkflowWorkbench() {
     setPage(0);
     setLineageRoot(null);
   }
-  async function openExample(refresh = false) {
+  /** Opens the example recording; the tour starts unless it was closed. */
+  async function openExample(
+    refresh = false,
+    tour = !refresh && !tourDismissed(),
+  ) {
     const next = await engine.mutate(
       {
         type: 'demo-workflow',
         refresh,
         sourceId: refresh ? source?.id : undefined,
       },
-      refresh ? 'Refreshing example workflow…' : 'Opening example workflow…',
+      refresh
+        ? 'Refreshing the example recording…'
+        : 'Opening the example recording…',
     );
     const example = next.sources.find(
       (item) => item.exampleKey === WORKFLOW_EXAMPLE,
     );
     if (example) switchSource(example.id);
-    setNotice(
-      'Example ready. Follow the seven steps in History, or explore the results below.',
+    const stops = exampleTourStops(next);
+    if (tour && stops.length) {
+      select(stops[0].target);
+      setTour(0);
+    } else
+      setNotice(
+        'Example ready. Follow its seven steps in History, or start the tour from the guide.',
+      );
+  }
+  // The example tour only selects existing items; it never changes History.
+  const [tour, setTour] = useState<number | null>(null);
+  const tourStops = tour === null ? [] : exampleTourStops(project);
+  function goTour(next: number) {
+    const stop = tourStops[next];
+    if (!stop) return;
+    setTour(next);
+    if (stop.target.kind === 'step') selectStep(stop.target.id);
+    else follow(stop.target.id);
+  }
+  function closeTour() {
+    dismissTour();
+    setTour(null);
+  }
+  function startTour() {
+    setHelp(false);
+    const example = project.sources.find(
+      (item) => item.exampleKey === WORKFLOW_EXAMPLE,
     );
+    const stops = exampleTourStops(project);
+    if (!example || !stops.length) {
+      void openExample(false, true).catch(() => {});
+      return;
+    }
+    switchSource(example.id);
+    select(stops[0].target);
+    setTour(0);
   }
   function reveal(next: Project) {
     const last = next.workflowSteps?.at(-1);
@@ -546,7 +707,7 @@ export default function WorkflowWorkbench() {
         : last.outputIds,
     );
     announceChange(
-      `${reference(last)} ${stepName(last)} created ${last.outputIds.length} ${last.kind === 'value' ? 'values' : 'signals'}.`,
+      `${reference(last)} ${stepName(last)} created ${formatCount(last.outputIds.length, last.kind === 'value' ? 'value' : 'signal')}.`,
     );
   }
   async function perform(message: EngineRequest, label: string) {
@@ -596,8 +757,7 @@ export default function WorkflowWorkbench() {
     setLineageRoot(null);
     setPast([]);
     setPage(0);
-    if (message.type === 'undo' || message.type === 'redo') setNotice(label);
-    else announceChange(label);
+    announceChange(label);
     setChosen(null);
     setView('result');
   }
@@ -607,12 +767,26 @@ export default function WorkflowWorkbench() {
   function importFiles(selected: File[]) {
     if (!selected.length) return;
     void (async () => {
-      for (const item of selected)
-        await perform(
+      const unitless: string[] = [];
+      for (const item of selected) {
+        const next = await engine.mutate(
           { type: 'import', file: item },
           `Importing ${item.name}…`,
         );
+        reveal(next);
+        const added = next.sources.at(-1);
+        const units = new Map(next.nodes.map((node) => [node.id, node.unit]));
+        const missing =
+          added?.channels.filter((id) => units.get(id) === '—').length ?? 0;
+        if (added && missing)
+          unitless.push(`${added.name} (${formatCount(missing, 'signal')})`);
+      }
       if (selected.length > 1) setSourceId('all');
+      // A gentle hint, not an error: the recording imported correctly.
+      if (unitless.length)
+        announceChange(
+          `Imported. Some headers have no unit: ${unitless.join(', ')}. Add units in brackets, such as Torque [Nm], so plots and values show them.`,
+        );
     })().catch(() => {});
   }
   async function openRunDialog(
@@ -716,6 +890,9 @@ export default function WorkflowWorkbench() {
         itemId: item.itemId,
         file: item.file,
         sourceId: item.sourceId,
+        ...(Object.keys(item.mapping).length
+          ? { channelMap: item.mapping }
+          : {}),
       })),
       plan.items.map(
         (item, position) =>
@@ -777,11 +954,11 @@ export default function WorkflowWorkbench() {
     const steps = new Map(
       (finished.workflowSteps ?? []).map((item) => [item.id, item]),
     );
-    const flagged = batch.runs.filter(
-      (run) => liveRunStatus(run, steps) !== 'pass',
+    const flagged = batch.runs.filter((run) =>
+      isFlagged(liveRunStatus(run, steps)),
     ).length;
     announceChange(
-      `${cancelled ? 'Batch cancelled · ' : ''}${batch.runs.length} ${batch.runs.length === 1 ? 'recording' : 'recordings'} processed · ${flagged} flagged${failures.length ? ` · ${failures.length} not imported` : ''}.`,
+      `${cancelled ? 'Batch cancelled · ' : ''}${formatCount(batch.runs.length, 'recording')} processed · ${flagged} flagged${failures.length ? ` · ${failures.length} not imported` : ''}.`,
     );
     if (plan.exportSummary) exportSummary(finished, batch);
     if (plan.exportReports && !cancelled)
@@ -847,7 +1024,19 @@ export default function WorkflowWorkbench() {
   async function previewReport(batch: WorkflowBatch, run: WorkflowRun) {
     try {
       const document = await renderRunReport({ project, batch, run, request });
-      report.current?.loadReport(document);
+      // A read-only preview: the user's draft stays until they choose to
+      // replace it, and Back returns to these batch results.
+      report.current?.previewReport({
+        report: document,
+        label: `Item ${run.itemId}`,
+        back: {
+          label: 'Back to batch',
+          run: () => {
+            setBatchPanel(true);
+            openDataInspector();
+          },
+        },
+      });
       openReports();
     } catch (error) {
       setNotice(
@@ -873,12 +1062,29 @@ export default function WorkflowWorkbench() {
     const first = runs
       .map((run) => index.steps.get(run.steps[recipeStepId] ?? ''))
       .find(Boolean);
+    // Items whose step was skipped or produced nothing are named, not hidden.
+    const missing = runs.filter(
+      (run) =>
+        !index.steps
+          .get(run.steps[recipeStepId] ?? '')
+          ?.outputIds.some((id) => index.nodes.has(id)),
+    );
+    const plotted = runs.length - missing.length;
     setBatchPanel(false);
     plots.current?.createPlotFromTraces(
-      `${first ? stepName(first) : recipeStepId} · ${runs.length} items`,
+      `${first ? stepName(first) : recipeStepId} · ${formatCount(plotted, 'item')}`,
       traces,
       { zeroTime: true },
     );
+    if (missing.length)
+      setNotice(
+        `Plotted ${plotted} of ${formatCount(runs.length, 'item')}. ${missing
+          .slice(0, 5)
+          .map((run) => run.itemId)
+          .join(
+            ', ',
+          )}${missing.length > 5 ? ` and ${missing.length - 5} more` : ''} ${missing.length === 1 ? 'has' : 'have'} no output for this step, because it was skipped or failed.`,
+      );
   }
   async function setChecks(stepId: string, checks: CheckDefinition[]) {
     await engine.mutate(
@@ -889,13 +1095,62 @@ export default function WorkflowWorkbench() {
       checks.length ? 'Checks saved and evaluated.' : 'Checks removed.',
     );
   }
+  /**
+   * Undo/Redo names the action and keeps the affected step selected while it
+   * exists; otherwise the current selection stays when it still exists.
+   */
+  async function travel(direction: 'undo' | 'redo') {
+    const label = direction === 'undo' ? engine.undoLabel : engine.redoLabel;
+    const verb = direction === 'undo' ? 'Undid' : 'Redid';
+    const message = label ? `${verb}: ${label}` : `${verb} last change.`;
+    const before = project;
+    const after = await engine.mutate({ type: direction }, message);
+    const change =
+      direction === 'undo'
+        ? describeChange(after, before)
+        : describeChange(before, after);
+    const steps = after.workflowSteps ?? [];
+    const target = steps.find((item) => item.id === change?.stepId);
+    const exists = (item: WorkflowSelection | null) =>
+      !!item &&
+      (item.kind === 'step'
+        ? steps.some((candidate) => candidate.id === item.id)
+        : steps.some((candidate) => candidate.outputIds.includes(item.id)));
+    const kept = exists(chosen) ? chosen : null;
+    const keptOwner =
+      kept?.kind === 'step'
+        ? kept.id
+        : steps.find((item) => kept && item.outputIds.includes(kept.id))?.id;
+    const next =
+      kept && (!target || keptOwner === target.id)
+        ? kept
+        : target
+          ? { kind: 'step' as const, id: target.id }
+          : kept;
+    setInputs(null);
+    setQuery('');
+    setTableQuery('');
+    setLineageRoot(null);
+    setPast([]);
+    setPage(0);
+    setNotice(message);
+    if (
+      target &&
+      next?.id === target.id &&
+      !scopedStepIds.has(target.id) &&
+      target.sourceId !== sourceId
+    )
+      setSourceId('all');
+    setChosen(next);
+    setView(next?.kind === 'step' ? 'outputs' : 'result');
+  }
   function undo() {
     if (!engine.canUndo || engine.busy) return;
-    void manage({ type: 'undo' }, 'Undid last change.').catch(() => {});
+    void travel('undo').catch(() => {});
   }
   function redo() {
     if (!engine.canRedo || engine.busy) return;
-    void manage({ type: 'redo' }, 'Redid last change.').catch(() => {});
+    void travel('redo').catch(() => {});
   }
   // Ctrl+Z / Ctrl+Y outside text fields and dialogs, with the latest handlers.
   // Reports owns its keyboard: its Undo never changes the signal workflow.
@@ -1286,7 +1541,11 @@ export default function WorkflowWorkbench() {
           title={`Open ${index.label(value.id)}`}
         >
           <span>
-            <i style={{ background: traceColor.get(value.id) }} />
+            <i
+              style={{
+                background: seriesColor(traceColor.get(value.id) ?? ''),
+              }}
+            />
             {index.label(value.id)}
           </span>
           <strong>
@@ -1323,7 +1582,9 @@ export default function WorkflowWorkbench() {
     ).map(([action, label, icon]) => ({
       id: `command:${action}`,
       label,
-      hint: `Apply to ${processingIds.length === 1 ? index.label(processingIds[0]) : `${processingIds.length} signals`}`,
+      hint: !project.sources.length
+        ? 'Import a recording first'
+        : `Apply to ${processingIds.length === 1 ? index.label(processingIds[0]) : formatCount(processingIds.length, 'signal')}`,
       icon,
       disabled: engine.busy || !engine.ready || !processingIds.length,
       run: () => toolbarAction(action),
@@ -1331,6 +1592,7 @@ export default function WorkflowWorkbench() {
     {
       id: 'command:import',
       label: 'Import CSV…',
+      hint: 'Add a recording',
       icon: ArrowDownToLine,
       disabled: engine.busy || !engine.ready,
       run: () => file.current?.click(),
@@ -1352,7 +1614,7 @@ export default function WorkflowWorkbench() {
     },
     {
       id: 'command:save-workflow',
-      label: 'Save workflow…',
+      label: "Save this recording's workflow…",
       hint: 'Steps, checks and report layout as a .stratum.yaml file',
       icon: Save,
       disabled: engine.busy || !project.sources.length,
@@ -1361,7 +1623,7 @@ export default function WorkflowWorkbench() {
     ...batches.slice(-5).map((batch) => ({
       id: `command:batch:${batch.id}`,
       label: `Open batch results · ${batch.name}`,
-      hint: `${batch.runs.length} items`,
+      hint: formatCount(batch.runs.length, 'item'),
       icon: ListChecks,
       run: () => switchSource(`batch:${batch.id}`),
     })),
@@ -1385,7 +1647,8 @@ export default function WorkflowWorkbench() {
       : []),
     {
       id: 'command:export',
-      label: 'Export / report…',
+      label: 'Export data…',
+      hint: 'Values or samples as CSV, or a quick HTML summary',
       icon: Download,
       disabled: !step?.outputIds.length,
       run: () => setExportOpen(true),
@@ -1393,7 +1656,7 @@ export default function WorkflowWorkbench() {
     {
       id: 'command:report',
       label: 'Add to report',
-      hint: 'Capture the viewed output or operation',
+      hint: 'Capture the viewed output or step',
       icon: FilePlus2,
       disabled:
         engine.busy || !engine.ready || !reportWorkspace.selectionIds.length,
@@ -1407,7 +1670,9 @@ export default function WorkflowWorkbench() {
     },
     {
       id: 'command:undo',
-      label: 'Undo last change',
+      label: engine.undoLabel
+        ? `Undo: ${engine.undoLabel}`
+        : 'Undo last change',
       shortcut: 'Ctrl Z',
       icon: Undo2,
       disabled: !engine.canUndo || engine.busy,
@@ -1415,7 +1680,9 @@ export default function WorkflowWorkbench() {
     },
     {
       id: 'command:redo',
-      label: 'Redo last change',
+      label: engine.redoLabel
+        ? `Redo: ${engine.redoLabel}`
+        : 'Redo last change',
       shortcut: 'Ctrl Y',
       icon: Redo2,
       disabled: !engine.canRedo || engine.busy,
@@ -1429,7 +1696,7 @@ export default function WorkflowWorkbench() {
     },
     {
       id: 'command:inspector',
-      label: 'Show or hide the inspector',
+      label: 'Show or hide Details',
       icon: PanelRight,
       run: toggleInspector,
     },
@@ -1445,7 +1712,7 @@ export default function WorkflowWorkbench() {
       {
         id: `step:${item.id}`,
         label: `${reference(item)} ${stepName(item)}`,
-        hint: `Operation · ${item.outputIds.length} output${item.outputIds.length === 1 ? '' : 's'}`,
+        hint: `Step · ${formatCount(item.outputIds.length, 'output')}`,
         icon:
           item.kind === 'value'
             ? Hash
@@ -1532,7 +1799,29 @@ export default function WorkflowWorkbench() {
     status: liveRunStatus(itemRun.run, index.steps),
     problems: runProblems(itemRun.run, index.steps),
     edited: runEdited(itemRun.run, index.steps),
+    mapped: mappedChannels(
+      project.workflowRecipes?.find(
+        (recipe) => recipe.hash === itemRun.batch.recipeHash,
+      )?.text,
+      itemRun.run,
+    ),
   };
+  // Reopen the batch results that were open before a reload (device-local).
+  const batchViewRestored = useRef(false);
+  useEffect(() => {
+    if (batchViewRestored.current || !engine.ready) return;
+    batchViewRestored.current = true;
+    const id = storedBatchView();
+    if (id && (project.workflowBatches ?? []).some((item) => item.id === id))
+      queueMicrotask(() => {
+        setSourceId(`batch:${id}`);
+        setBatchPanel(true);
+      });
+  }, [engine.ready, project]);
+  const openBatchId = batchShown && scopeBatch ? scopeBatch.id : '';
+  useEffect(() => {
+    if (batchViewRestored.current) storeBatchView(openBatchId);
+  }, [openBatchId]);
   const canReport = (batch: WorkflowBatch) => {
     try {
       return !!batchRecipe(project, batch).recipe.report;
@@ -1568,7 +1857,14 @@ export default function WorkflowWorkbench() {
             workflow,
             files.filter((item) => item !== workflow),
           );
-        else importFiles(files.filter((item) => /\.csv$/i.test(item.name)));
+        else {
+          const recordings = files.filter((item) => /\.csv$/i.test(item.name));
+          if (recordings.length) importFiles(recordings);
+          else
+            engine.setError(
+              `${files[0].name} is not a CSV file. Save the recording as comma-separated CSV and drop it again.`,
+            );
+        }
       }}
       data-workspace={workspaceView}
       data-history={historyOpen}
@@ -1594,17 +1890,21 @@ export default function WorkflowWorkbench() {
           <button
             type="button"
             aria-label="Data Inspector"
-            title="Data Inspector: signals, operations and plots"
+            title="Data Inspector: signals, steps and plots"
             aria-current={reportsShown ? undefined : 'page'}
             aria-controls="workflow-data-workspace"
             onClick={openDataInspector}
           >
             <Waves />
-            <span>Data Inspector</span>
+            <span>Data</span>
           </button>
           <button
             type="button"
-            aria-label="Reports"
+            aria-label={
+              reportAdded
+                ? `Reports, ${formatCount(reportAdded, 'new snapshot')}`
+                : 'Reports'
+            }
             title="Reports: compose and export a PDF. Drop a History item here to add it."
             aria-current={reportsShown ? 'page' : undefined}
             aria-controls="workflow-reports-workspace"
@@ -1627,11 +1927,17 @@ export default function WorkflowWorkbench() {
                 reportWorkspace.resolveDrop(
                   event.dataTransfer.getData(WORKFLOW_DRAG_TYPE),
                 ),
+                true,
               );
             }}
           >
             <FileText />
             <span>Reports</span>
+            {!!reportAdded && (
+              <span className="workflow-workspace-badge" aria-hidden>
+                {reportAdded > 99 ? '99+' : reportAdded}
+              </span>
+            )}
           </button>
         </nav>
         {/* Signal controls stay mounted in Reports so their state is kept. */}
@@ -1707,7 +2013,11 @@ export default function WorkflowWorkbench() {
           <button
             className="workflow-icon-button workflow-quiet"
             aria-label="Undo last change"
-            title="Undo last change · Ctrl+Z (kept across restarts)"
+            title={
+              engine.undoLabel
+                ? `Undo: ${engine.undoLabel} · Ctrl+Z`
+                : 'Undo last change · Ctrl+Z (kept across restarts)'
+            }
             disabled={!engine.canUndo || engine.busy}
             onClick={() => undo()}
           >
@@ -1716,7 +2026,11 @@ export default function WorkflowWorkbench() {
           <button
             className="workflow-icon-button workflow-quiet"
             aria-label="Redo last change"
-            title="Redo last change · Ctrl+Y"
+            title={
+              engine.redoLabel
+                ? `Redo: ${engine.redoLabel} · Ctrl+Y`
+                : 'Redo last change · Ctrl+Y'
+            }
             disabled={!engine.canRedo || engine.busy}
             onClick={() => redo()}
           >
@@ -1731,6 +2045,7 @@ export default function WorkflowWorkbench() {
             checked={inputs !== null}
             hasPast={past.length > 0}
             busy={engine.busy || !engine.ready}
+            empty={!project.sources.length}
             onAction={handleAction}
             onClearChecked={() => setInputs(null)}
             onDragEnd={() => setDragged(null)}
@@ -1763,8 +2078,8 @@ export default function WorkflowWorkbench() {
                 render={
                   <button
                     className="secondary-button workflow-import-more"
-                    aria-label="Workflow and batch options"
-                    title="Run a workflow on many recordings"
+                    aria-label="More import options"
+                    title="Workflows: run one on many recordings, open or save one"
                     disabled={engine.busy || !engine.ready}
                   />
                 }
@@ -1784,7 +2099,7 @@ export default function WorkflowWorkbench() {
                   disabled={!project.sources.length}
                   onClick={() => setSaveOpen(true)}
                 >
-                  <Save size={14} /> Save a recording&apos;s workflow…
+                  <Save size={14} /> Save this recording&apos;s workflow…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={openBatchExample}>
@@ -1805,13 +2120,11 @@ export default function WorkflowWorkbench() {
               cancel={engine.cancel}
               example={openExample}
               exampleName={source?.synthetic ? source.name : undefined}
-              onSaveWorkflow={() => setSaveOpen(true)}
               onOpenWorkflow={(chosen) => void openWorkflowFile(chosen)}
-              onBatchExample={openBatchExample}
             />
           </div>
           <button
-            className="workflow-icon-button workflow-quiet"
+            className="workflow-icon-button workflow-quiet workflow-theme-toggle"
             aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
             title="Switch between light and dark themes"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -1828,10 +2141,10 @@ export default function WorkflowWorkbench() {
           </button>
           <button
             className="workflow-icon-button workflow-quiet workflow-inspector-toggle"
-            aria-label="Toggle inspector"
+            aria-label="Toggle Details"
             aria-expanded={inspectorShown}
             aria-controls="workflow-inspector"
-            title="Show or hide the inspector"
+            title="Show or hide Details"
             hidden={reportsShown}
             onClick={toggleInspector}
           >
@@ -1877,53 +2190,59 @@ export default function WorkflowWorkbench() {
         >
           <div className="workflow-sidebar-heading">
             <strong>History</strong>
-            <small title="Chronological order · oldest first">
-              {steps.length} {steps.length === 1 ? 'step' : 'steps'} · oldest
-              first
-            </small>
-          </div>
-          <label className="workflow-search">
-            <Search size={14} />
-            <input
-              aria-label="Search workflow"
-              placeholder="Filter steps and outputs"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            {query && (
-              <button
-                aria-label="Clear workflow search"
-                onClick={() => setQuery('')}
-              >
-                <X size={13} />
-              </button>
+            {!!project.workflowSteps?.length && (
+              <small title="Chronological order · oldest first">
+                {formatCount(steps.length, 'step')} · oldest first
+              </small>
             )}
-          </label>
-          <fieldset className="workflow-chips">
-            <legend className="sr-only">Output type</legend>
-            {(
-              [
-                ['all', 'All'],
-                ['signals', 'Signals'],
-                ['values', 'Values'],
-              ] as const
-            ).map(([kind, text]) => (
+          </div>
+          {/* Search and filters appear once there is something to filter. */}
+          {!!project.workflowSteps?.length && (
+            <label className="workflow-search">
+              <Search size={14} />
+              <input
+                aria-label="Search workflow"
+                placeholder="Filter steps and outputs"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {query && (
+                <button
+                  aria-label="Clear workflow search"
+                  onClick={() => setQuery('')}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </label>
+          )}
+          {!!project.workflowSteps?.length && (
+            <fieldset className="workflow-chips">
+              <legend className="sr-only">Output type</legend>
+              {(
+                [
+                  ['all', 'All'],
+                  ['signals', 'Signals'],
+                  ['values', 'Values'],
+                ] as const
+              ).map(([kind, text]) => (
+                <button
+                  key={kind}
+                  aria-pressed={outputFilter === kind}
+                  onClick={() => setOutputFilter(kind)}
+                >
+                  {text}
+                </button>
+              ))}
               <button
-                key={kind}
-                aria-pressed={outputFilter === kind}
-                onClick={() => setOutputFilter(kind)}
+                aria-pressed={flaggedOnly}
+                title="Show only steps with failed or warning checks"
+                onClick={() => setFlaggedOnly((on) => !on)}
               >
-                {text}
+                <AlertTriangle size={11} /> Flagged
               </button>
-            ))}
-            <button
-              aria-pressed={flaggedOnly}
-              title="Show only operations with failed or warning checks"
-              onClick={() => setFlaggedOnly((on) => !on)}
-            >
-              <AlertTriangle size={11} /> Flagged
-            </button>
-          </fieldset>
+            </fieldset>
+          )}
           {lineageRoot && (
             <div className="workflow-filter">
               <span title={lineageSubject}>
@@ -1938,6 +2257,7 @@ export default function WorkflowWorkbench() {
             key={JSON.stringify([sourceId, lineageRoot])}
             checkedIds={checkedSet}
             onCheck={checkSignals}
+            workspaceEmpty={!project.workflowSteps?.length}
             onProcessChecked={(action) => toolbarAction(action)}
             onDragSelection={setDragged}
             steps={shownSteps}
@@ -1969,7 +2289,7 @@ export default function WorkflowWorkbench() {
               <legend className="sr-only">Checked processing inputs</legend>
               <ListChecks size={13} />
               <span
-                title={`${inputIds.length.toLocaleString()} ${inputIds.length === 1 ? 'signal' : 'signals'} checked for processing`}
+                title={`${formatCount(inputIds.length, 'signal')} checked as inputs`}
               >
                 <strong>{inputIds.length.toLocaleString()}</strong> checked
               </span>
@@ -2000,56 +2320,37 @@ export default function WorkflowWorkbench() {
               </button>
             </fieldset>
           )}
-          <p className="workflow-rail-hint">
-            <i /> Contributes to the selection · drag outputs onto a plot or
-            command
-          </p>
         </aside>
         <WorkflowPaneResizer pane="history" />
         <div className="workflow-document">
           <main className="workflow-main" data-batch-view={batchShown}>
             {!engine.ready ? (
               <div className="workflow-empty">
-                {engine.error || 'Opening your workflow…'}
-                {engine.error && (
-                  <button
-                    className="secondary-button"
-                    onClick={() => location.reload()}
-                  >
-                    Reload workspace
-                  </button>
+                {engine.error ? (
+                  <WorkflowAlert message={engine.error} ready={false} />
+                ) : (
+                  'Opening your workspace…'
                 )}
               </div>
             ) : !source ? (
-              <section className="workflow-empty-workspace">
-                <Waves size={32} />
-                <h1>Start a workflow</h1>
-                <p>
-                  Import a recording to plot signals, derive results and
-                  calculate values. Your work is saved on this device.
-                </p>
-                <button
-                  className="primary-button"
-                  disabled={engine.busy}
-                  onClick={() => file.current?.click()}
-                >
-                  Import CSV
-                </button>
-                <button
-                  className="workflow-link"
-                  disabled={engine.busy}
-                  onClick={() => void openExample().catch(() => {})}
-                >
-                  Open example workflow
-                </button>
-                <p>
-                  Explore a motor test: smooth and multiply signals, segment
-                  runs and compare values.
-                </p>
-                {engine.error && <p role="alert">{engine.error}</p>}
-              </section>
+              <WorkflowWelcome
+                busy={engine.busy}
+                error={engine.error}
+                onDismissError={() => engine.setError('')}
+                onExample={() => void openExample().catch(() => {})}
+                onImport={() => file.current?.click()}
+                onBatchExample={openBatchExample}
+              />
             ) : (
               <>
+                {engine.error && (
+                  <WorkflowAlert
+                    message={engine.error}
+                    onDismiss={() => engine.setError('')}
+                    onCsvHelp={() => setHelp(true)}
+                    className="workflow-main-alert"
+                  />
+                )}
                 {displayBatch && batchShown && (
                   <WorkflowBatchView
                     project={project}
@@ -2080,8 +2381,7 @@ export default function WorkflowWorkbench() {
                     <span className="workflow-item-bar-name">
                       <strong>{displayBatch.name}</strong>
                       <small>
-                        {displayBatch.runs.length}{' '}
-                        {displayBatch.runs.length === 1 ? 'item' : 'items'} in
+                        {formatCount(displayBatch.runs.length, 'item')} in
                         History
                       </small>
                     </span>
@@ -2102,10 +2402,28 @@ export default function WorkflowWorkbench() {
                     status={itemInfo.status}
                     problems={itemInfo.problems}
                     edited={itemInfo.edited}
+                    mapped={itemInfo.mapped}
                     onStep={stepItem}
                     onBatch={() => switchSource(`batch:${itemRun.batch.id}`)}
                   />
                 )}
+                {tour !== null && tourStops.length > 0 && (
+                  <ExampleTour
+                    stops={tourStops}
+                    index={Math.min(tour, tourStops.length - 1)}
+                    onGo={goTour}
+                    onClose={closeTour}
+                  />
+                )}
+                {(tour === null || !tourStops.length) &&
+                  (project.workflowSteps ?? []).every(
+                    (item) => item.kind === 'import',
+                  ) && (
+                    <WorkflowNextSteps
+                      disabled={engine.busy || !engine.ready}
+                      onAction={(action) => toolbarAction(action)}
+                    />
+                  )}
                 <PlotScratchpad
                   ref={plots}
                   project={project}
@@ -2143,9 +2461,10 @@ export default function WorkflowWorkbench() {
                             <div className="workflow-panel-heading">
                               <div>
                                 <strong>
-                                  {stepOutputs.length}{' '}
-                                  {allValues ? 'values' : 'signals'} ·{' '}
-                                  {reference(step)} {stepName(step)}
+                                  {formatCount(
+                                    stepOutputs.length,
+                                    allValues ? 'value' : 'signal',
+                                  )}
                                 </strong>
                               </div>
                               <div className="workflow-panel-actions">
@@ -2154,7 +2473,7 @@ export default function WorkflowWorkbench() {
                                   disabled={engine.busy || !stepOutputs.length}
                                   onClick={() => setExportOpen(true)}
                                 >
-                                  <ArrowDownToLine size={15} /> Export / report
+                                  <Download size={15} /> Export data…
                                 </button>
                                 <button
                                   className="secondary-button"
@@ -2163,7 +2482,7 @@ export default function WorkflowWorkbench() {
                                     !engine.ready ||
                                     !stepOutputs.length
                                   }
-                                  title="Add this operation's outputs to Reports"
+                                  title="Add this step's outputs to your report"
                                   onClick={() =>
                                     addToReport(
                                       reportTargetAssets(index, {
@@ -2179,11 +2498,13 @@ export default function WorkflowWorkbench() {
                                   <button
                                     className="secondary-button"
                                     disabled={engine.busy}
+                                    title="Open this step's settings to make a new step beside it"
                                     onClick={() => repeat()}
                                   >
+                                    <CopyPlus size={15} />
                                     {step.kind === 'regions'
                                       ? 'Create signal segments'
-                                      : 'Repeat with new settings'}
+                                      : 'New version…'}
                                   </button>
                                 )}
                               </div>
@@ -2238,15 +2559,23 @@ export default function WorkflowWorkbench() {
                                           )
                                         }
                                       >
-                                        Select all {filteredOutputs.length}
-                                        {tableQuery ? ' matching' : ''} signals
+                                        Check all{' '}
+                                        {formatCount(
+                                          filteredOutputs.filter((id) =>
+                                            index.nodes.has(id),
+                                          ).length,
+                                          tableQuery
+                                            ? 'matching signal'
+                                            : 'signal',
+                                        )}{' '}
+                                        as inputs
                                       </button>
                                       <button
                                         className="workflow-link"
-                                        disabled={!inputIds.length}
-                                        onClick={() => setInputs([])}
+                                        disabled={!checkedSet.size}
+                                        onClick={() => setInputs(null)}
                                       >
-                                        Clear selection
+                                        Uncheck all
                                       </button>
                                     </>
                                   )}
@@ -2255,15 +2584,18 @@ export default function WorkflowWorkbench() {
                                   <TableHeader>
                                     <TableRow>
                                       {!allValues && (
-                                        <TableHead className="workflow-check-cell">
-                                          Use
+                                        <TableHead
+                                          className="workflow-check-cell"
+                                          title="Checked signals are the inputs for Derive, Segment and Value"
+                                        >
+                                          Input
                                         </TableHead>
                                       )}
                                       <TableHead>
                                         {allValues ? 'Value' : 'Signal'}
                                       </TableHead>
                                       <TableHead>Type</TableHead>
-                                      <TableHead>Input</TableHead>
+                                      <TableHead>Made from</TableHead>
                                       <TableHead>
                                         {allValues
                                           ? 'Result'
@@ -2309,25 +2641,16 @@ export default function WorkflowWorkbench() {
                                         >
                                           {!allValues && (
                                             <TableCell>
-                                              <Checkbox
-                                                aria-label={`Use ${index.label(id)} as input`}
-                                                checked={inputIds.includes(id)}
-                                                onCheckedChange={(checked) =>
-                                                  setInputs(
-                                                    checked
-                                                      ? [
-                                                          ...new Set([
-                                                            ...inputIds,
-                                                            id,
-                                                          ]),
-                                                        ]
-                                                      : inputIds.filter(
-                                                          (input) =>
-                                                            input !== id,
-                                                        ),
-                                                  )
-                                                }
-                                              />
+                                              {/* Ticks only explicit inputs, as History does. */}
+                                              {node && (
+                                                <Checkbox
+                                                  aria-label={`Check ${index.label(id)} as an input`}
+                                                  checked={checkedSet.has(id)}
+                                                  onCheckedChange={(checked) =>
+                                                    checkSignals([id], checked)
+                                                  }
+                                                />
+                                              )}
                                             </TableCell>
                                           )}
                                           <TableCell>
@@ -2340,6 +2663,19 @@ export default function WorkflowWorkbench() {
                                             >
                                               {index.label(id)}
                                             </button>
+                                            {selection.kind === 'output' &&
+                                              selection.id === id && (
+                                                <span
+                                                  className="workflow-in-view"
+                                                  title={
+                                                    node
+                                                      ? 'Shown on the plot. Without checked inputs, Apply to uses this signal.'
+                                                      : 'Shown on the plot'
+                                                  }
+                                                >
+                                                  in view
+                                                </span>
+                                              )}
                                           </TableCell>
                                           <TableCell>
                                             <span
@@ -2434,144 +2770,29 @@ export default function WorkflowWorkbench() {
                             )}
                           </section>
                         ) : (
-                          <section className="workflow-dock-settings">
-                            <dl className="workflow-property-grid">
-                              <div>
-                                <dt>Operation</dt>
-                                <dd>
-                                  {reference(step)} {stepName(step)}
-                                </dd>
-                              </div>
-                              {(step.kind === 'derive' ||
-                                step.kind === 'value') && (
-                                <div>
-                                  <dt>Function</dt>
-                                  <dd>
-                                    {VALUE_FUNCTIONS.find(
-                                      (spec) =>
-                                        spec.operation === step.operation,
-                                    )?.name ??
-                                      SIGNAL_FUNCTIONS.find(
-                                        (spec) =>
-                                          spec.operation === step.operation,
-                                      )?.name ??
-                                      operationLabels[
-                                        step.operation as Operation
-                                      ] ??
-                                      step.operation}
-                                  </dd>
-                                </div>
-                              )}
-                              <div>
-                                <dt>Inputs</dt>
-                                <dd>{step.inputIds.length.toLocaleString()}</dd>
-                              </div>
-                              <div>
-                                <dt>Revision</dt>
-                                <dd>{step.revision ?? 1}</dd>
-                              </div>
-                            </dl>
-                            {step.parameters && (
-                              <section className="workflow-settings">
-                                <h3>Parameters</h3>
-                                <dl>
-                                  {Object.entries(step.parameters).map(
-                                    ([key, value]) => (
-                                      <div key={key}>
-                                        <dt>
-                                          {key === 'value'
-                                            ? SIGNAL_FUNCTIONS.find(
-                                                (spec) =>
-                                                  spec.operation ===
-                                                  step.operation,
-                                              )?.parameter || 'Parameter'
-                                            : key}
-                                        </dt>
-                                        <dd>{value}</dd>
-                                      </div>
-                                    ),
-                                  )}
-                                </dl>
-                              </section>
-                            )}
-                            {step.definition && (
-                              <section className="workflow-settings">
-                                <h3>Segmentation</h3>
-                                <pre>
-                                  {JSON.stringify(
-                                    step.definition,
-                                    (key, value: unknown) =>
-                                      key === 'signalId' &&
-                                      typeof value === 'string'
-                                        ? `${reference(index.owner.get(value))} ${index.label(value)}`
-                                        : value,
-                                    2,
-                                  )}
-                                </pre>
-                              </section>
-                            )}
-
-                            {step.kind === 'import' ? (
-                              <p className="workflow-muted">
-                                Original recordings are immutable. Import the
-                                file again to add another recording.
-                              </p>
-                            ) : (
-                              <div className="workflow-panel-actions">
-                                {step.kind !== 'regions' && (
-                                  <button
-                                    className="secondary-button"
-                                    disabled={engine.busy}
-                                    onClick={() => repeat(true)}
-                                  >
-                                    Edit settings
-                                  </button>
-                                )}
-                                <button
-                                  className="secondary-button"
-                                  disabled={engine.busy}
-                                  onClick={() => repeat()}
-                                >
-                                  {step.kind === 'regions'
-                                    ? 'Create signal segments'
-                                    : 'Repeat with new settings'}
-                                </button>
-                              </div>
-                            )}
-                          </section>
+                          <WorkflowStepSettings
+                            step={step}
+                            index={index}
+                            busy={engine.busy}
+                            onEdit={() => repeat(true)}
+                            onNewVersion={() => repeat()}
+                          />
                         )}
                       </WorkflowDock>
                     )
                   }
                 />
-                {engine.error && (
-                  <div className="workflow-error" role="alert">
-                    {engine.error}
-                    <button
-                      className="workflow-link"
-                      onClick={() => location.reload()}
-                    >
-                      Reload workspace
-                    </button>
-                    <button
-                      aria-label="Dismiss error"
-                      onClick={() => engine.setError('')}
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                )}
               </>
             )}
           </main>
         </div>
-        {engine.ready && step && (
+        {engine.ready && (step || batchShown) && (
           <>
             <WorkflowPaneResizer pane="inspector" />
             <aside
               id="workflow-inspector"
               className="workflow-inspector"
-              aria-label="Inspector"
+              aria-label="Details"
             >
               <WorkflowProperties
                 project={project}
@@ -2593,6 +2814,7 @@ export default function WorkflowWorkbench() {
                 }}
                 onSetChecks={setChecks}
                 busy={engine.busy}
+                batch={batchShown ? displayBatch : undefined}
               />
             </aside>
           </>
@@ -2608,6 +2830,28 @@ export default function WorkflowWorkbench() {
             setInspectorDrawer(false);
           }}
         />
+      )}
+      {reportToast && !reportsShown && (
+        <output key={reportToast.id} className="workflow-toast">
+          <FilePlus2 size={15} />
+          <span>
+            {reportToast.added === 0
+              ? 'Nothing was added to the report.'
+              : reportToast.added === 1
+                ? 'Added to report'
+                : `Added ${formatCount(reportToast.added, 'snapshot')} to report`}
+          </span>
+          <button className="workflow-link" onClick={openReports}>
+            Open Reports
+          </button>
+          <button
+            className="workflow-icon-button workflow-quiet"
+            aria-label="Dismiss"
+            onClick={() => setReportToast(undefined)}
+          >
+            <X size={14} />
+          </button>
+        </output>
       )}
       <footer className="workflow-status" hidden={reportsShown}>
         <span className="workflow-status-selection" title={title}>
@@ -2626,7 +2870,7 @@ export default function WorkflowWorkbench() {
                   ? 'Ready'
                   : activeValue
                     ? 'Ready'
-                    : `${stepOutputs.length} outputs`)}
+                    : formatCount(stepOutputs.length, 'output'))}
           {notice && undoable && engine.canUndo && !engine.busy && (
             <button className="workflow-notice-undo" onClick={() => undo()}>
               Undo
@@ -2644,15 +2888,15 @@ export default function WorkflowWorkbench() {
         <span className="workflow-inventory">
           <span>
             <LockKeyhole size={12} />
-            {originalCount} originals
+            {formatCount(originalCount, 'original signal')}
           </span>
           <span>
             <Waves size={12} />
-            {derivedCount} derived
+            {formatCount(derivedCount, 'derived signal')}
           </span>
           <span>
             <Hash size={12} />
-            {valueCount} values
+            {formatCount(valueCount, 'value')}
           </span>
         </span>
         {engine.busy ? (
@@ -2711,10 +2955,10 @@ export default function WorkflowWorkbench() {
             {detailPanel === 'samples'
               ? 'Signal samples'
               : detailPanel === 'checked'
-                ? 'Processing inputs'
+                ? 'Apply to'
                 : detailPanel === 'used-by'
-                  ? 'Used by later operations'
-                  : 'Inputs and originals'}
+                  ? 'Used by later steps'
+                  : 'Inputs and original signals'}
           </DialogTitle>
           <DialogDescription>
             {detailPanel === 'checked'
@@ -2777,7 +3021,7 @@ export default function WorkflowWorkbench() {
                   {immediateInputs.length > 4 && (
                     <WorkflowList
                       items={immediateInputs}
-                      summary={`All ${immediateInputs.length} inputs`}
+                      summary={`All ${formatCount(immediateInputs.length, 'input')}`}
                     >
                       {(visible) => (
                         <div className="workflow-link-list">
@@ -2796,7 +3040,7 @@ export default function WorkflowWorkbench() {
                     key={selection.id}
                     className="workflow-lineage-details"
                     items={selectedLineage.steps}
-                    summary={`Trace to originals · ${selectedLineage.steps.length} steps`}
+                    summary={`Trace to original signals · ${formatCount(selectedLineage.steps.length, 'step')}`}
                   >
                     {(visible) => (
                       <>
@@ -2807,7 +3051,12 @@ export default function WorkflowWorkbench() {
                               <button onClick={() => selectStep(ancestor.id)}>
                                 {reference(ancestor)} {stepName(ancestor)}
                               </button>
-                              <span>{ancestor.outputIds.length} outputs</span>
+                              <span>
+                                {formatCount(
+                                  ancestor.outputIds.length,
+                                  'output',
+                                )}
+                              </span>
                             </li>
                           ))}
                         </ol>
@@ -2861,7 +3110,7 @@ export default function WorkflowWorkbench() {
                 <section className="workflow-used-by">
                   <WorkflowList
                     items={usedBy}
-                    summary={`Used by ${usedBy.length} later operation${usedBy.length === 1 ? '' : 's'}`}
+                    summary={`Used by ${formatCount(usedBy.length, 'later step')}`}
                   >
                     {(visible) => (
                       <div>
@@ -2880,7 +3129,11 @@ export default function WorkflowWorkbench() {
                   </WorkflowList>
                 </section>
               )}
-              {!usedBy.length && <p>No later operations use this output.</p>}
+              {!usedBy.length && (
+                <p>
+                  Nothing uses this yet. Try Derive, Segment or Value above.
+                </p>
+              )}
             </>
           )}
           {detailPanel === 'checked' && (
@@ -2888,7 +3141,7 @@ export default function WorkflowWorkbench() {
               <WorkflowList
                 items={processingIds}
                 initialOpen
-                summary={`${processingIds.length} input signals`}
+                summary={formatCount(processingIds.length, 'input signal')}
               >
                 {(visible) => (
                   <ul className="workflow-input-review">
@@ -2965,12 +3218,19 @@ export default function WorkflowWorkbench() {
           request={managementRequest}
           busy={engine.busy}
           onClose={() => setManagementRequest(undefined)}
-          onDelete={(stepId) =>
-            manage(
+          onDelete={(stepId) => {
+            const target = index.steps.get(stepId);
+            const removed =
+              target?.kind === 'import'
+                ? `Removed recording ${project.sources.find((item) => item.id === target.sourceId)?.name ?? ''}`
+                : target
+                  ? `Deleted ${reference(target)} ${stepName(target)}`
+                  : 'Step deleted';
+            return manage(
               { type: 'delete-operation', stepId },
-              'Operation removed. Undo is available.',
-            )
-          }
+              `${removed}. Undo is available.`,
+            );
+          }}
           onRename={(id, name) =>
             manage({ type: 'rename', id, name }, 'Name saved.')
           }
@@ -3005,19 +3265,29 @@ export default function WorkflowWorkbench() {
           showCloseButton={!engine.busy}
         >
           <DialogTitle>
-            {editor?.editingStepId
-              ? 'Edit operation settings'
+            {editor?.editingStepId && index.steps.has(editor.editingStepId)
+              ? editTitle(index.steps.get(editor.editingStepId)!)
               : editor?.kind === 'derive'
                 ? 'New derived signal'
                 : editor?.kind === 'segment'
                   ? 'Segment signals'
                   : 'Calculate values'}
           </DialogTitle>
+          {editor && editorSource && (
+            <OperationInputs
+              items={editor.ids.map((id) => ({
+                id,
+                label: index.label(id),
+                title:
+                  `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
+              }))}
+            />
+          )}
           <DialogDescription>
             {editorOpen &&
             editor?.editingStepId &&
             index.steps.has(editor.editingStepId)
-              ? `Saving replaces this operation and recalculates ${affectedOperations(project, editor.editingStepId).length - 1} dependent operations. Originals stay unchanged. Undo restores the previous version. Changes that cannot safely rebuild every dependent result are rejected.`
+              ? editImpact(project, editor.editingStepId)
               : editor?.kind === 'segment'
                 ? 'Create signal segments using triggers, ranges or windows.'
                 : editor?.kind === 'value'
@@ -3035,21 +3305,6 @@ export default function WorkflowWorkbench() {
           )}
           {editor && editorSource && (
             <>
-              <WorkflowList
-                className="workflow-editor-inputs"
-                items={editor.ids}
-                summary={`${editor.ids.length} input signal${editor.ids.length === 1 ? '' : 's'} · review selection`}
-              >
-                {(visible) => (
-                  <ul>
-                    {visible.map((id) => (
-                      <li key={id}>
-                        {reference(index.owner.get(id))} {index.label(id)}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </WorkflowList>
               {editor.kind === 'segment' ? (
                 <SegmentationEditor
                   workflowMode
@@ -3122,6 +3377,15 @@ export default function WorkflowWorkbench() {
                   index={index}
                   request={request}
                   busy={engine.busy}
+                  onCompare={
+                    editor.editingStepId
+                      ? undefined
+                      : () => {
+                          const ids = editor.ids;
+                          setEditor(undefined);
+                          setTimeEditor({ ids, mode: 'combine' });
+                        }
+                  }
                   onApply={(operation, parameter, secondaryId) => {
                     if (editor.kind === 'value')
                       return perform(
@@ -3169,7 +3433,14 @@ export default function WorkflowWorkbench() {
           inputNote={dropNote}
           saved={timeEditor.saved}
           initialMode={timeEditor.mode}
-          editing={!!timeEditor.editingId}
+          editing={
+            timeEditor.editingId && index.steps.has(timeEditor.editingId)
+              ? {
+                  title: editTitle(index.steps.get(timeEditor.editingId)!),
+                  impact: editImpact(project, timeEditor.editingId),
+                }
+              : undefined
+          }
           busy={engine.busy}
           request={request}
           onCancel={engine.cancel}
@@ -3201,77 +3472,12 @@ export default function WorkflowWorkbench() {
           }}
         />
       )}
-      <Dialog open={help} onOpenChange={setHelp}>
-        <DialogContent className="workflow-dialog">
-          <DialogTitle>Build a signal workflow</DialogTitle>
-          <DialogDescription>
-            Every operation records its inputs and creates new outputs.
-          </DialogDescription>
-          <ol className="workflow-guide">
-            <li>
-              <strong>Start with an original.</strong> Import a CSV, or use the
-              included synthetic recording. Originals are locked.
-            </li>
-            <li>
-              <strong>Derive or segment.</strong> Select a signal, then choose
-              an operation. Every segment is a derived signal, ready for further
-              processing or segmentation.
-            </li>
-            <li>
-              <strong>Calculate a value.</strong> Minimum, maximum and averages
-              create scalar results. A time average weights by elapsed time; a
-              sample average weights each sample equally.
-            </li>
-            <li>
-              <strong>Follow the history.</strong> Numbered steps stay oldest
-              first, coloured by kind. Filter with the search field and the All,
-              Signals and Values chips; a dot marks outputs that feed the
-              selection. Arrow keys navigate the tree, Enter selects.
-            </li>
-            <li>
-              <strong>Find the origin.</strong> The inspector on the right shows
-              properties, the lineage back to the original recordings and the
-              operations that use the selection, with Edit, Duplicate and
-              Delete. Right-click a History item for the same actions.
-            </li>
-            <li>
-              <strong>Choose what to process.</strong> Apply to, beside the
-              operations, shows their inputs: the item in view, or signals you
-              check. Ctrl+click signals in History to check several, Shift+click
-              to check a range, or Ctrl+click a step for all its signals; then
-              choose Value, Derive or Segment. Checked inputs stay selected
-              while you explore; clear them to follow the selection again.
-            </li>
-            <li>
-              <strong>Build a plot.</strong> Drag a signal onto the canvas or a
-              named plot tab. Drag a segment to compare every segment from its
-              operation; use Δt to align their starts at zero. Values become
-              reference lines. Drops on processing tools select the dragged
-              member or batch; values use their input signals.
-            </li>
-            <li>
-              <strong>Take your results with you.</strong> Export / report
-              offers samples, signal summaries, calculated values and a
-              printable report. Choose the viewed output, checked signals or an
-              entire step before downloading.
-            </li>
-            <li>
-              <strong>Compose a report.</strong> Choose Reports in the top bar
-              for a page canvas with your signals, values and saved plots. Add
-              the viewed item with Report, from a History item&apos;s menu or
-              from a plot. Captures are snapshots; switching to Data Inspector
-              keeps your draft until the app reloads. Format the pages and
-              export a PDF.
-            </li>
-            <li>
-              <strong>Try another version.</strong> Repeat with new settings
-              appends another operation. Earlier outputs and their descendants
-              keep their original recipes. Ctrl+Z and Ctrl+Y undo and redo
-              changes, also after a restart.
-            </li>
-          </ol>
-        </DialogContent>
-      </Dialog>
+      <WorkflowGuide
+        open={help}
+        onOpenChange={setHelp}
+        onStartTour={startTour}
+        canStartTour={engine.ready && !engine.busy}
+      />
     </div>
   );
 }

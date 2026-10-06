@@ -30,14 +30,28 @@ There are no server API routes or cloud signal uploads.
   `lib/workflow-tree.ts` bounds output previews and reveals selected members.
   Do not encode dependency depth as recursive indentation or regroup by names.
   Inspection and checked processing inputs are independent; Ctrl/Shift+click
-  and row check boxes in History edit only the checked inputs. Explicit parent
+  and row check boxes in History edit only the checked inputs. A plain check box
+  starts from the explicit checks; only Ctrl/Shift+click extends from the viewed
+  signal. The Outputs table's Input column ticks only explicit inputs and marks
+  the viewed row "in view". Rows are 28 px, or 44 px when a step name wraps to
+  two lines, virtualized with prefix offsets. The last selection is stored per
+  device (`stratum-workflow-selection-v1`), restored only if it still exists,
+  and never journaled. Explicit parent
   navigation clears search; opening a search result preserves matching context.
   Lineage-filtered trees show only contributing outputs, not batch siblings.
   One top bar holds the recording scope, Undo/Redo (Ctrl+Z/Ctrl+Y), the four
-  operations and their "Apply to" processing scope. History filters by text
-  and All/Signals/Values chips and dots outputs that feed the selection.
-  `components/workflow-properties.tsx` is the right-hand inspector (properties,
-  bounded lineage chain, Used by, Edit/Duplicate/Delete); it becomes a drawer
+  operations and their "Apply to" processing scope. Data | Reports, Import and
+  the Apply to label stay labelled at laptop widths; secondary labels collapse
+  first and the recording/Apply to pills have fixed, truncating widths
+  (`--topbar-recording-width`, `--topbar-scope-width`) so end controls never
+  clip. Add to report never switches workspace; it confirms with a toast and a
+  badge on Reports. History filters by text and All/Signals/Values chips and
+  dots outputs that feed the selection.
+  `components/workflow-properties.tsx` is the right-hand Details panel
+  (properties, bounded lineage chain, Used by, Checks, and a sticky Edit/New
+  version/Delete footer; a batch summary while batch results are open). The
+  dock keeps one height across tabs; Settings render as a table through
+  `WorkflowStepSettings` with the raw JSON behind "Show raw". It becomes a drawer
   below 1240 px, and History becomes one below 820 px. Ctrl+K opens
   `components/workflow-command-palette.tsx`: the top-bar commands plus a word
   search over every step and output in scope, capped at 40 results.
@@ -48,11 +62,31 @@ There are no server API routes or cloud signal uploads.
   `calculateValues` also uses. Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
-  window spans; workflow segment previews run automatically.
+  window spans; workflow segment previews run automatically. Operation dialogs
+  use a header with "Applies to" chips (`components/operation-inputs.tsx`, which
+  also builds edit titles and impact text), a scrolling `.operation-body` and a
+  sticky `.operation-footer` with a one-line summary. Create stays disabled while
+  the preview reports an error. Derive and Value remember the last operation in
+  localStorage; trigger thresholds default to the input's range midpoint with
+  offset 0. New segments are numbered per step (per input when segmented
+  separately) and named after the parent's display label; saved names never
+  change. Compare & align defaults to Align; its alignment preview is display-only.
+- First run: `components/workflow-welcome.tsx` is the empty state and the
+  post-import next-steps strip; `components/example-tour.tsx` only changes the
+  selection and stores dismissal under `stratum-example-tour-v1`;
+  `components/workflow-guide.tsx` is the tabbed guide, whose Shortcuts list must
+  match the actual key handlers. `components/workflow-alert.tsx` with
+  `lib/engine-error.ts` offers Reload only for worker/storage failures, never for
+  validation errors. `lib/csv-import-messages.ts` names the file, row and cause
+  of CSV problems. Import steps carry an optional `fileName` and default to
+  "Import <file>". UI copy follows the glossary in `docs/ux-review.md` (step,
+  New version…, Export data…, Add to report, Details); counts use
+  `lib/format-count.ts`.
 - `components/workflow-export.tsx` and `lib/workflow-delivery.ts`: explicit
   viewed/checked/whole-step export scope; values CSV, evaluated samples CSV,
-  summary CSV, and standalone printable HTML reports with escaped labels.
-  These printable HTML reports remain immutable snapshots.
+  summary CSV, and standalone printable HTML reports with escaped labels
+  (shown as "Export data" and "Quick HTML summary"; files are named after the
+  recording, step and kind). These HTML summaries remain immutable snapshots.
   Sample exports preserve each signal's evaluated axis and blank missing values.
   Never substitute decimated plot points for sample data. CSV text cells must
   remain text in spreadsheets. Cancellation must prevent the download even
@@ -63,8 +97,12 @@ There are no server API routes or cloud signal uploads.
   saved plots with the workspace's lane, Y-axis and stacked layouts and value
   labels. Report blocks are snapshots: engine changes never silently refresh
   captures. Report edits do not mutate the signal engine or workflow history.
-  Keep the report and plot views mounted across workspace switches; drafts and
-  report Undo/Redo are session-only. While Reports is shown, workflow keyboard
+  Keep the report and plot views mounted across workspace switches. The draft
+  persists device-locally in `lib/report-draft-store.ts` (its own IndexedDB,
+  not part of backups); report Undo/Redo stays session-only. Captures record
+  their source assets and a data fingerprint: "Data changed" and Update snapshot
+  are explicit, never automatic. Report values use `formatReportValue` from
+  `lib/report-format.ts`; exact values stay in CSV. While Reports is shown, workflow keyboard
   shortcuts stay inactive so report Undo never reaches workflow history. The
   editor maps its `--rb-*` tokens to the theme's role tokens; paper keeps its
   document colors. `/report-mockup` remains an isolated synthetic preview. See
@@ -84,7 +122,11 @@ There are no server API routes or cloud signal uploads.
   individual outputs. Shared region scopes are dependencies, not owned data.
   `workflow-management.tsx` exposes impact confirmation, edit, duplicate and names.
   Undo/Redo retains 20 project snapshots across restarts. Housekeeping migrations
-  must preserve the journal; do not journal them as user actions.
+  must preserve the journal; do not journal them as user actions. Entries carry
+  labels (`undoLabels`/`redoLabels`), explicit or from `describeChange`, which
+  move with their entry; coalesced batches are labelled from current state and
+  unlabeled older entries read "last change". After Undo/Redo the affected step
+  stays selected while it exists.
 - `lib/workflow-example.ts`: deterministic motor-test data and a seven-step
   original → smoothing → multiplication → run segments → values → nested segments → values
   example built with normal engine commands. `workflowExample` publishes it as
@@ -106,6 +148,12 @@ There are no server API routes or cloud signal uploads.
   deleting an item's import removes its run. UI: `workflow-save-dialog.tsx`,
   `workflow-run-dialog.tsx` (header-only pre-flight), `workflow-batch-view.tsx`,
   `workflow-item-bar.tsx`, `workflow-checks-panel.tsx`, `app/workflow-batch.css`.
+  Run status `none` ("No checks") ranks below Pass and is not flagged; older
+  records stay valid. A pre-flight `channelMap` (missing channel → column) is
+  passed to `runWorkflow` and recorded on the run; recipe text never changes.
+  Batch value columns follow recipe step order. The open batch view is stored
+  per device under `stratum-batch-view-v1`. The Workspace dialog holds backup,
+  restore and the example; workflow commands live in the Import menu.
   Report templates (`lib/workflow-report-template.ts`) bind blocks to recipe
   references; `lib/workflow-batch-report.ts` renders one item's report, and
   `lib/zip-store.ts` packages PDFs. `lib/eol-example.ts` generates
@@ -145,7 +193,12 @@ There are no server API routes or cloud signal uploads.
   each coloured by its position in that operation) above value tiles and the
   `components/workflow-dock.tsx` Outputs/Samples/Settings dock. The chart fills
   the space between its controls and the dock. Saved plots persist styles, limits,
-  annotations and viewport independently of workflow history. Plot gestures use
+  annotations and viewport independently of workflow history. Palette hexes are
+  stored trace IDs drawn through `seriesColor` as the theme's `--series-N`;
+  exports and report captures resolve tokens with `resolveColor` so standalone
+  files stay self-contained. Tick labels use ink; same-unit axes are titled by
+  their unit. A narrow plot toolbar moves settings into "More plot tools", and a
+  value's explanation collapses below 800 px of height. Plot gestures use
   display time and translate per-trace offsets before viewport evaluation.
   `lib/plot-axes.ts` groups exact units into independently scaled, automatically
   named Y axes on a shared time plot. Overlay (the default) draws each axis
@@ -224,7 +277,11 @@ There are no server API routes or cloud signal uploads.
   per theme under `:root[data-theme]`. Stylesheets and components use only
   these tokens, never raw colours. `lib/theme.ts` and `hooks/use-theme.ts`
   persist the device-local light/dark choice (dark by default). One system
-  font family and a five-step type scale (`--text-xs`…`--text-xl`) apply.
+  font family and a five-step type scale (`--text-xs` 12 px … `--text-xl`
+  20 px) apply; `--text-tick` (11 px) is for plot ticks only. `--line-mid`
+  draws panel borders and `--line-strong` outlines fields and controls at ≥3:1.
+  Light-theme primary, kind and series colours meet ≥4.5:1 as text. Controls
+  keep at least 24×24 px hit areas.
 - `components/ui/`: reusable Base UI/shadcn primitives with Lucide icons.
 - `lib/utils.ts`: `cn()` combines clsx and tailwind-merge.
 - `hooks/use-mobile.ts`: shared mobile breakpoint hook (768px).

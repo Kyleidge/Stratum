@@ -68,7 +68,7 @@ export async function buildExampleWorkflow(
   await engine.calculateValues(runIds, 'time-average');
   for (const [i, value] of engine.project.values!.slice(-3).entries())
     await engine.rename(value.id, `Run ${i + 1} · Average product`);
-  await nameStep('Compare average product by run');
+  await nameStep('Average product per run');
   const windows = await engine.segment(
     source.id,
     {
@@ -92,5 +92,5 @@ export async function buildExampleWorkflow(
   await engine.calculateValues(windowIds, 'maximum');
   for (const [i, value] of engine.project.values!.slice(-2).entries())
     await engine.rename(value.id, `Run 2 · ${labels[i]} · Peak product`);
-  await nameStep('Compare peak product within Run 2');
+  await nameStep('Peak product in each Run 2 half');
 }

@@ -35,6 +35,7 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
+import { formatCount } from '@/lib/format-count';
 import {
   readWorkflowDrag,
   targetSignals,
@@ -95,11 +96,11 @@ const creationActions = [
 ] as const;
 const inspectionActions = [
   { id: 'samples', label: 'View samples', Icon: Table2 },
-  { id: 'inputs', label: 'Inputs and originals', Icon: ArrowUpLeft },
-  { id: 'used-by', label: 'Used by later operations', Icon: History },
-  { id: 'lineage', label: 'Show lineage in tree', Icon: GitBranch },
-  { id: 'owner', label: 'Open producing operation', Icon: ListTree },
-  { id: 'export', label: 'Export / report', Icon: Download },
+  { id: 'inputs', label: 'Inputs and original signals', Icon: ArrowUpLeft },
+  { id: 'used-by', label: 'Used by later steps', Icon: History },
+  { id: 'lineage', label: 'Show lineage in History', Icon: GitBranch },
+  { id: 'owner', label: 'Open producing step', Icon: ListTree },
+  { id: 'export', label: 'Export data…', Icon: Download },
   { id: 'report', label: 'Add to report', Icon: FilePlus2 },
   { id: 'back', label: 'Back to previous selection', Icon: ArrowLeft },
 ] as const;
@@ -138,6 +139,7 @@ export default function WorkflowToolbar({
   checked,
   hasPast,
   busy,
+  empty = false,
   onAction,
   onClearChecked,
   onDragEnd,
@@ -150,18 +152,28 @@ export default function WorkflowToolbar({
   checked: boolean;
   hasPast: boolean;
   busy: boolean;
+  /** No recording is imported yet, so no operation can have inputs. */
+  empty?: boolean;
   onAction: (action: ToolbarAction, dropped?: WorkflowTarget) => void;
   onClearChecked: () => void;
   onDragEnd: () => void;
 }) {
   const inputCount = inputIds.length;
-  const scopeLabel = checked
-    ? `${inputCount} checked`
+  // Viewing a value processes its input signal; say so rather than retarget
+  // Apply to silently.
+  const valueInput =
+    !checked && selection.kind === 'output' && index.values.has(selection.id);
+  const scopeName = checked
+    ? `${inputCount.toLocaleString()} checked`
     : inputCount === 1
       ? index.label(inputIds[0])
       : inputCount
-        ? `${inputCount} inputs`
+        ? formatCount(inputCount, 'signal')
         : 'No signals';
+  const scopeLabel =
+    valueInput && inputCount
+      ? `${scopeName} (input of selected value)`
+      : scopeName;
   const [moreOpen, setMoreOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<WorkflowTarget>();
   const [hoverTarget, setHoverTarget] = useState<WorkflowTarget>();
@@ -248,7 +260,9 @@ export default function WorkflowToolbar({
                 <span>
                   {hint}
                   <br />
-                  Drop a signal or batch to choose its inputs.
+                  {empty
+                    ? 'Import a recording first.'
+                    : 'Drop a signal or batch to choose its inputs.'}
                 </span>
               </TooltipContent>
             </Tooltip>
@@ -261,8 +275,9 @@ export default function WorkflowToolbar({
                 <button
                   type="button"
                   className="workflow-input-scope"
-                  aria-label="Review checked inputs"
+                  aria-label={`Apply to ${scopeLabel}`}
                   data-checked={checked}
+                  data-note={valueInput && !!inputCount}
                   aria-disabled={!enabled('checked') && !accepts('checked')}
                   disabled={busy}
                   {...dropProps('checked')}
@@ -274,13 +289,22 @@ export default function WorkflowToolbar({
             >
               <ListChecks size={14} />
               <span className="workflow-scope-label">Apply to</span>
-              <strong>{scopeLabel}</strong>
+              <strong>{scopeName}</strong>
+              {valueInput && !!inputCount && (
+                <span className="workflow-scope-note">(input of value)</span>
+              )}
               <ChevronRight size={12} />
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              {checked
-                ? 'Derive, Segment, Value and Compare use these checked signals. Review or change them.'
-                : 'Processing follows what you view. Check outputs in the table to choose other inputs.'}
+              <span>
+                Apply to: {scopeLabel}
+                <br />
+                {checked
+                  ? 'Derive, Segment, Value and Compare use these checked signals. Review or change them.'
+                  : valueInput
+                    ? 'A value is selected, so processing uses the signal it was calculated from. Check signals in History to choose other inputs.'
+                    : 'Processing follows what you view. Check signals in History or the Outputs table to choose other inputs.'}
+              </span>
             </TooltipContent>
           </Tooltip>
           {checked && (
@@ -312,11 +336,34 @@ export default function WorkflowToolbar({
               }
             >
               <FilePlus2 size={15} />
-              <span>Report</span>
+              <span>Add to report</span>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              Add the viewed output or operation to your report. Drop a signal,
-              value or operation here to choose a different item.
+              Add the viewed output or step to your report. You stay in Data.
+              Drop a signal, value or step here to choose a different item.
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="workflow-more-action workflow-export-action"
+                  aria-label="Export data…"
+                  aria-disabled={!enabled('export') && !accepts('export')}
+                  disabled={busy}
+                  {...dropProps('export')}
+                  onClick={() => {
+                    if (enabled('export')) invoke('export');
+                  }}
+                />
+              }
+            >
+              <Download size={15} />
+              <span>Export data…</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Download values or samples as CSV, or a quick HTML summary.
             </TooltipContent>
           </Tooltip>
           <DropdownMenu
@@ -334,9 +381,9 @@ export default function WorkflowToolbar({
               render={
                 <button
                   type="button"
-                  className="workflow-more-action"
-                  aria-label="Inspect and export"
-                  title="Inspect and export"
+                  className="workflow-more-action workflow-more-menu"
+                  aria-label="More actions for the selection"
+                  title="More actions for the selection"
                   disabled={busy}
                   data-action="more"
                   data-drop={dragged && !busy ? 'accept' : undefined}
@@ -367,7 +414,7 @@ export default function WorkflowToolbar({
                 />
               }
             >
-              <MoreHorizontal size={16} /> <span>Inspect / export</span>
+              <MoreHorizontal size={16} />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="workflow-tools-menu" align="end">
               <DropdownMenuGroup>
@@ -391,7 +438,8 @@ export default function WorkflowToolbar({
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <p className="workflow-menu-hint">
-                Right-click a History item to edit, rename, duplicate or delete.
+                Right-click a History item to edit, rename, make a new version
+                or delete it.
               </p>
             </DropdownMenuContent>
           </DropdownMenu>

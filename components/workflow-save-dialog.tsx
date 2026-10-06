@@ -24,6 +24,7 @@ import {
 } from '@/lib/workflow-extract';
 import { templateFromReport } from '@/lib/workflow-report-template';
 import { downloadBlob } from '@/lib/workflow-batch';
+import { formatCount } from '@/lib/format-count';
 import type { Project } from '@/lib/signal-types';
 import type { ReportDocument } from '@/lib/report-mockup';
 
@@ -32,6 +33,14 @@ const ORIGINS: { value: TimeOrigin; label: string }[] = [
   { value: 'recording-start', label: 'From the recording start' },
   { value: 'input-start', label: 'From its input’s start' },
 ];
+/** Item ID presets; only Custom shows a regular expression. */
+type IdPreset = 'prefix' | 'whole' | 'custom';
+const ID_PRESETS: { value: IdPreset; label: string }[] = [
+  { value: 'prefix', label: 'Text before the first space or underscore' },
+  { value: 'whole', label: 'Whole file name' },
+  { value: 'custom', label: 'Custom pattern…' },
+];
+const PREFIX_PATTERN = '^(?<id>[^ _]+)';
 type SaveResult =
   | { error: string }
   | { extracted: ExtractedWorkflow; problems: string[]; text: string };
@@ -64,7 +73,14 @@ export default function WorkflowSaveDialog({
   const [name, setName] = useState('');
   const [revision, setRevision] = useState('1');
   const [itemLabel, setItemLabel] = useState('Serial number');
-  const [pattern, setPattern] = useState('');
+  const [idPreset, setIdPreset] = useState<IdPreset>('whole');
+  const [customPattern, setCustomPattern] = useState('');
+  const pattern =
+    idPreset === 'prefix'
+      ? PREFIX_PATTERN
+      : idPreset === 'custom'
+        ? customPattern
+        : '';
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [origins, setOrigins] = useState<Record<string, TimeOrigin>>({});
   const [includeReport, setIncludeReport] = useState(true);
@@ -83,7 +99,7 @@ export default function WorkflowSaveDialog({
       new RegExp(pattern || '.', 'u');
     } catch {
       return {
-        error: 'The item ID pattern is not a valid regular expression.',
+        error: 'The custom item ID pattern is not a valid regular expression.',
       };
     }
     try {
@@ -159,12 +175,12 @@ export default function WorkflowSaveDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="workflow-dialog workflow-batch-dialog">
-        <DialogTitle>Save workflow</DialogTitle>
+        <DialogTitle>Save this recording&apos;s workflow</DialogTitle>
         <DialogDescription>
-          Save the operations derived from a recording, with their checks and
-          report layout, as a {WORKFLOW_EXTENSION} file. Inputs match other
-          recordings by column name. Run it on more files now, or later with
-          Workspace → Open workflow.
+          Save the steps made from a recording, with their checks and report
+          layout, as a {WORKFLOW_EXTENSION} file. Inputs match other recordings
+          by column name. Run it on more files now, or later with Open a
+          workflow file… in the Import menu.
         </DialogDescription>
         <div className="workflow-batch-fields">
           <RegionSelect
@@ -206,22 +222,34 @@ export default function WorkflowSaveDialog({
               onChange={(event) => setItemLabel(event.target.value)}
             />
           </label>
-          <label className="region-field workflow-batch-wide">
-            <span>
-              Item ID from file name{' '}
-              <small>(optional regular expression)</small>
-            </span>
-            <input
-              value={pattern}
-              placeholder="^(?<id>SN-[0-9]+)"
-              maxLength={200}
-              spellCheck={false}
-              onChange={(event) => setPattern(event.target.value)}
+          <div className="workflow-batch-wide workflow-batch-id-field">
+            <RegionSelect
+              label="Item ID from the file name"
+              value={idPreset}
+              items={ID_PRESETS}
+              onChange={(value) => setIdPreset(value as IdPreset)}
             />
-            <small className="workflow-muted">
-              {source ? `${source.name} → ${preview || 'invalid pattern'}` : ''}
+            {idPreset === 'custom' && (
+              <label className="region-field">
+                <span>
+                  Pattern{' '}
+                  <small>(regular expression; an “id” group wins)</small>
+                </span>
+                <input
+                  value={customPattern}
+                  placeholder="^(?<id>SN-[0-9]+)"
+                  maxLength={200}
+                  spellCheck={false}
+                  onChange={(event) => setCustomPattern(event.target.value)}
+                />
+              </label>
+            )}
+            <small className="workflow-muted" aria-live="polite">
+              {source
+                ? `Preview: ${source.name} → ${preview || 'invalid pattern'}`
+                : ''}
             </small>
-          </label>
+          </div>
         </div>
         <section className="workflow-batch-section">
           <h3>
@@ -232,7 +260,7 @@ export default function WorkflowSaveDialog({
           </h3>
           {!candidates.length ? (
             <p className="workflow-muted">
-              This recording has no operations yet. Derive, segment or calculate
+              This recording has no steps yet. Derive, segment or calculate
               values first, then save the workflow.
             </p>
           ) : (
@@ -269,7 +297,7 @@ export default function WorkflowSaveDialog({
                       </strong>
                       <small>
                         {item
-                          ? `Saved as “${item.recipeStepId}”${step.checks?.length ? ` · ${step.checks.length} ${step.checks.length === 1 ? 'check' : 'checks'}` : ''}`
+                          ? `Included · ${step.checks?.length ? formatCount(step.checks.length, 'check') : 'no checks'}`
                           : excluded.has(step.id)
                             ? 'Left out'
                             : (reason ?? '')}
@@ -309,11 +337,20 @@ export default function WorkflowSaveDialog({
             <p className="workflow-batch-channels">
               {result.extracted.recipe.channels.map((channel) => (
                 <span key={channel.alias}>
-                  <code>{channel.alias}</code> ← {channel.name}
+                  {channel.name}
                   {channel.unit ? ` [${channel.unit}]` : ''}
                 </span>
               ))}
             </p>
+            {!result.extracted.recipe.steps.some(
+              (step) => step.checks?.length,
+            ) && (
+              <p className="workflow-batch-notes" role="note">
+                <AlertTriangle size={13} /> This workflow has no checks, so
+                every item it processes shows No checks rather than Pass. Add
+                checks to a step in Details before saving to test limits.
+              </p>
+            )}
             {!!result.extracted.warnings.length && (
               <ul className="workflow-batch-notes">
                 {result.extracted.warnings.map((warning) => (

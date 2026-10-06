@@ -6,6 +6,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Copy,
   Download,
   FilePlus2,
@@ -23,6 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
+import { formatCount } from '@/lib/format-count';
 import type { WorkflowIndex } from '@/lib/workflow-history';
 import type { WorkflowStep } from '@/lib/workflow-types';
 import {
@@ -54,6 +57,36 @@ type OutputView = {
   previousFocus: string;
 };
 const ROW_HEIGHT = 28;
+/** A step row whose name wraps onto a second line. */
+const TALL_ROW_HEIGHT = 44;
+/**
+ * Width beside a step name: indent, disclosure, number badge, output count,
+ * check box and scroll bar. Overestimated, so a name estimated to fit does.
+ */
+const STEP_CHROME = 236;
+let measureContext: CanvasRenderingContext2D | null | undefined;
+/** Rendered text width, or 0 where no canvas is available. */
+function textWidth(text: string, font: string): number {
+  if (measureContext === undefined)
+    measureContext =
+      typeof document === 'undefined'
+        ? null
+        : document.createElement('canvas').getContext('2d');
+  if (!measureContext) return 0;
+  measureContext.font = font;
+  return measureContext.measureText(text).width;
+}
+/** The first row whose bottom lies below an offset. */
+function rowAt(tops: readonly number[], offset: number): number {
+  let low = 0,
+    high = tops.length - 2;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (tops[middle] <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return Math.max(0, low);
+}
 
 export default function WorkflowHistory({
   steps,
@@ -72,6 +105,7 @@ export default function WorkflowHistory({
   checkedIds,
   onCheck,
   onProcessChecked,
+  workspaceEmpty = false,
 }: {
   steps: WorkflowStep[];
   index: WorkflowIndex;
@@ -99,8 +133,14 @@ export default function WorkflowHistory({
    * check boxes edit them without changing the inspected selection.
    */
   checkedIds?: ReadonlySet<string>;
-  onCheck?: (ids: string[], checked: boolean) => void;
+  /**
+   * `extend` is set for Ctrl/Shift+click and keys, which extend from the
+   * viewed signal; a check box click starts from the explicit checks alone.
+   */
+  onCheck?: (ids: string[], checked: boolean, extend?: boolean) => void;
   onProcessChecked?: (action: CheckedAction) => void;
+  /** The workspace has no steps at all, rather than none in this view. */
+  workspaceEmpty?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // The row a Shift+click range starts from: the last plain or Ctrl+click.
@@ -178,9 +218,25 @@ export default function WorkflowHistory({
     fallback: string;
   } | null>(null);
   const [scroll, setScroll] = useState(0);
-  const [height, setHeight] = useState(600);
+  const [metrics, setMetrics] = useState({ height: 600, width: 0, font: '' });
+  const height = metrics.height;
   const [focused, setFocused] = useState('');
   const selectedRow = rows.findIndex((row) => row.key === selectedKey);
+  // Step names wrap onto a second line when they do not fit the pane.
+  const tops = useMemo(() => {
+    const result = [0];
+    for (const row of rows) {
+      const tall =
+        row.kind === 'step' &&
+        !!metrics.font &&
+        textWidth(row.label, metrics.font) >
+          metrics.width - STEP_CHROME - (stepStatus(row.step) ? 17 : 0);
+      result.push(result.at(-1)! + (tall ? TALL_ROW_HEIGHT : ROW_HEIGHT));
+    }
+    return result;
+  }, [rows, metrics.font, metrics.width]);
+  const rowHeight = (position: number) =>
+    (tops[position + 1] ?? 0) - (tops[position] ?? 0);
   const tabKey = rows.some((row) => row.key === focused)
     ? focused
     : selectedRow >= 0
@@ -199,21 +255,32 @@ export default function WorkflowHistory({
   useEffect(() => {
     const element = container.current;
     if (!element) return;
-    const observer = new ResizeObserver(() => setHeight(element.clientHeight));
+    const observer = new ResizeObserver(() => {
+      const style = getComputedStyle(element);
+      const size = style.getPropertyValue('--text-sm').trim() || '12px';
+      setMetrics({
+        height: element.clientHeight,
+        width: element.clientWidth,
+        font: `600 ${size} ${style.fontFamily}`,
+      });
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  // Scroll only when the selection or its position changes, never when rows
+  // elsewhere change height.
+  const selectedTop = selectedRow >= 0 ? tops[selectedRow] : -1;
+  const selectedBottom = selectedRow >= 0 ? tops[selectedRow + 1] : -1;
   useLayoutEffect(() => {
-    if (pendingNavigation.current || selectedRow < 0 || !container.current)
+    if (pendingNavigation.current || selectedTop < 0 || !container.current)
       return;
     const element = container.current;
-    const top = selectedRow * ROW_HEIGHT;
     if (
-      top < element.scrollTop ||
-      top + ROW_HEIGHT > element.scrollTop + element.clientHeight
+      selectedTop < element.scrollTop ||
+      selectedBottom > element.scrollTop + element.clientHeight
     )
-      element.scrollTop = Math.max(0, top - element.clientHeight / 3);
-  }, [selectedRow, selectedKey]);
+      element.scrollTop = Math.max(0, selectedTop - element.clientHeight / 3);
+  }, [selectedTop, selectedBottom, selectedKey]);
   useLayoutEffect(() => {
     const navigation = pendingNavigation.current;
     if (navigation && container.current) {
@@ -274,10 +341,11 @@ export default function WorkflowHistory({
     pendingFocus.current = position;
     setFocused(row.key);
     const element = container.current;
-    const top = position * ROW_HEIGHT;
+    const top = tops[position];
+    const bottom = top + rowHeight(position);
     if (top < element.scrollTop) element.scrollTop = top;
-    else if (top + ROW_HEIGHT > element.scrollTop + element.clientHeight)
-      element.scrollTop = top + ROW_HEIGHT - element.clientHeight;
+    else if (bottom > element.scrollTop + element.clientHeight)
+      element.scrollTop = bottom - element.clientHeight;
     setScroll(element.scrollTop);
   }
   /** Signals a row checks: one signal output, or a step's shown signals. */
@@ -291,10 +359,11 @@ export default function WorkflowHistory({
         (!contributingOutputs || contributingOutputs.has(id)),
     );
   }
-  function toggleChecked(row: WorkflowRow) {
+  /** Toggles a row; `extend` keeps a viewed signal, as Ctrl+click does. */
+  function toggleChecked(row: WorkflowRow, extend = false) {
     const ids = rowSignals(row);
     if (!onCheck || !ids.length) return false;
-    onCheck(ids, !ids.every((id) => checkedIds?.has(id)));
+    onCheck(ids, !ids.every((id) => checkedIds?.has(id)), extend);
     anchor.current = row.key;
     return true;
   }
@@ -307,50 +376,67 @@ export default function WorkflowHistory({
       .slice(Math.min(origin, position), Math.max(origin, position) + 1)
       .flatMap((row) => (row.kind === 'output' ? rowSignals(row) : []));
     if (!ids.length) return false;
-    onCheck(ids, true);
+    onCheck(ids, true, true);
     return true;
   }
-  const start = Math.max(
-    0,
-    Math.min(
-      Math.floor(scroll / ROW_HEIGHT) - 5,
-      rows.length - Math.ceil(height / ROW_HEIGHT),
-    ),
+  const start = Math.max(0, rowAt(tops, scroll) - 5);
+  const visible = rows.slice(start, rowAt(tops, scroll + height) + 7);
+  // One control collapses or expands every step's output preview.
+  const anyExpanded = steps.some(
+    (step) => step.outputIds.length > 0 && !collapsed.has(step.id),
   );
-  const visible = rows.slice(
-    start,
-    start + Math.ceil(height / ROW_HEIGHT) + 12,
-  );
+  // Dots mark outputs used to make the selected item, never the item itself.
+  const lineageShown =
+    !!lineageOutputs &&
+    rows.some(
+      (row) =>
+        row.kind === 'output' &&
+        row.key !== selectedKey &&
+        lineageOutputs.has(row.outputId!),
+    );
   return (
     <div className="workflow-history-pane">
-      <div className="workflow-tree-controls">
-        {focusedStepId ? (
-          <button className="workflow-tree-back" onClick={returnToHistory}>
-            <ArrowLeft size={14} /> Back to history
-          </button>
-        ) : (
-          <>
+      {(focusedStepId || steps.length > 0) && (
+        <div className="workflow-tree-controls">
+          {focusedStepId ? (
+            <button className="workflow-tree-back" onClick={returnToHistory}>
+              <ArrowLeft size={14} /> Back to history
+            </button>
+          ) : (
             <button
+              className="workflow-tree-toggle"
+              disabled={!!query}
+              title={
+                query
+                  ? 'Search results always show their matching outputs'
+                  : anyExpanded
+                    ? "Hide every step's outputs"
+                    : "Show every step's outputs"
+              }
               onClick={() =>
-                setCollapsed(new Set(steps.map((step) => step.id)))
+                setCollapsed(
+                  anyExpanded
+                    ? new Set(steps.map((step) => step.id))
+                    : new Set(),
+                )
               }
             >
-              Compact history
+              {anyExpanded ? (
+                <ChevronsDownUp size={14} />
+              ) : (
+                <ChevronsUpDown size={14} />
+              )}
+              {anyExpanded ? 'Collapse all' : 'Expand all'}
             </button>
-            <button onClick={() => setCollapsed(new Set())}>
-              Show outputs
-            </button>
-          </>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       <div
         className="workflow-tree"
         ref={container}
         role="tree"
         aria-label={
-          focusedStepId
-            ? 'Operation outputs'
-            : 'Chronological operation history'
+          focusedStepId ? 'Step outputs' : 'Chronological step history'
         }
         onKeyDown={(event) => {
           if (focusedStepId && event.key === 'Escape') {
@@ -368,14 +454,16 @@ export default function WorkflowHistory({
       >
         {!rows.length && (
           <p className="workflow-empty">
-            {steps.length
-              ? 'No matching steps. Clear the search or lineage filter.'
-              : 'No operations in this scope.'}
+            {workspaceEmpty
+              ? 'Imported recordings and your steps appear here, oldest first.'
+              : steps.length
+                ? 'No matching steps. Clear the search or lineage filter.'
+                : 'No steps in this view. Clear the filters to show every step.'}
           </p>
         )}
         <div
           role="presentation"
-          style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}
+          style={{ height: tops[rows.length], position: 'relative' }}
         >
           {visible.map((row, offset) => {
             const position = start + offset;
@@ -394,6 +482,21 @@ export default function WorkflowHistory({
                   ]
                 : [];
             const expanded = !effectiveCollapsed.has(step.id) || !!query;
+            // A step's count names what it made: signals, values or both.
+            const counted =
+              row.kind === 'step'
+                ? contributingOutputs
+                  ? step.outputIds.filter((id) => contributingOutputs.has(id))
+                  : step.outputIds
+                : [];
+            const outputCount = formatCount(
+              counted.length,
+              counted.length && counted.every((id) => index.values.has(id))
+                ? 'value'
+                : counted.length && counted.every((id) => index.nodes.has(id))
+                  ? 'signal'
+                  : 'output',
+            );
             const Icon =
               row.kind === 'output'
                 ? index.values.has(row.outputId!)
@@ -463,6 +566,7 @@ export default function WorkflowHistory({
                 data-flag={flagged}
                 data-lineage={
                   !!lineageOutputs &&
+                  row.key !== selectedKey &&
                   (row.kind === 'output'
                     ? lineageOutputs.has(row.outputId!)
                     : step.outputIds.some((id) => lineageOutputs.has(id)))
@@ -484,15 +588,16 @@ export default function WorkflowHistory({
                 title={row.label}
                 aria-label={`${
                   row.kind === 'step'
-                    ? `${row.label} · ${step.outputIds.length} outputs${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
+                    ? `${row.label} · ${outputCount}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
                     : row.outputId
                       ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}`
                       : row.label
                 }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
+                data-wrap={rowHeight(position) > ROW_HEIGHT || undefined}
                 style={{
                   position: 'absolute',
-                  top: position * ROW_HEIGHT,
-                  height: ROW_HEIGHT,
+                  top: tops[position],
+                  height: rowHeight(position),
                 }}
                 onFocus={() => setFocused(row.key)}
                 onClick={(event) => {
@@ -501,7 +606,8 @@ export default function WorkflowHistory({
                     row.kind !== 'more' &&
                     (event.shiftKey
                       ? checkRange(position)
-                      : (event.ctrlKey || event.metaKey) && toggleChecked(row))
+                      : (event.ctrlKey || event.metaKey) &&
+                        toggleChecked(row, true))
                   )
                     return;
                   select();
@@ -549,7 +655,7 @@ export default function WorkflowHistory({
                       const ids = [row, rows[next]].flatMap((item) =>
                         item.kind === 'output' ? rowSignals(item) : [],
                       );
-                      if (ids.length) onCheck(ids, true);
+                      if (ids.length) onCheck(ids, true, true);
                     }
                     focusRow(next);
                   } else if (
@@ -559,7 +665,7 @@ export default function WorkflowHistory({
                   ) {
                     event.preventDefault();
                     if (event.shiftKey) checkRange(position);
-                    else toggleChecked(row);
+                    else toggleChecked(row, true);
                   } else if (event.key === 'Home' || event.key === 'End') {
                     event.preventDefault();
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
@@ -622,7 +728,7 @@ export default function WorkflowHistory({
                       <strong>{row.label}</strong>
                       <small>
                         {row.kind === 'step'
-                          ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${contributingOutputs ? step.outputIds.filter((id) => contributingOutputs.has(id)).length : step.outputIds.length}`
+                          ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${outputCount}`
                           : (index.nodes.get(row.outputId!)?.unit ??
                             index.values.get(row.outputId!)?.unit ??
                             '')}
@@ -632,19 +738,21 @@ export default function WorkflowHistory({
                       <button
                         tabIndex={-1}
                         className="workflow-row-check"
-                        aria-label={`${checkState === true ? 'Uncheck' : 'Check'} ${row.kind === 'step' ? `the signals of ${row.label}` : row.label} for processing`}
-                        title="Check for processing · Ctrl+click or Shift+click rows to check several"
+                        aria-label={`${checkState === true ? 'Uncheck' : 'Check'} ${row.kind === 'step' ? `the signals of ${row.label}` : row.label} as ${row.kind === 'step' ? 'inputs' : 'an input'}`}
+                        title="Check as an input for Derive, Segment or Value · Ctrl+click or Shift+click rows to add the signal in view"
                         onClick={(event) => {
                           event.stopPropagation();
                           toggleChecked(row);
                         }}
                         onDoubleClick={(event) => event.stopPropagation()}
                       >
-                        {checkState === 'mixed' ? (
-                          <Minus size={11} />
-                        ) : checkState ? (
-                          <Check size={11} />
-                        ) : null}
+                        <span aria-hidden="true">
+                          {checkState === 'mixed' ? (
+                            <Minus size={12} />
+                          ) : checkState ? (
+                            <Check size={12} />
+                          ) : null}
+                        </span>
                       </button>
                     )}
                   </>
@@ -662,10 +770,11 @@ export default function WorkflowHistory({
                     <>
                       <ContextMenuGroup>
                         <ContextMenuLabel>
-                          {checkedTotal}{' '}
-                          {checkedTotal === 1
-                            ? 'checked signal'
-                            : 'checked signals'}
+                          {formatCount(
+                            checkedTotal,
+                            'checked signal',
+                            'checked signals',
+                          )}
                         </ContextMenuLabel>
                         <ContextMenuItem
                           disabled={busy}
@@ -719,7 +828,10 @@ export default function WorkflowHistory({
                         disabled={busy || !targetSignals(index, target).length}
                         onClick={() => onInspect(target, 'use-viewed')}
                       >
-                        <ListChecks /> Use as processing inputs
+                        <ListChecks />{' '}
+                        {targetSignals(index, target).length === 1
+                          ? 'Check only this signal'
+                          : 'Check only these signals'}
                       </ContextMenuItem>
                       {checkState !== undefined && (
                         <ContextMenuItem
@@ -728,8 +840,8 @@ export default function WorkflowHistory({
                         >
                           {checkState === true ? <X /> : <SquareCheck />}
                           {checkState === true
-                            ? 'Remove from checked inputs'
-                            : 'Add to checked inputs'}
+                            ? 'Uncheck as input'
+                            : 'Check as input'}
                           <ContextMenuShortcut>Ctrl+Click</ContextMenuShortcut>
                         </ContextMenuItem>
                       )}
@@ -737,7 +849,7 @@ export default function WorkflowHistory({
                         disabled={busy || !step.outputIds.length}
                         onClick={() => onInspect(target, 'export')}
                       >
-                        <Download /> Export / report
+                        <Download /> Export data…
                       </ContextMenuItem>
                       <ContextMenuItem
                         disabled={busy || !step.outputIds.length}
@@ -762,14 +874,14 @@ export default function WorkflowHistory({
                       disabled={busy}
                       onClick={() => action('duplicate')}
                     >
-                      <Copy /> Duplicate operation
+                      <Copy /> New version…
                     </ContextMenuItem>
                   )}
                   <ContextMenuItem
                     disabled={busy}
                     onClick={() => action('rename')}
                   >
-                    Rename {row.kind === 'output' ? 'output' : 'operation'}
+                    Rename {row.kind === 'output' ? 'output' : 'step'}
                     <ContextMenuShortcut>F2</ContextMenuShortcut>
                   </ContextMenuItem>
                   {step.kind === 'import' && (
@@ -788,8 +900,8 @@ export default function WorkflowHistory({
                   >
                     <Trash2 />{' '}
                     {step.kind === 'import'
-                      ? 'Remove recording'
-                      : 'Delete operation'}
+                      ? 'Remove recording…'
+                      : 'Delete step…'}
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -797,6 +909,11 @@ export default function WorkflowHistory({
           })}
         </div>
       </div>
+      {lineageShown && (
+        <p className="workflow-rail-hint">
+          <i aria-hidden="true" /> Used to make the selected item
+        </p>
+      )}
     </div>
   );
 }

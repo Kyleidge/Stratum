@@ -193,12 +193,16 @@ void app
       () =>
         [...document.querySelectorAll('button')].some(
           (button) =>
-            button.textContent.trim() === 'Open example workflow' &&
+            button.textContent.trim() === 'Explore the example recording' &&
             !button.disabled,
         ),
       'The main application did not load',
     );
-    await click('Open example workflow');
+    // Start on the example's default view rather than the example tour.
+    await evaluate(() =>
+      localStorage.setItem('stratum-example-tour-v1', 'dismissed'),
+    );
+    await click('Explore the example recording');
     await waitFor(
       () =>
         document.querySelector('.scratchpad-plot-title h1')?.textContent ===
@@ -233,27 +237,35 @@ void app
       (value) => originalProject.labels[value.id] === 'Run 1 · Average product',
     );
     assert.ok(scalar && Number.isFinite(scalar.value));
+    // Reports show values in the value tiles' format (lib/report-format.ts).
+    const shownValue =
+      scalar.value !== 0 &&
+      (Math.abs(scalar.value) < 0.01 || Math.abs(scalar.value) >= 1e12)
+        ? Math.abs(scalar.value) >= 1e6 || Math.abs(scalar.value) < 1e-3
+          ? scalar.value.toPrecision(4)
+          : String(Number(scalar.value.toPrecision(6)))
+        : scalar.value.toLocaleString('en-GB', {
+            minimumFractionDigits: 3,
+            maximumFractionDigits: 3,
+          });
     await evaluate(() => {
       const outputs = document.querySelector('#plot-dock-outputs');
       if (outputs.getAttribute('aria-selected') !== 'true') outputs.click();
     });
     await pause();
+    // A check box starts from the explicit checks, never the viewed signal.
     await evaluate(() =>
-      document.querySelector('[aria-label="Use Torque as input"]').click(),
-    );
-    await pause();
-    await evaluate(() =>
-      document.querySelector('[aria-label="Use Motor speed as input"]').click(),
+      document.querySelector('[aria-label="Check Torque as an input"]').click(),
     );
     await pause();
     assert.ok(
       await evaluate(
         () =>
           document
-            .querySelector('[aria-label="Use Torque as input"]')
+            .querySelector('[aria-label="Check Torque as an input"]')
             .getAttribute('aria-checked') === 'true' &&
           document
-            .querySelector('[aria-label="Use Motor speed as input"]')
+            .querySelector('[aria-label="Check Motor speed as an input"]')
             .getAttribute('aria-checked') === 'false',
       ),
       'The checked processing scope must differ from the inspected signal',
@@ -299,6 +311,18 @@ void app
       () => !!document.querySelector('.rb-paper [data-block-type="plot"]'),
       'Inspected signal did not become a report snapshot',
     );
+    // Adding stays in Data; the toast and the Reports badge lead there.
+    await waitFor(
+      () =>
+        document
+          .querySelector('.workflow-toast')
+          ?.textContent.includes('Added to report') &&
+        !document.querySelector('#workflow-data-workspace')?.hidden &&
+        !!document.querySelector('.workflow-workspace-badge'),
+      'Add to report must stay in Data and offer Open Reports',
+    );
+    await click('Open Reports', '.workflow-toast');
+    await waitFor(reportsVisible, 'Open Reports did not show the report');
     assert.ok(
       await evaluate(() => {
         const block = document.querySelector(
@@ -310,7 +334,7 @@ void app
           !!block.querySelector('path, polyline') &&
           document
             .querySelector('.rb-source-info')
-            .textContent.includes('1 source outputs')
+            .textContent.includes('1 source output')
         );
       }),
       'Signal block must use the actual signal and retain exact provenance',
@@ -335,22 +359,22 @@ void app
         );
         return (
           block.textContent.includes('Run 1 · Average product') &&
-          block.textContent.includes(String(expected)) &&
+          block.textContent.includes(expected) &&
           !block.textContent.includes('Run 2') &&
           !block.textContent.includes('Run 3') &&
           document
             .querySelector('.rb-source-info')
-            .textContent.includes('1 source outputs')
+            .textContent.includes('1 source output')
         );
-      }, scalar.value),
+      }, shownValue),
       'An individual scalar capture must match the engine and exclude siblings',
     );
     assert.ok(
       await evaluate((expected) => {
         const field = document.querySelector('[aria-label="Row 2, column 2"]');
-        return field.readOnly && field.value === String(expected);
-      }, scalar.value),
-      'Captured numerical cells must preserve the exact scalar value',
+        return field.readOnly && field.value === expected;
+      }, shownValue),
+      'Captured numerical cells must show the scalar in the app format',
     );
     await setField('Table title', 'Measured result');
     assert.ok(
@@ -373,10 +397,10 @@ void app
       await evaluate(
         () =>
           document
-            .querySelector('[aria-label="Use Torque as input"]')
+            .querySelector('[aria-label="Check Torque as an input"]')
             .getAttribute('aria-checked') === 'true' &&
           document
-            .querySelector('[aria-label="Use Motor speed as input"]')
+            .querySelector('[aria-label="Check Motor speed as an input"]')
             .getAttribute('aria-checked') === 'false',
       ),
       'Report captures must preserve the independent checked processing scope',
@@ -392,7 +416,12 @@ void app
       'Saved plot never became available to capture',
     );
     await click('Add plot to report');
-    await waitFor(reportsVisible, 'Plot action did not open Reports');
+    await waitFor(
+      () => !!document.querySelector('.workflow-toast'),
+      'Plot capture did not confirm with a toast',
+    );
+    await click('Open Reports', '.workflow-toast');
+    await waitFor(reportsVisible, 'Open Reports did not show the report');
     await waitFor(
       () => !!document.querySelector('.rb-paper .rb-block image'),
       'Displayed plot did not become a rendered snapshot',
@@ -480,7 +509,7 @@ void app
         () =>
           document
             .querySelector('.rb-source-info')
-            ?.textContent.includes('1 source outputs') &&
+            ?.textContent.includes('1 source output') &&
           document
             .querySelector('.rb-paper')
             .textContent.includes('Run 1 · Torque × speed') &&

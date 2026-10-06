@@ -156,7 +156,8 @@ Undo/Redo last for the session. See the
 
 ### Included motor-test workflow
 
-Choose **Open example workflow** from the empty workspace or **Workspace**.
+Choose **Explore the example recording** from the empty workspace, or
+**Open the example recording** in **Workspace**.
 The synthetic recording contains three speed sweeps over 180 seconds, sampled
 at 10 Hz. Its seven chronological steps use the same operations as your own data:
 
@@ -171,7 +172,8 @@ at 10 Hz. Its seven chronological steps use the same operations as your own data
 The example has two original signals, seven derived signals and five values.
 Open any of its seven steps in History to inspect its outputs, or drag a run
 segment onto New plot and align its siblings at zero.
-Use **Export / report** on any of these results for CSV data or a printable report.
+Use **Export data…** on any of these results for CSV data or a quick HTML
+summary, or **Add to report** to compose a PDF in Reports.
 Every result keeps direct links to its inputs. Edit, rename, delete and Undo work
 on the example just as they do on imported recordings.
 
@@ -250,7 +252,7 @@ storage deletes the local workspace and its Undo history.
 Archive version 1 is limited to **128 MiB**; evaluated samples CSV is limited to
 **64 MiB per file**. These exports prepare local downloads; they do not claim
 that a file has finished saving. For larger exports, use shorter segments or
-fewer signals. Export / report's printable reports are standalone HTML snapshots
+fewer signals. Export data's quick HTML summaries are standalone HTML snapshots
 of the chosen outputs and their contributing history; use **Reports** for an
 arranged multipage PDF.
 

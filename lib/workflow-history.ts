@@ -6,7 +6,8 @@ import type { WorkflowStep } from './workflow-types';
 
 export function stepName(step: WorkflowStep): string {
   if (step.name) return step.name;
-  if (step.kind === 'import') return 'Import recording';
+  if (step.kind === 'import')
+    return step.fileName ? `Import ${step.fileName}` : 'Import recording';
   if (step.kind === 'segment') return 'Segment signals';
   if (step.kind === 'regions') return 'Saved region ranges';
   if (step.operation === 'power') return 'Brake power';
@@ -45,6 +46,7 @@ export function withWorkflowHistory(project: Project): Project {
       sourceId: source.id,
       kind: 'import',
       operation: 'import',
+      ...(source.name ? { fileName: source.name } : {}),
       createdAt: nodes.get(source.channels[0])?.createdAt ?? '',
       inputIds: [],
       outputIds: source.channels,

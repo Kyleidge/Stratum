@@ -189,7 +189,7 @@ signals retain their own displayed axis; segmentation ranges use recording time
 and are translated into the target recipe. Each selected batch member is scanned
 independently, clipped to its own available interval.
 
-**Repeat with new settings** appends another operation. It never changes the old
+**New version…** appends another step. It never changes the old
 recipe, output IDs, downstream signals, or stored scalar values.
 
 ## Values and numerical meaning
@@ -238,7 +238,7 @@ when needed. Narrow layouts keep history behind a labeled toggle. Native charts
 adapt tick density to their width without distorting axis text. A named lineage
 filter shows only contributing outputs, excluding unrelated siblings.
 
-**Export / report** is available alongside the inspection tabs. Its dialog names
+**Export data…** is available alongside the inspection tabs. Its dialog names
 the exact scope, output count, format and filename before downloading. Viewing
 one result defaults to exporting that result; whole-step export is explicit.
 Table filters never silently change export scope.

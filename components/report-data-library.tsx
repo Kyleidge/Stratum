@@ -11,6 +11,8 @@ export function ReportDataLibrary({
   selectionIds,
   busy,
   capturing,
+  kind,
+  onKindChange,
   onAdd,
   onCancel,
 }: {
@@ -18,11 +20,14 @@ export function ReportDataLibrary({
   selectionIds: string[];
   busy: boolean;
   capturing: boolean;
+  /** Which assets to list: all, signal, plot, plottable or values. */
+  kind: string;
+  onKindChange: (kind: string) => void;
   onAdd: (ids: string[]) => void;
   onCancel: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState('all');
+  const setKind = onKindChange;
   const [page, setPage] = useState(0);
   const [checked, setChecked] = useState<string[]>([]);
   const matches = assets.filter(
@@ -30,7 +35,9 @@ export function ReportDataLibrary({
       (kind === 'all' ||
         (kind === 'values'
           ? asset.kind === 'value' || asset.kind === 'values'
-          : asset.kind === kind)) &&
+          : kind === 'plottable'
+            ? asset.kind === 'signal' || asset.kind === 'plot'
+            : asset.kind === kind)) &&
       `${asset.name} ${asset.detail}`
         .toLowerCase()
         .includes(query.toLowerCase()),
@@ -71,6 +78,7 @@ export function ReportDataLibrary({
           }}
         >
           <option value="all">All workspace data</option>
+          <option value="plottable">Signals &amp; saved plots</option>
           <option value="signal">Signals</option>
           <option value="plot">Saved plots</option>
           <option value="values">Values &amp; value tables</option>
@@ -85,7 +93,7 @@ export function ReportDataLibrary({
       </button>
       <div className="rb-data-summary">
         <span>{matches.length.toLocaleString()} available</span>
-        <span>{selected.length}/30 selected</span>
+        <span>{selected.length} of 30 selected</span>
       </div>
       <div className="rb-data-list">
         {matches
@@ -111,7 +119,7 @@ export function ReportDataLibrary({
                 />
                 <button
                   className="rb-data-item"
-                  title={`Add ${asset.name} to report`}
+                  title={`${asset.name}\n${asset.detail}\nClick to add, or drag onto the page.`}
                   aria-label={`Add ${asset.name} to report`}
                   disabled={disabled}
                   draggable={!disabled}
@@ -164,7 +172,11 @@ export function ReportDataLibrary({
       <button
         className="rb-button rb-primary rb-wide"
         disabled={disabled || !selected.length}
-        onClick={() => onAdd(selected)}
+        onClick={() => {
+          onAdd(selected);
+          // Added items are on the page now; start the next selection afresh.
+          setChecked([]);
+        }}
       >
         <Check size={14} /> Add selected ({selected.length})
       </button>
@@ -175,8 +187,9 @@ export function ReportDataLibrary({
         </output>
       )}
       <p className="rb-field-note rb-data-note">
-        Snapshots stay as captured. Reinsert an item to include later changes.
-        Your draft stays here while you inspect data.
+        Snapshots stay as captured. When data changes, a snapshot shows “Data
+        changed” with an Update snapshot action. Your draft stays here while you
+        inspect data.
       </p>
     </>
   );

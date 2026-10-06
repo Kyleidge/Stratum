@@ -260,8 +260,9 @@ export default function WorkflowChecksPanel({
       </h3>
       {!checks.length && editing === null && (
         <p className="workflow-muted">
-          Add limits or an expected number of outputs. Failures are flagged
-          here, in History and in batch results.
+          No checks yet. Add limits or an expected number of outputs. Failures
+          are flagged here, in History and in batch results; without checks,
+          batch items show No checks rather than Pass.
         </p>
       )}
       <ul>

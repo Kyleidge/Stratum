@@ -2,6 +2,7 @@ import type { Plot, Project } from './signal-types';
 import { SignalGraph } from './signal-graph';
 import { stepName, WorkflowIndex } from './workflow-history';
 import { VALUE_FUNCTIONS } from './workflow-types';
+import { formatCount } from './format-count';
 
 /** Text cells stay text when opened in a spreadsheet, including imported names. */
 export const csvText = (text: string) =>
@@ -16,6 +17,46 @@ const html = (text: string | number) =>
         character
       ]!,
   );
+
+export type ExportKind = 'values' | 'samples' | 'summary' | 'report';
+
+/**
+ * A download name that says what the file holds: recording, scope and kind,
+ * such as `SN-24001 · #013 Maximum · values.csv`. Characters that file
+ * systems reject are replaced.
+ */
+export function exportFileName(
+  project: Project,
+  ids: readonly string[],
+  scope: string,
+  kind: ExportKind,
+): string {
+  const index = new WorkflowIndex(project);
+  const sourceIds = new Set(
+    index.lineage([...ids]).originals.map((node) => node.sourceId),
+  );
+  const recordings = project.sources
+    .filter((source) => sourceIds.has(source.id))
+    .map((source) => source.name.replace(/\.[a-z0-9]{1,5}$/i, ''));
+  const recording =
+    recordings.length > 2
+      ? `${recordings.length} recordings`
+      : recordings.join(', ');
+  const suffix = {
+    values: 'values.csv',
+    samples: 'samples.csv',
+    summary: 'signal summary.csv',
+    report: 'summary.html',
+  }[kind];
+  const name = [recording, scope]
+    .filter(Boolean)
+    .join(' · ')
+    .replace(/[^\p{L}\p{N} .,#()_\-·×+]/gu, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
+  return `${name || 'Stratum'} · ${suffix}`;
+}
 
 export function valuesCsv(project: Project, ids: string[]) {
   const index = new WorkflowIndex(project);
@@ -138,7 +179,7 @@ export function reportHtml(
     table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;border-bottom:1px solid #ccd5d9;padding:10px;vertical-align:top;overflow-wrap:anywhere}p{overflow-wrap:anywhere}td:last-child{max-width:280px}thead{display:table-header-group}
     @media print{body{margin:0;max-width:none;padding:0}section{break-inside:avoid}h1,h2{break-after:avoid}@page{margin:16mm}}
     </style></head><body><header><p class="muted">STRATUM · ANALYSIS SNAPSHOT</p><h1>Workflow results</h1>
-    <p>${ids.length} outputs · Created ${html(createdAt.toISOString())}</p><p class="muted">Original recordings remain unchanged. Signal times reflect each signal’s evaluated time axis. Open this file in a browser and use Print to save a PDF.</p></header>
+    <p>${html(formatCount(ids.length, 'output'))} · Created ${html(createdAt.toISOString())}</p><p class="muted">Original recordings remain unchanged. Signal times reflect each signal’s evaluated time axis. Open this file in a browser and use Print to save a PDF.</p></header>
     ${cards}<h2>Contributing operation history</h2><p>Chronological steps and only the outputs contributing to this report.</p>
     <table><thead><tr><th>Step</th><th>Operation</th><th>Contributing outputs</th><th>Saved settings</th></tr></thead><tbody>${history}</tbody></table></body></html>`;
 }

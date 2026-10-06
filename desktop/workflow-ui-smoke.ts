@@ -37,7 +37,7 @@ export async function workflowUiSmoke() {
     if (
       !document.querySelector('[data-slot="dropdown-menu-content"][data-open]')
     ) {
-      button('Inspect and export')!.click();
+      button('More actions for the selection')!.click();
       await delay();
     }
     const item = await until(
@@ -60,11 +60,11 @@ export async function workflowUiSmoke() {
     if (
       root === document &&
       [
-        'Export / report',
-        'Inputs and originals',
-        'Show lineage in tree',
-        'Used by later operations',
-        'Open producing operation',
+        'Export data…',
+        'Inputs and original signals',
+        'Show lineage in History',
+        'Used by later steps',
+        'Open producing step',
         'Back to previous selection',
         'View samples',
       ].includes(text) &&
@@ -74,6 +74,18 @@ export async function workflowUiSmoke() {
       return;
     }
     (await until(() => button(text, root), `button ${text}`)).click();
+    await delay();
+  }
+  /** Apply to is named by its visible text, which follows the selection. */
+  async function clickInputScope() {
+    const scope = await until(
+      () =>
+        document.querySelector<HTMLButtonElement>(
+          '.workflow-input-scope:not(:disabled)',
+        ) ?? undefined,
+      'Apply to',
+    );
+    scope.click();
     await delay();
   }
   async function dialog() {
@@ -267,6 +279,26 @@ export async function workflowUiSmoke() {
       'Active must dock the operation outputs below the plot.',
     );
   }
+  /** Operation dialogs offer their choices as radio cards. */
+  async function chooseCard(label: string) {
+    (await dialog())
+      .querySelector<HTMLElement>(`[role="radio"][aria-label="${label}"]`)!
+      .click();
+    await delay();
+  }
+  /** Compare & align names its Create button after the output count. */
+  async function createTimeResult() {
+    (
+      await until(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            '[role="dialog"][data-open] .operation-footer .primary-button:not(:disabled)',
+          ) ?? undefined,
+        'Compare & align create button',
+      )
+    ).click();
+    await delay();
+  }
   async function choose(label: string, text: string) {
     const chooser = (await dialog()).querySelector<HTMLButtonElement>(
       `button[aria-label="${label}"]`,
@@ -285,10 +317,22 @@ export async function workflowUiSmoke() {
     ).click();
     await delay();
   }
-  async function exportFile(options?: { scope?: string; report?: boolean }) {
-    await click('Export / report');
-    if (options?.scope) await choose('Include', options.scope);
-    if (options?.report) await choose('File format', 'Printable report (HTML)');
+  /** Chooses an Export data radio card by its group and value. */
+  async function pick(name: string, value: string) {
+    const input = (await dialog()).querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${name}"][value="${value}"]`,
+    );
+    if (!input) throw new Error(`Missing export choice ${name}=${value}`);
+    input.click();
+    await delay();
+  }
+  async function exportFile(options?: {
+    scope?: 'viewed' | 'checked' | 'step';
+    report?: boolean;
+  }) {
+    await click('Export data…');
+    if (options?.scope) await pick('export-scope', options.scope);
+    if (options?.report) await pick('export-format', 'report');
     await click('Download file', await dialog());
     await until(
       () => !document.querySelector('[role="dialog"]'),
@@ -552,7 +596,7 @@ export async function workflowUiSmoke() {
       assert(row, `Missing signal for selection details: ${name}`);
       row.click();
     };
-    await click('Toggle inspector');
+    await click('Toggle Details');
     selectSignal('Torque');
     await delay();
     assert(
@@ -564,7 +608,7 @@ export async function workflowUiSmoke() {
         localStorage.getItem('stratum-inspector-open-v1') === 'false',
       'Hiding the inspector must persist and give its width to the plot.',
     );
-    await click('Toggle inspector');
+    await click('Toggle Details');
     assert(
       details.querySelector('h2')?.textContent === 'Torque' &&
         details.textContent?.includes('Nm') &&
@@ -598,10 +642,13 @@ export async function workflowUiSmoke() {
   }
   try {
     await until(
-      () => button('Open example workflow') || button('Derive signal'),
+      () => button('Explore the example recording') || button('Derive signal'),
       'workspace startup',
     );
-    if (button('Open example workflow')) await click('Open example workflow');
+    // Start on the example's default view rather than the example tour.
+    localStorage.setItem('stratum-example-tour-v1', 'dismissed');
+    if (button('Explore the example recording'))
+      await click('Explore the example recording');
     await until(() => button('Derive signal'), 'initial signal');
     await until(
       () => document.querySelector('.scratchpad-canvas .signal-chart svg'),
@@ -817,9 +864,8 @@ export async function workflowUiSmoke() {
       () =>
         document.querySelectorAll('.scratchpad-canvas [data-value-axis]')
           .length === 2 &&
-        document
-          .querySelector('[data-value-axis="unit:Nm"]')
-          ?.textContent?.includes('Torque / Smoothed torque (Nm)'),
+        document.querySelector('[data-value-axis="unit:Nm"] .plot-axis-title')
+          ?.textContent === 'Nm',
       'Same-unit traces did not share an automatically named axis.',
     );
     // A same-unit trace can move onto another independently scaled Y axis.
@@ -971,12 +1017,12 @@ export async function workflowUiSmoke() {
     );
     assert(
       document.querySelectorAll('.workflow-action-toolbar button').length ===
-        7 &&
+        8 &&
         document.querySelectorAll('.workflow-create-action').length === 4 &&
         !!document.querySelector(
           '.workflow-action-toolbar [aria-label="Add to report"]',
         ),
-      'The top bar must hold four operations, Apply to, Add to report and Inspect / export.',
+      'The top bar must hold four operations, Apply to, Add to report, Export data and More actions.',
     );
     assert(
       !document.querySelector(
@@ -987,7 +1033,7 @@ export async function workflowUiSmoke() {
         ),
       'Occasional management actions still crowd the toolbar.',
     );
-    const moreTrigger = button('Inspect and export')!;
+    const moreTrigger = button('More actions for the selection')!;
     moreTrigger.focus();
     moreTrigger.dispatchEvent(
       new KeyboardEvent('keydown', {
@@ -1005,7 +1051,7 @@ export async function workflowUiSmoke() {
     );
     assert(
       keyboardMenu.textContent?.includes('View samples') &&
-        keyboardMenu.textContent?.includes('Export / report'),
+        keyboardMenu.textContent?.includes('Export data…'),
       'Inspection and export actions are not discoverable.',
     );
     keyboardMenu.dispatchEvent(
@@ -1149,12 +1195,20 @@ export async function workflowUiSmoke() {
     await settled();
     assert(
       document.querySelector('.workflow-inventory')?.textContent ===
-        '2 originals7 derived5 values',
+        '2 original signals7 derived signals5 values',
       'Refreshing did not restore the complete example.',
     );
     await openOutput('Motor speed');
     await click('Derive signal');
     const mathModal = await dialog();
+    // Derive opens on the last-used operation; the Math tab selects Add.
+    await click('Math', mathModal);
+    mathModal
+      .querySelector<HTMLElement>(
+        '[role="radio"][aria-label="Multiply signals"]',
+      )!
+      .click();
+    await delay();
     assert(
       mathModal.querySelectorAll('[role="radio"]').length === 7,
       'Math should show seven compact operation cards.',
@@ -1270,7 +1324,7 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('3 checked'),
       'Context inspection changed checked processing inputs.',
     );
-    await click('Review checked inputs');
+    await clickInputScope();
     const scopeModal = await dialog();
     assert(
       scopeModal.querySelectorAll('.workflow-input-review li').length === 3,
@@ -1287,7 +1341,7 @@ export async function workflowUiSmoke() {
       'Follow selection did not return to the viewed member.',
     );
     // Explicitly empty input scope disables creation rather than falling back silently.
-    await click('Review checked inputs');
+    await clickInputScope();
     const emptyScope = await dialog();
     emptyScope
       .querySelector<HTMLButtonElement>('[aria-label^="Remove "]')!
@@ -1300,13 +1354,13 @@ export async function workflowUiSmoke() {
         ?.getAttribute('aria-disabled') === 'true',
       'An empty scope silently enabled processing.',
     );
-    await click('Review checked inputs');
+    await clickInputScope();
     await click('Follow selection', await dialog());
     assert(
       button('Derive signal'),
       'Empty input scope cannot return to the current selection.',
     );
-    await contextAction(selectedHistoryRow(), 'Use as processing inputs');
+    await contextAction(selectedHistoryRow(), 'Check only');
     // A segment member expands only its producing operation on the plot.
     await dragItem(selectedHistoryRow(), button('New plot')!);
     await until(
@@ -1353,7 +1407,7 @@ export async function workflowUiSmoke() {
     );
     await click('Close', memberModal);
     await closePlot();
-    await contextAction(selectedHistoryRow(), 'Use as processing inputs');
+    await contextAction(selectedHistoryRow(), 'Check only');
     await segment('15, 20');
     assert(
       document
@@ -1425,12 +1479,12 @@ export async function workflowUiSmoke() {
       'Value sample source is ambiguous.',
     );
     await click('Close', samplesModal);
-    await click('Show lineage in tree');
+    await click('Show lineage in History');
     assert(
       document.querySelector('.workflow-filter'),
       'Lineage filter was not applied.',
     );
-    await click('Inputs and originals');
+    await click('Inputs and original signals');
     const provenance = document.querySelector<HTMLButtonElement>(
       '.workflow-input-link button',
     );
@@ -1442,7 +1496,7 @@ export async function workflowUiSmoke() {
       'Following a scalar input did not return to a reusable signal.',
     );
     await outputsTab();
-    await click('Repeat with new settings');
+    await click('New version…');
     const repeatModal = await dialog();
     assert(
       repeatModal.querySelector('textarea')?.value.includes('15, 20'),
@@ -1529,7 +1583,7 @@ export async function workflowUiSmoke() {
     moreOutputs.click();
     await delay();
     assert(
-      historyTree.getAttribute('aria-label') === 'Operation outputs' &&
+      historyTree.getAttribute('aria-label') === 'Step outputs' &&
         historyTree.querySelectorAll('[data-kind="step"]').length === 1 &&
         !allOutputs(),
       'View all must show only the operation and its full output tree.',
@@ -1570,7 +1624,7 @@ export async function workflowUiSmoke() {
     );
     await delay();
     assert(
-      historyTree.getAttribute('aria-label') === 'Operation outputs' &&
+      historyTree.getAttribute('aria-label') === 'Step outputs' &&
         document.activeElement?.getAttribute('aria-selected') === 'true',
       'Selecting a late member must keep the focused output tree open.',
     );
@@ -1628,9 +1682,9 @@ export async function workflowUiSmoke() {
       'A late batch member cannot be selected.',
     );
     await exportFile();
-    await exportFile({ scope: 'All outputs from #013 · 40 outputs' });
+    await exportFile({ scope: 'step' });
     await exportFile({ report: true });
-    await click('Show lineage in tree');
+    await click('Show lineage in History');
     assert(
       !document
         .querySelector('.workflow-filter')
@@ -1658,17 +1712,17 @@ export async function workflowUiSmoke() {
       'tree End key',
     );
     await click('Show all steps');
-    await click('Compact history');
+    await click('Collapse all');
     assert(
       document.querySelectorAll('[role="treeitem"][aria-level="2"]').length <=
         5,
-      'Compact history did not collapse unrelated output lists.',
+      'Collapse all did not collapse unrelated output lists.',
     );
     assert(
       document.querySelector('[role="treeitem"][aria-selected="true"]'),
-      'Compact history buried the selected output.',
+      'Collapse all buried the selected output.',
     );
-    await click('Show outputs');
+    await click('Expand all');
     await click('Signals');
     const search = document.querySelector<HTMLInputElement>(
       'input[aria-label="Search workflow"]',
@@ -1694,6 +1748,7 @@ export async function workflowUiSmoke() {
     await delay();
     // Everyday management must work through the actual dialogs and worker.
     await click('Derive signal');
+    await click('Math', await dialog());
     (await dialog())
       .querySelector<HTMLElement>('[role="radio"][aria-label="Scale signal"]')!
       .click();
@@ -1732,7 +1787,7 @@ export async function workflowUiSmoke() {
         .querySelector('.workflow-value-card strong')
         ?.textContent?.replaceAll(',', '') ?? 'NaN',
     );
-    await click('Inputs and originals');
+    await click('Inputs and original signals');
     document
       .querySelector<HTMLButtonElement>('.workflow-input-link button')!
       .click();
@@ -1759,7 +1814,7 @@ export async function workflowUiSmoke() {
         'Reviewed speed',
       'Editing lost the output alias.',
     );
-    await contextAction(selectedHistoryRow(), 'Delete operation');
+    await contextAction(selectedHistoryRow(), 'Delete step');
     let impact = await until(
       () =>
         document.querySelector<HTMLElement>('[role="alertdialog"]') ??
@@ -1767,22 +1822,22 @@ export async function workflowUiSmoke() {
       'delete impact',
     );
     assert(
-      impact.textContent?.includes('2 operations'),
+      impact.textContent?.includes('2 steps'),
       'Delete failed to include the dependent value.',
     );
-    await click('Keep operation', impact);
+    await click('Cancel', impact);
     await until(
       () => !document.querySelector('[role="alertdialog"]'),
       'cancel deletion',
     );
-    await contextAction(selectedHistoryRow(), 'Delete operation', true);
+    await contextAction(selectedHistoryRow(), 'Delete step', true);
     impact = await until(
       () =>
         document.querySelector<HTMLElement>('[role="alertdialog"]') ??
         undefined,
       'delete impact again',
     );
-    await click('Delete listed operations', impact);
+    await click('Delete 2 steps', impact);
     await until(
       () =>
         !document.querySelector('[role="alertdialog"]') &&
@@ -1806,10 +1861,8 @@ export async function workflowUiSmoke() {
         () =>
           document
             .querySelector('.workflow-notice')
-            ?.textContent?.includes(
-              label.startsWith('Undo')
-                ? 'Undid last change'
-                : 'Redid last change',
+            ?.textContent?.startsWith(
+              label.startsWith('Undo') ? 'Undid' : 'Redid',
             ),
         `${label} settled`,
       );
@@ -1952,15 +2005,15 @@ export async function workflowUiSmoke() {
     );
     await delay();
     await click('Select matching signals', await dialog());
-    await choose('Time operation', 'Align time bases');
-    await click('Create derived signals', await dialog());
+    // Compare & align opens on Align.
+    await createTimeResult();
     await settled();
     await click('Compare & align');
     await until(
       () => document.querySelector('.time-dialog .signal-chart svg'),
       'cross-file overlay',
     );
-    await choose('Time operation', 'Resample to a shared grid');
+    await chooseCard('Same sample times');
     setValue(
       (await dialog()).querySelector<HTMLInputElement>(
         'input[aria-label="Output rate"]',
@@ -1968,11 +2021,11 @@ export async function workflowUiSmoke() {
       '2',
     );
     await delay();
-    await click('Create derived signals', await dialog());
+    await createTimeResult();
     await settled();
     await click('Compare & align');
-    await choose('Time operation', 'Calculate between signals');
-    await click('Create derived signals', await dialog());
+    await chooseCard('Calculate A and B');
+    await createTimeResult();
     await settled();
     await click('Calculate value');
     await click('Create 1 value', await dialog());

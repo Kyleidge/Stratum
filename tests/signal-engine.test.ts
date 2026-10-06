@@ -39,10 +39,36 @@ void test('CSV rejects missing times and leaves no published source after failur
   await e.open();
   await assert.rejects(
     e.importCsv(new File(['t,a,b\n0,1,2\n,,\n1,2,3'], 'invalid.csv')),
-    /time must/,
+    /invalid\.csv: Row 3: the time cell is empty\./,
   );
   assert.equal(e.project.sources.length, 0);
   e.close();
+});
+void test('CSV errors name the file, the row and the cause', async (t) => {
+  const e = new SignalEngine(undefined, crypto.randomUUID());
+  await e.open();
+  t.after(() => e.close());
+  const failures: [string, RegExp][] = [
+    [
+      'Time [s];Speed [rpm]\n0;1\n1;2',
+      /SN\.csv: Columns are separated by semicolons \(;\), not commas\..*Time \[s\],Speed \[rpm\]/,
+    ],
+    ['Time [s]\tSpeed\n0\t1\n1\t2', /separated by tabs/],
+    [
+      'Time,Speed\n2024-01-02 10:00:00,1\n2024-01-02 10:00:01,2',
+      /SN\.csv: Row 2: time “2024-01-02 10:00:00” is a date or clock time\./,
+    ],
+    ['t,a\n0,1\n0,2', /SN\.csv: Row 3: time 0 s does not come after/],
+    ['t,a\n0,1\n1,x', /SN\.csv: Row 3, column “a”: “x” is not a number\./],
+    ['t,a,a\n0,1,2\n1,2,3', /SN\.csv: The header “a” appears more than once/],
+    [
+      't,a\n0,1\n1,2,3',
+      /SN\.csv: Row 3 has 3 columns, but the header row has 2\./,
+    ],
+  ];
+  for (const [text, message] of failures)
+    await assert.rejects(e.importCsv(new File([text], 'SN.csv')), message);
+  assert.equal(e.project.sources.length, 0);
 });
 void test('power and BSFC use correct units and reject nonpositive power', () => {
   assert.ok(Math.abs(power(100, 3000) - Math.PI * 10) < 1e-10);
@@ -286,6 +312,23 @@ function triggers(
 const binaryCsv =
   't,Switch [V]\n0,0\n1,0\n2,2\n3,2\n4,0\n5,0\n6,2\n7,2\n8,0\n9,0';
 
+void test('new segments are numbered per step and named after display labels', async () => {
+  const { e, s } = await fixture(binaryCsv);
+  await e.rename(s.channels[0], 'Door switch');
+  const config = triggers(s.channels[0]);
+  const first = await e.segment(s.id, config, [s.channels[0]]);
+  const second = await e.segment(s.id, config, [s.channels[0]]);
+  assert.deepEqual(
+    first.map((segment) => segment.name),
+    ['Segment 01', 'Segment 02'],
+  );
+  assert.deepEqual(
+    second.map((segment) => segment.name),
+    ['Segment 01', 'Segment 02'],
+  );
+  assert.equal(e.find(second[0].nodes[0]).name, 'Door switch');
+  e.close();
+});
 void test('generic triggers interpolate crossings, preserve provenance, and only create crops', async () => {
   const { e, s } = await fixture(binaryCsv);
   const before = await values(e, s.channels[0]);

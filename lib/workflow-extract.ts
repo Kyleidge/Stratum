@@ -374,26 +374,29 @@ export function extractWorkflow(
       });
     }
   }
+  // Warnings name steps as History does, never by their workflow IDs.
+  const warned = new Set<string>();
+  const named = (id: string) => {
+    const step = steps.find((item) => item.id === id);
+    return step?.name ?? id;
+  };
   for (const step of steps)
     for (const ref of JSON.stringify(step.operation).matchAll(
       /"([a-z][a-z0-9-]*)\[(\d+)\]"/g,
     )) {
       const position = ref[2];
-      if (
-        !warnings.some((warning) =>
-          warning.message.includes(`“${ref[1]}” output ${position}`),
-        )
-      )
-        warnings.push({
-          recipeStepId: step.id,
-          message: `Uses “${ref[1]}” output ${position}. Items with fewer outputs skip this step; consider a count check on “${ref[1]}”.`,
-        });
+      if (warned.has(`${ref[1]}[${position}]`)) continue;
+      warned.add(`${ref[1]}[${position}]`);
+      warnings.push({
+        recipeStepId: step.id,
+        message: `“${named(step.id)}” uses output ${position} of “${named(ref[1])}”. Items with fewer outputs skip it; consider an output count check on “${named(ref[1])}”.`,
+      });
     }
   if (!steps.length)
     throw new Error(
       skipped.length
         ? `No steps from this recording can be saved. ${skipped[0].reason}`
-        : 'This recording has no operations to save yet. Derive, segment or calculate values first.',
+        : 'This recording has no steps to save yet. Derive, segment or calculate values first.',
     );
   return {
     recipe: {

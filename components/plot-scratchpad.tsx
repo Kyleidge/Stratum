@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
   type Ref,
   type DragEvent,
@@ -43,6 +44,7 @@ import {
   ArrowDown,
   LockKeyhole,
   FilePlus2,
+  MoreHorizontal,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -56,6 +58,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -84,6 +87,8 @@ import {
   TRACE_COLORS,
   VALUE_TAGS,
   readPlotSheets,
+  resolveColor,
+  seriesColor,
   navigatePlot,
   plotViewport,
   plotExtent,
@@ -111,6 +116,7 @@ import SignalChart, {
 import PlotMeasurements from './plot-measurements';
 import PlotSelect from './plot-select';
 import { capturePlotSvg, exportPlotImage } from '@/lib/plot-export';
+import { currentTheme, subscribeTheme } from '@/lib/theme';
 import { createBlock, type ReportBlock } from '@/lib/report-mockup';
 import { reportSource } from '@/lib/report-data';
 import WorkflowList from './workflow-list';
@@ -193,6 +199,10 @@ export default function PlotScratchpad({
 }: Props) {
   const [sheets, setSheets] = useState<PlotSheet[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Colour inputs show the current theme's series colour: re-render when the
+  // theme changes so they never show the other theme's value.
+  useSyncExternalStore(subscribeTheme, currentTheme, () => 'dark' as const);
+  const inputColor = (color: string) => resolveColor(seriesColor(color));
   const [storageError, setStorageError] = useState('');
   const [activeSettings, setActiveSettings] = useState<
     Record<string, Partial<PlotSheet>>
@@ -232,6 +242,8 @@ export default function PlotScratchpad({
     clockId?: string;
   }>();
   const [helpOpen, setHelpOpen] = useState(false);
+  // Short windows show a value's result on one line; its explanation opens here.
+  const [valueDetails, setValueDetails] = useState(false);
   const [styleTrace, setStyleTrace] = useState<string>();
   const [exporting, setExporting] = useState(false);
   const [picker, setPicker] = useState(false);
@@ -1062,6 +1074,26 @@ export default function PlotScratchpad({
     Math.max(0, Math.ceil(matches.length / 30) - 1),
   );
 
+  // The settings group and its overflow menu share these predicates.
+  const canAnnotate =
+    !!traces.length &&
+    clocks.size <= 1 &&
+    (sheet.annotations?.length ?? 0) < 50;
+  function addAnnotation() {
+    setNoteDraft({
+      time: String((zoomRange(fullRange)[0] + zoomRange(fullRange)[1]) / 2),
+      text: '',
+      clockId: clocks.values().next().value,
+    });
+  }
+  const canReport =
+    !!traces.length &&
+    !busy &&
+    !exporting &&
+    !plotView?.error &&
+    !(hasSignals && plotView?.detail?.key !== idsKey);
+  const traceProperties = isActive && active.traces.length === 1;
+
   return (
     <section
       ref={host}
@@ -1175,6 +1207,7 @@ export default function PlotScratchpad({
                 {isActive ? (
                   <button
                     className="secondary-button"
+                    title="Save this view as its own plot tab"
                     disabled={
                       !activeId || !loaded || sheets.length >= MAX_PLOT_TABS
                     }
@@ -1265,7 +1298,27 @@ export default function PlotScratchpad({
                     </button>
                   </div>
                 )}
-              {isActive && valueTiles}
+              {isActive && valueTiles && (
+                <div
+                  className="scratchpad-values"
+                  data-expanded={valueDetails || undefined}
+                >
+                  {valueTiles}
+                  <button
+                    type="button"
+                    className="workflow-link scratchpad-values-toggle"
+                    aria-expanded={valueDetails}
+                    aria-label={
+                      valueDetails
+                        ? 'Hide value explanation'
+                        : 'Show value explanation'
+                    }
+                    onClick={() => setValueDetails(!valueDetails)}
+                  >
+                    {valueDetails ? 'Less' : 'More'}
+                  </button>
+                </div>
+              )}
               <div
                 className="scratchpad-canvas"
                 {...dropProps(selectedTab)}
@@ -1448,10 +1501,10 @@ export default function PlotScratchpad({
                     </button>
                   </fieldset>
                   <fieldset
-                    className="scratchpad-zoom"
+                    className="scratchpad-zoom scratchpad-tools-secondary"
                     aria-label="Plot settings and delivery"
                   >
-                    {isActive && active.traces.length === 1 && (
+                    {traceProperties && (
                       <button
                         aria-label="Active trace properties"
                         title="Trace color and rendering"
@@ -1469,23 +1522,9 @@ export default function PlotScratchpad({
                     </button>
                     <button
                       aria-label="Add plot annotation"
-                      disabled={
-                        !traces.length ||
-                        clocks.size > 1 ||
-                        (sheet.annotations?.length ?? 0) >= 50
-                      }
+                      disabled={!canAnnotate}
                       title="Add a time annotation"
-                      onClick={() =>
-                        setNoteDraft({
-                          time: String(
-                            (zoomRange(fullRange)[0] +
-                              zoomRange(fullRange)[1]) /
-                              2,
-                          ),
-                          text: '',
-                          clockId: clocks.values().next().value,
-                        })
-                      }
+                      onClick={addAnnotation}
                     >
                       <StickyNote size={14} />
                     </button>
@@ -1522,13 +1561,7 @@ export default function PlotScratchpad({
                       <button
                         aria-label="Add plot to report"
                         title="Add a snapshot of the displayed panels to Reports"
-                        disabled={
-                          !traces.length ||
-                          busy ||
-                          exporting ||
-                          !!plotView?.error ||
-                          (hasSignals && plotView?.detail?.key !== idsKey)
-                        }
+                        disabled={!canReport}
                         onClick={addPlotToReport}
                       >
                         <FilePlus2 size={14} />
@@ -1541,6 +1574,71 @@ export default function PlotScratchpad({
                     >
                       <CircleHelp size={14} />
                     </button>
+                  </fieldset>
+                  {/* Narrow plots move the settings group into one menu
+                      instead of clipping the toolbar. */}
+                  <fieldset
+                    className="scratchpad-zoom scratchpad-tools-overflow"
+                    aria-label="More plot tools"
+                  >
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <button
+                            aria-label="More plot tools"
+                            title="Axes, annotations, export and help"
+                          />
+                        }
+                      >
+                        <MoreHorizontal size={15} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="scratchpad-export-menu"
+                      >
+                        {traceProperties && (
+                          <DropdownMenuItem
+                            onClick={() => setStyleTrace(activeId)}
+                          >
+                            <Activity size={14} /> Trace color and rendering…
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem onClick={() => openAxes()}>
+                          <Settings2 size={14} /> Axes and limits…
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!canAnnotate}
+                          onClick={addAnnotation}
+                        >
+                          <StickyNote size={14} /> Add annotation…
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={!traces.length || exporting}
+                          onClick={() => void imageExport('svg')}
+                        >
+                          <Download size={14} /> Plot image (SVG)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!traces.length || exporting}
+                          onClick={() => void imageExport('png')}
+                        >
+                          <Download size={14} /> Plot image (PNG)
+                        </DropdownMenuItem>
+                        {onReport && (
+                          <DropdownMenuItem
+                            disabled={!canReport}
+                            onClick={addPlotToReport}
+                          >
+                            <FilePlus2 size={14} /> Add to report
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => setHelpOpen(true)}>
+                          <CircleHelp size={14} /> Plot gestures and shortcuts
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </fieldset>
                 </div>
                 {isActive && sheet.traces.length > 1 && (
@@ -1563,8 +1661,8 @@ export default function PlotScratchpad({
                         <i
                           style={
                             index.values.has(trace.id)
-                              ? { borderTopColor: trace.color }
-                              : { background: trace.color }
+                              ? { borderTopColor: seriesColor(trace.color) }
+                              : { background: seriesColor(trace.color) }
                           }
                           data-value={index.values.has(trace.id)}
                         />
@@ -1956,7 +2054,7 @@ export default function PlotScratchpad({
                               <input
                                 type="color"
                                 aria-label={`Color for ${trace.label ?? index.label(trace.id)}`}
-                                value={trace.color}
+                                value={inputColor(trace.color)}
                                 onChange={(event) =>
                                   update({
                                     traces: sheet.traces.map((item) =>
@@ -2468,10 +2566,10 @@ export default function PlotScratchpad({
                 <input
                   type="color"
                   aria-label="Trace color"
-                  value={
+                  value={inputColor(
                     sheet.traces.find((trace) => trace.id === styleTrace)
-                      ?.color ?? TRACE_COLORS[0]
-                  }
+                      ?.color ?? TRACE_COLORS[0],
+                  )}
                   onChange={(event) =>
                     update({
                       traces: sheet.traces.map((trace) =>
@@ -2822,7 +2920,7 @@ export function SignalSamples({
     <div className="scratchpad-samples">
       <div className="scratchpad-sample-actions">
         <button className="workflow-link" disabled={busy} onClick={onExport}>
-          <Download size={15} /> Export / report
+          <Download size={15} /> Export data…
         </button>
       </div>
       <div className="workflow-samples">

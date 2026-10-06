@@ -1,4 +1,9 @@
-/** Capture rendered panels with their computed styles and no transient cursor. */
+import { resolveColor, seriesColor } from './plot-scratchpad';
+
+/**
+ * Capture rendered panels with their computed styles and no transient cursor.
+ * Theme tokens resolve to concrete colours, so the SVG stands alone.
+ */
 export function capturePlotSvg(
   host: HTMLElement,
   name: string,
@@ -68,7 +73,7 @@ export function capturePlotSvg(
         x2: String(x + 16),
         y1: String(y - 4),
         y2: String(y - 4),
-        stroke: item.color,
+        stroke: resolveColor(seriesColor(item.color), host),
         'stroke-width': '2',
       }))
         swatch.setAttribute(key, value);

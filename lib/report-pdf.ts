@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ReportPageSvg } from '@/components/report-content';
 import { pageDimensions, type ReportDocument } from './report-mockup';
+import { safeFileName } from './report-format';
 
 /** One local JPEG image and its intended physical PDF page dimensions. */
 export interface RasterPdfPage {
@@ -178,17 +179,43 @@ export async function createReportPdf(report: ReportDocument): Promise<Blob> {
   });
 }
 
-export async function downloadReportPdf(report: ReportDocument): Promise<void> {
+/**
+ * A PDF name that says what the report is: its title, or for an untitled
+ * report the recordings it captures and the date, such as
+ * `SN-24001 · report · 2026-10-06.pdf`.
+ */
+export function reportPdfName(report: ReportDocument, now = new Date()) {
+  const title = report.title.trim();
+  if (title && title !== 'Untitled report')
+    return `${safeFileName(title, 'Stratum report')}.pdf`;
+  const recordings = [
+    ...new Set(
+      report.pages.flatMap((page) =>
+        page.blocks.flatMap((block) => block.source?.sourceNames ?? []),
+      ),
+    ),
+  ].map((name) => name.replace(/\.[a-z0-9]{1,5}$/i, ''));
+  const subject = recordings.length
+    ? recordings.slice(0, 2).join(', ') +
+      (recordings.length > 2 ? ` +${recordings.length - 2}` : '')
+    : 'Stratum';
+  const date = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-');
+  return `${safeFileName(`${subject} · report · ${date}`, 'Stratum report')}.pdf`;
+}
+
+export async function downloadReportPdf(
+  report: ReportDocument,
+  filename = reportPdfName(report),
+): Promise<string> {
   const pdf = await createReportPdf(report);
   const url = URL.createObjectURL(pdf);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${
-    report.title
-      .replace(/[^\p{L}\p{N} ._-]/gu, '_')
-      .trim()
-      .slice(0, 120) || 'Stratum report'
-  }.pdf`;
+  link.download = filename;
   document.body.appendChild(link);
   try {
     link.click();
@@ -196,4 +223,5 @@ export async function downloadReportPdf(report: ReportDocument): Promise<void> {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
+  return filename;
 }

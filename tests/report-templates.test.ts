@@ -10,6 +10,7 @@ import {
 import {
   blocksOutsideFrame,
   createTemplateReport,
+  fitBlocksInsideFrame,
   frameInsets,
   REPORT_DESIGNS,
   reportDesign,
@@ -194,4 +195,36 @@ void test('workflow report templates keep the page design', () => {
     ['banner', /frame must be a mapping/],
   ] as const)
     assert.throws(() => readTemplate({ ...yaml, frame }, fail), message);
+});
+
+void test('Move inside fits overlapping blocks into the design clear area only on request', () => {
+  const report: ReportDocument = {
+    ...createBlankReport(),
+    frame: { style: 'banner', accent: '#0f6a72' },
+  };
+  const { width, height } = pageDimensions(report);
+  const inside = createBlock('text', { x: 60, y: 200, width: 200, height: 40 });
+  const header = createBlock('text', { x: 0, y: 0, width: 300, height: 60 });
+  const tall = createBlock('table', {
+    x: 40,
+    y: 100,
+    width: width,
+    height: height,
+  });
+  report.pages[0].blocks.push(inside, header, tall);
+  assert.equal(blocksOutsideFrame(report, 16), 2);
+  const fitted = fitBlocksInsideFrame(report, 16);
+  assert.equal(blocksOutsideFrame(fitted), 0);
+  assert.equal(fitted.pages[0].blocks[0], inside);
+  const insets = frameInsets(report, 0);
+  assert.deepEqual(
+    [fitted.pages[0].blocks[1].x, fitted.pages[0].blocks[1].y],
+    [insets.left, insets.top],
+  );
+  assert.equal(
+    fitted.pages[0].blocks[2].width,
+    width - insets.left - insets.right,
+  );
+  // The original draft is unchanged, so Undo can restore it.
+  assert.equal(report.pages[0].blocks[1].y, 0);
 });

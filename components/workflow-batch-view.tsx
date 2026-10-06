@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ChartNoAxesCombined,
   CheckCircle2,
+  CircleMinus,
   Download,
   FileText,
   Pencil,
@@ -19,7 +20,8 @@ import {
   STATUS_LABELS,
   formatNumber,
 } from '@/lib/workflow-checks';
-import { batchColumns, columnValue } from '@/lib/workflow-batch';
+import { batchColumns, columnCheck, columnValue } from '@/lib/workflow-batch';
+import { formatCount } from '@/lib/format-count';
 import { parseWorkflow } from '@/lib/workflow-recipe';
 import type { Project } from '@/lib/signal-types';
 import type {
@@ -29,7 +31,8 @@ import type {
 } from '@/lib/workflow-types';
 
 const PAGE = 30;
-const COLUMNS = 8;
+/** Value columns kept in the DOM; the summary CSV has every value. */
+const COLUMNS = 24;
 export type BatchProgress = {
   batchId: string;
   name: string;
@@ -39,29 +42,38 @@ export type BatchProgress = {
   current: string;
   failures: { name: string; message: string }[];
 };
-type Filter = 'all' | 'flagged' | 'fail' | 'error';
+type Filter = 'all' | RunStatus;
+/** Exclusive status chips: every item is in exactly one. */
+const CHIPS: RunStatus[] = ['pass', 'warning', 'fail', 'error', 'none'];
 
 export function StatusIcon({
   status,
   size = 14,
+  decorative = false,
 }: {
   status: RunStatus;
   size?: number;
+  /** Hide from assistive technology when the label is already shown. */
+  decorative?: boolean;
 }) {
   const Icon =
-    status === 'pass'
-      ? CheckCircle2
-      : status === 'warning'
-        ? AlertTriangle
-        : status === 'fail'
-          ? XCircle
-          : OctagonX;
+    status === 'none'
+      ? CircleMinus
+      : status === 'pass'
+        ? CheckCircle2
+        : status === 'warning'
+          ? AlertTriangle
+          : status === 'fail'
+            ? XCircle
+            : OctagonX;
   return (
     <Icon
       size={size}
       className="workflow-status-icon"
       data-status={status}
-      aria-label={STATUS_LABELS[status]}
+      {...(decorative
+        ? { 'aria-hidden': true }
+        : { 'aria-label': STATUS_LABELS[status] })}
     />
   );
 }
@@ -126,15 +138,18 @@ export default function WorkflowBatchView({
     () => batchColumns(project, batch).slice(0, COLUMNS),
     [project, batch],
   );
-  const counts = rows.reduce(
-    (total, row) => ({ ...total, [row.status]: total[row.status] + 1 }),
-    { pass: 0, warning: 0, fail: 0, error: 0 } as Record<RunStatus, number>,
-  );
-  const shown = rows.filter(
-    (row) =>
-      filter === 'all' ||
-      (filter === 'flagged' ? row.status !== 'pass' : row.status === filter),
-  );
+  const counts: Record<RunStatus, number> = {
+    none: 0,
+    pass: 0,
+    warning: 0,
+    fail: 0,
+    error: 0,
+  };
+  for (const row of rows) counts[row.status]++;
+  const flagged = counts.warning + counts.fail + counts.error;
+  const running = progress?.batchId === batch.id;
+  const failures = (running ? progress.failures : batch.failures) ?? [];
+  const shown = rows.filter((row) => filter === 'all' || row.status === filter);
   const pages = Math.max(1, Math.ceil(shown.length / PAGE));
   const current = Math.min(page, pages - 1);
   // Signal steps that every item can plot together.
@@ -151,19 +166,24 @@ export default function WorkflowBatchView({
   const chosenPlot = signalSteps.some(([id]) => id === plotStep)
     ? plotStep
     : (signalSteps[0]?.[0] ?? '');
-  const running = progress?.batchId === batch.id;
+  // Items without this output (skipped or failed) are named before plotting.
+  const unplotted = shown.filter(
+    (row) =>
+      !index.steps
+        .get(row.run.steps[chosenPlot] ?? '')
+        ?.outputIds.some((id) => index.nodes.has(id)),
+  );
   const folderSupported =
     typeof window !== 'undefined' && 'showDirectoryPicker' in window;
   return (
     <section className="workflow-batch-view" aria-label="Batch results">
       <header className="workflow-batch-header">
         <button
-          className="workflow-icon-button workflow-quiet"
-          aria-label="Back to plots"
-          title="Back to plots"
+          className="secondary-button workflow-batch-close"
+          title="Hide batch results and show the plots of the selected item"
           onClick={onClose}
         >
-          <ArrowLeft size={15} />
+          <ArrowLeft size={14} /> Show plots
         </button>
         <div>
           <h2>{batch.name}</h2>
@@ -180,6 +200,18 @@ export default function WorkflowBatchView({
                 ? 'interrupted'
                 : batch.state}
           </small>
+          {!!rows.length && (
+            <p className="workflow-batch-headline">
+              <strong>
+                {counts.pass} of {formatCount(rows.length, 'item')} passed
+              </strong>
+              {flagged ? ` · ${flagged} need attention` : ''}
+              {counts.none
+                ? ` · ${counts.none} ${counts.none === 1 ? 'has' : 'have'} no checks`
+                : ''}
+              {failures.length ? ` · ${failures.length} not imported` : ''}
+            </p>
+          )}
         </div>
         <div className="workflow-batch-header-actions">
           {running ? (
@@ -210,8 +242,8 @@ export default function WorkflowBatchView({
                   )
                 }
               >
-                <FileText size={14} /> Export {shown.length}{' '}
-                {shown.length === 1 ? 'report' : 'reports'}
+                <FileText size={14} /> Export{' '}
+                {formatCount(shown.length, 'report')}
               </button>
               {folderSupported && (
                 <button
@@ -251,35 +283,36 @@ export default function WorkflowBatchView({
           <span>
             {progress.done} of {progress.total} done
             {progress.current ? ` · ${progress.current}` : ''}
-            {counts.warning + counts.fail + counts.error
-              ? ` · ${counts.warning + counts.fail + counts.error} flagged so far`
-              : ''}
+            {flagged ? ` · ${flagged} need attention so far` : ''}
           </span>
         </output>
       )}
       <div className="workflow-batch-toolbar">
         <fieldset className="workflow-chips">
           <legend className="sr-only">Show items</legend>
-          {(
-            [
-              ['all', `All ${rows.length}`],
-              [
-                'flagged',
-                `Flagged ${counts.warning + counts.fail + counts.error}`,
-              ],
-              ['fail', `Failed ${counts.fail}`],
-              ['error', `Errors ${counts.error}`],
-            ] as const
-          ).map(([key, label]) => (
+          <button
+            aria-pressed={filter === 'all'}
+            onClick={() => {
+              setFilter('all');
+              setPage(0);
+            }}
+          >
+            All {rows.length}
+          </button>
+          {CHIPS.filter(
+            (status) => status !== 'none' || counts.none || filter === 'none',
+          ).map((status) => (
             <button
-              key={key}
-              aria-pressed={filter === key}
+              key={status}
+              aria-pressed={filter === status}
+              data-status={status}
               onClick={() => {
-                setFilter(key);
+                setFilter(status);
                 setPage(0);
               }}
             >
-              {label}
+              <StatusIcon status={status} size={13} decorative />
+              {STATUS_LABELS[status]} {counts[status]}
             </button>
           ))}
         </fieldset>
@@ -298,7 +331,7 @@ export default function WorkflowBatchView({
             </select>
             <button
               className="secondary-button"
-              disabled={busy || !shown.length}
+              disabled={busy || unplotted.length === shown.length}
               title="Overlay this output from every item shown, starting each at 0 s"
               onClick={() =>
                 onPlotAcross(
@@ -309,6 +342,19 @@ export default function WorkflowBatchView({
             >
               <ChartNoAxesCombined size={14} /> Plot across items
             </button>
+            {!!unplotted.length && !!shown.length && (
+              <small
+                className="workflow-muted"
+                title={unplotted.map((row) => row.run.itemId).join(', ')}
+              >
+                {unplotted.length === shown.length
+                  ? 'No item shown has this output.'
+                  : `${unplotted.length} of ${shown.length} have no output here (skipped or failed): ${unplotted
+                      .slice(0, 3)
+                      .map((row) => row.run.itemId)
+                      .join(', ')}${unplotted.length > 3 ? '…' : ''}`}
+              </small>
+            )}
           </span>
         )}
       </div>
@@ -316,21 +362,24 @@ export default function WorkflowBatchView({
         <table className="workflow-batch-table">
           <thead>
             <tr>
+              <th className="workflow-batch-sticky-start">{itemLabel}</th>
               <th>Status</th>
-              <th>{itemLabel}</th>
               <th>Problems</th>
               {columns.map((column) => (
                 <th
                   key={`${column.recipeStepId}:${column.position}`}
+                  className="workflow-batch-number"
                   title={column.label}
                 >
-                  {column.label}
-                  {column.unit && column.unit !== '—' ? (
-                    <small> {column.unit}</small>
-                  ) : null}
+                  <span>{column.label}</span>
+                  <small>
+                    {column.unit && column.unit !== '—'
+                      ? column.unit
+                      : '\u00a0'}
+                  </small>
                 </th>
               ))}
-              <th>
+              <th className="workflow-batch-sticky-end">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
@@ -349,18 +398,22 @@ export default function WorkflowBatchView({
                   }
                 }}
               >
+                <td className="workflow-batch-sticky-start">
+                  <span className="workflow-batch-id">
+                    <StatusIcon status={row.status} />
+                    <span>
+                      <strong>{row.run.itemId}</strong>
+                      <small>{row.run.fileName}</small>
+                    </span>
+                  </span>
+                </td>
                 <td>
                   <span className="workflow-batch-status">
-                    <StatusIcon status={row.status} />
                     {STATUS_LABELS[row.status]}
                     {row.edited && (
                       <Pencil size={11} aria-label="Edited after processing" />
                     )}
                   </span>
-                </td>
-                <td>
-                  <strong>{row.run.itemId}</strong>
-                  <small>{row.run.fileName}</small>
                 </td>
                 <td
                   title={row.problems
@@ -380,10 +433,13 @@ export default function WorkflowBatchView({
                 </td>
                 {columns.map((column) => {
                   const value = columnValue(project, index, row.run, column);
+                  const check = columnCheck(index, row.run, column);
                   return (
                     <td
                       key={`${column.recipeStepId}:${column.position}`}
                       className="workflow-batch-number"
+                      data-check={check?.status}
+                      title={check?.message}
                     >
                       {value === undefined
                         ? '—'
@@ -393,7 +449,7 @@ export default function WorkflowBatchView({
                     </td>
                   );
                 })}
-                <td>
+                <td className="workflow-batch-sticky-end">
                   <button
                     className="workflow-link"
                     disabled={busy || !canReport}
@@ -407,16 +463,19 @@ export default function WorkflowBatchView({
                 </td>
               </tr>
             ))}
-            {(running ? progress.failures : (batch.failures ?? [])).map(
+            {(filter === 'all' || filter === 'error' ? failures : []).map(
               (failure) => (
                 <tr key={failure.name} data-status="error">
-                  <td>
-                    <span className="workflow-batch-status">
-                      <StatusIcon status="error" /> Not imported
+                  <td className="workflow-batch-sticky-start">
+                    <span className="workflow-batch-id">
+                      <StatusIcon status="error" />
+                      <span>
+                        <small>{failure.name}</small>
+                      </span>
                     </span>
                   </td>
                   <td>
-                    <small>{failure.name}</small>
+                    <span className="workflow-batch-status">Not imported</span>
                   </td>
                   <td colSpan={columns.length + 2}>{failure.message}</td>
                 </tr>
