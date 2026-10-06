@@ -1,4 +1,7 @@
-import { CsvParser, Envelope, power } from './signal-math';
+import { Envelope, power } from './signal-math';
+import { openRecording } from './formats/index';
+import { MAX_RECORDING_CHANNELS } from './formats/recording';
+import type { RecordingFile } from './formats/recording';
 import { SignalGraph } from './signal-graph';
 import { timeNodes, workspaceTimeScope } from './time-model';
 import { TIME_OPERATIONS, timeInputs } from './time-types';
@@ -26,14 +29,9 @@ import {
   isBinaryOperation,
 } from './signal-arithmetic';
 import { withWorkflowHistory, WorkflowIndex } from './workflow-history';
+import { importError, sampleTimeProblem } from './csv-import-messages';
 import {
-  columnCountProblem,
-  headerProblem,
-  importError,
-  timeProblem,
-  valueProblem,
-} from './csv-import-messages';
-import {
+  bestTable,
   bindChannels,
   createResolver,
   outputLabels,
@@ -847,6 +845,8 @@ export class SignalEngine {
     batchName: string;
     itemId: string;
     file?: File;
+    /** The group of a multi-group file; the best-matching one by default. */
+    table?: number;
     sourceId?: string;
     /** Pre-flight column choices for missing channels: alias → column. */
     channelMap?: Record<string, string>;
@@ -871,7 +871,16 @@ export class SignalEngine {
     try {
       await this.initializeWorkflow();
       let source: Source | undefined;
-      if (options.file) source = imported = await this.importCsv(options.file);
+      if (options.file)
+        source = imported = (
+          await this.importRecording(options.file, {
+            choose: (recording) => [
+              recording.tables[options.table ?? -1]
+                ? options.table!
+                : bestTable(recipe, recording.tables, channelMap),
+            ],
+          })
+        )[0];
       else
         source = this.project.sources.find(
           (item) => item.id === options.sourceId,
@@ -1325,15 +1334,108 @@ export class SignalEngine {
   find(id: string): SignalNode {
     return this.graph().find(id);
   }
+  /** Imports a CSV or any other supported file; returns its first recording. */
   async importCsv(file: Blob & { name?: string }, synthetic = false) {
+    return (await this.importRecording(file, { synthetic }))[0];
+  }
+  /**
+   * Imports the chosen tables of a recording file (all by default) as one
+   * recording each. Every table publishes in one commit and one Undo entry.
+   */
+  async importRecording(
+    file: Blob & { name?: string },
+    options: {
+      tables?: number[];
+      synthetic?: boolean;
+      /** Picks tables once the file's metadata is known (batch runs). */
+      choose?: (recording: RecordingFile) => number[];
+    } = {},
+  ): Promise<Source[]> {
     this.cancelled = false;
-    const id = uid();
-    await this.trackImport(id, true);
-    const parser = new CsvParser();
-    const decoder = new TextDecoder('utf-8', { fatal: true });
-    let headers: string[] = [];
-    let times: number[] = [];
-    let columns: number[][] = [];
+    const fileName = file.name || 'Generated signal.csv';
+    const ids: string[] = [];
+    try {
+      const recording = await openRecording(file);
+      const chosen =
+        options.choose?.(recording) ??
+        options.tables ??
+        recording.tables.map((_, index) => index);
+      const tables = [...new Set(chosen)].filter(
+        (index) => Number.isInteger(index) && recording.tables[index],
+      );
+      if (!tables.length)
+        throw new Error(
+          recording.tables.length
+            ? 'Choose at least one group to import.'
+            : 'The file holds no numeric signals.',
+        );
+      const sources: Source[] = [];
+      const nodes: SignalNode[] = [];
+      for (const [position, index] of tables.entries()) {
+        const id = uid();
+        ids.push(id);
+        await this.trackImport(id, true);
+        const table = recording.tables[index];
+        const grouped = recording.tables.length > 1 && !!table.name;
+        const written = await this.writeTable(
+          id,
+          recording,
+          index,
+          (rows, fraction) =>
+            this.progress(
+              `Importing ${grouped ? `${table.name}: ` : ''}${rows.toLocaleString()} samples`,
+              Math.min(99, ((position + fraction) / tables.length) * 100),
+            ),
+        );
+        const channels = table.channels.map((channel, c) =>
+          this.node(id, channel.name, channel.unit, 'raw', [], {}, c),
+        );
+        nodes.push(...channels);
+        sources.push({
+          id,
+          name: grouped ? `${fileName} · ${table.name}` : fileName,
+          ...written,
+          bytes: written.rows * (channels.length + 1) * 8,
+          channels: channels.map((node) => node.id),
+          synthetic: options.synthetic ?? false,
+        });
+      }
+      await this.save({
+        ...this.project,
+        sources: [...this.project.sources, ...sources],
+        nodes: [...this.project.nodes, ...nodes],
+      });
+      // A staged workflow owns publication and recovery of its new columns.
+      if (!this.staging)
+        for (const id of ids) await this.trackImport(id, false).catch(() => {});
+      return sources;
+    } catch (error) {
+      for (const id of ids) {
+        await this.removeIncomplete(id);
+        await this.trackImport(id, false);
+      }
+      throw importError(error, fileName);
+    }
+  }
+  /** Streams one table into chunks; times must be finite and increase. */
+  private async writeTable(
+    id: string,
+    recording: RecordingFile,
+    index: number,
+    report: (rows: number, fraction: number) => void,
+  ) {
+    const table = recording.tables[index];
+    const width = table.channels.length;
+    const label = recording.tables.length > 1 ? table.name : '';
+    if (!width)
+      throw new Error(`${label || 'The recording'} has no signal columns.`);
+    if (width > MAX_RECORDING_CHANNELS)
+      throw new Error(
+        `${label || 'The recording'} has ${width.toLocaleString()} signals; a recording can have at most ${MAX_RECORDING_CHANNELS.toLocaleString()}.`,
+      );
+    let time = new Float64Array(CHUNK_SIZE);
+    let columns = table.channels.map(() => new Float64Array(CHUNK_SIZE));
+    let fill = 0;
     let rows = 0;
     let chunks = 0;
     let start = 0;
@@ -1341,12 +1443,18 @@ export class SignalEngine {
     const chunkRanges: [number, number][] = [];
     let overview: IndexBuilder[] | undefined = [];
     const flush = async () => {
-      if (!times.length) return;
-      chunkRanges.push([times[0], times.at(-1)!]);
-      const groups = await this.writeChunk(id, chunks++, {
-        time: Float64Array.from(times),
-        values: columns.map((c) => Float64Array.from(c)),
-      });
+      if (!fill) return;
+      // Full buffers are stored as they are; a partial one is copied, since
+      // storing a view would clone its whole buffer.
+      const full = fill === CHUNK_SIZE;
+      const chunk = {
+        time: full ? time : time.slice(0, fill),
+        values: columns.map((column) =>
+          full ? column : column.slice(0, fill),
+        ),
+      };
+      chunkRanges.push([chunk.time[0], chunk.time[fill - 1]]);
+      const groups = await this.writeChunk(id, chunks++, chunk);
       if (overview) {
         groups.forEach((blocks, c) =>
           (overview![c] ??= new IndexBuilder()).push(blocks),
@@ -1357,94 +1465,54 @@ export class SignalEngine {
         )
           overview = undefined;
       }
-      times = [];
-      columns = headers.slice(1).map(() => []);
+      time = new Float64Array(CHUNK_SIZE);
+      columns = table.channels.map(() => new Float64Array(CHUNK_SIZE));
+      fill = 0;
     };
-    const consume = async (records: string[][]) => {
-      for (const record of records) {
-        this.check();
-        if (!headers.length) {
-          headers = record.map((v) => v.trim().replace(/^\uFEFF/, ''));
-          const problem = headerProblem(headers);
-          if (problem) throw new Error(problem);
-          columns = headers.slice(1).map(() => []);
-          continue;
+    for await (const block of recording.read(index)) {
+      this.check();
+      const count = block.time.length;
+      if (
+        block.values.length !== width ||
+        block.values.some((values) => values.length !== count)
+      )
+        throw new Error('The file reader returned columns of unequal length.');
+      if (!rows && count) start = block.time[0];
+      for (let r = 0; r < count;) {
+        const take = Math.min(count - r, CHUNK_SIZE - fill);
+        for (let k = r; k < r + take; k++) {
+          const t = block.time[k];
+          if (!(t > end) || !Number.isFinite(t))
+            throw new Error(sampleTimeProblem(label, rows + k - r + 1, t, end));
+          end = t;
+          time[fill + k - r] = t;
         }
-        if (record.length !== headers.length)
-          throw new Error(
-            columnCountProblem(rows + 2, headers.length, record.length),
-          );
-        const t = record[0].trim() ? Number(record[0]) : NaN;
-        if (!Number.isFinite(t) || t <= end)
-          throw new Error(timeProblem(rows + 2, record[0], end));
-        if (!rows) start = t;
-        end = t;
-        times.push(t);
-        for (let c = 1; c < record.length; c++) {
-          const value = record[c].trim() ? Number(record[c]) : NaN;
-          if (record[c].trim() && !Number.isFinite(value))
-            throw new Error(valueProblem(rows + 2, headers[c], record[c]));
-          columns[c - 1].push(value);
+        for (let c = 0; c < width; c++) {
+          const source = block.values[c];
+          const target = columns[c];
+          // Infinite readings are missing samples, as empty CSV cells are.
+          for (let k = 0; k < take; k++) {
+            const value = source[r + k];
+            target[fill + k] = Number.isFinite(value) ? value : NaN;
+          }
         }
-        rows++;
-        if (times.length >= CHUNK_SIZE) await flush();
+        fill += take;
+        rows += take;
+        r += take;
+        if (fill === CHUNK_SIZE) await flush();
       }
-    };
-    try {
-      // Blob slices put a strict bound on decoded input even if a stream implementation emits huge chunks.
-      for (let offset = 0; offset < file.size; offset += 262144) {
-        this.check();
-        const bytes = await file.slice(offset, offset + 262144).arrayBuffer();
-        await consume(parser.feed(decoder.decode(bytes, { stream: true })));
-        this.progress(
-          `Importing ${rows.toLocaleString()} samples`,
-          Math.min(99, ((offset + bytes.byteLength) / file.size) * 100),
-        );
-      }
-      await consume(parser.feed(decoder.decode(), true));
-      await flush();
-      if (rows < 2)
-        throw new Error('A recording needs at least two data rows.');
-      if (overview)
-        for (const [c, builder] of overview.entries())
-          await this.writeIndex([id, 0, indexKey(c)], builder.finish(rows));
-      const nodes = headers.slice(1).map((header, channel) => {
-        const match = header.match(/^(.*?)\s*\[([^\]]+)\]$/);
-        return this.node(
-          id,
-          match?.[1].trim() || header,
-          match?.[2] || '—',
-          'raw',
-          [],
-          {},
-          channel,
-        );
-      });
-      const source: Source = {
-        id,
-        name: file.name || 'Generated signal.csv',
-        rows,
-        chunks,
-        bytes: rows * headers.length * 8,
-        start,
-        end,
-        channels: nodes.map((n) => n.id),
-        synthetic,
-        chunkRanges,
-      };
-      await this.save({
-        ...this.project,
-        sources: [...this.project.sources, source],
-        nodes: [...this.project.nodes, ...nodes],
-      });
-      // A staged workflow owns publication and recovery of its new columns.
-      if (!this.staging) await this.trackImport(id, false).catch(() => {});
-      return source;
-    } catch (error) {
-      await this.removeIncomplete(id);
-      await this.trackImport(id, false);
-      throw importError(error, file.name || 'The recording');
+      report(rows, block.progress ?? 0);
+      await yieldEngine();
     }
+    await flush();
+    if (rows < 2)
+      throw new Error(
+        `${label ? `${label}: ` : ''}A recording needs at least two data rows.`,
+      );
+    if (overview)
+      for (const [c, builder] of overview.entries())
+        await this.writeIndex([id, 0, indexKey(c)], builder.finish(rows));
+    return { rows, chunks, start, end, chunkRanges };
   }
   async workflowExample(refresh = false, sourceId?: string) {
     const existing = sourceId

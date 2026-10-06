@@ -131,6 +131,15 @@ import type {
   ReportWorkspace,
 } from '@/lib/report-integration';
 import WorkflowSaveDialog from './workflow-save-dialog';
+import WorkflowImportDialog from './workflow-import-dialog';
+import {
+  isRecordingName,
+  openRecording,
+  RECORDING_ACCEPT,
+  RECORDING_FORMAT_LIST,
+} from '@/lib/formats/index';
+import type { RecordingFile } from '@/lib/formats/recording';
+import { importError } from '@/lib/csv-import-messages';
 import WorkflowRunDialog, {
   prepareItems,
   type BatchPlan,
@@ -384,6 +393,12 @@ export default function WorkflowWorkbench() {
   // Batch workflows: dialogs, live progress and report export.
   const [batchPanel, setBatchPanel] = useState(true);
   const [saveOpen, setSaveOpen] = useState(false);
+  // A multi-group file waits here until its groups are chosen.
+  const [importChoice, setImportChoice] = useState<{
+    file: File;
+    recording: RecordingFile;
+    resolve: (tables?: number[]) => void;
+  } | null>(null);
   const [runDialog, setRunDialog] = useState<{
     key: number;
     text?: string;
@@ -768,25 +783,57 @@ export default function WorkflowWorkbench() {
     if (!selected.length) return;
     void (async () => {
       const unitless: string[] = [];
+      const notes = new Set<string>();
+      let known = new Set(project.sources.map((source) => source.id));
+      let added = 0;
       for (const item of selected) {
+        // Metadata only: multi-group files ask which groups to import.
+        let recording: RecordingFile;
+        try {
+          recording = await openRecording(item);
+        } catch (error) {
+          const named = importError(error, item.name);
+          engine.setError(
+            named instanceof Error ? named.message : String(named),
+          );
+          continue;
+        }
+        const tables =
+          recording.tables.length > 1
+            ? await new Promise<number[] | undefined>((resolve) =>
+                setImportChoice({ file: item, recording, resolve }),
+              )
+            : undefined;
+        if (recording.tables.length > 1 && !tables) continue;
         const next = await engine.mutate(
-          { type: 'import', file: item },
+          { type: 'import', file: item, ...(tables ? { tables } : {}) },
           `Importing ${item.name}…`,
         );
         reveal(next);
-        const added = next.sources.at(-1);
+        for (const note of recording.notes ?? []) notes.add(note);
+        for (const index of tables ?? [0])
+          for (const note of recording.tables[index]?.notes ?? [])
+            notes.add(note);
         const units = new Map(next.nodes.map((node) => [node.id, node.unit]));
-        const missing =
-          added?.channels.filter((id) => units.get(id) === '—').length ?? 0;
-        if (added && missing)
-          unitless.push(`${added.name} (${formatCount(missing, 'signal')})`);
+        for (const source of next.sources.filter((s) => !known.has(s.id))) {
+          added++;
+          const missing = source.channels.filter(
+            (id) => units.get(id) === '—',
+          ).length;
+          // Binary formats state their units; a blank one is not a CSV slip.
+          if (missing && /\.(csv|tsv|tab|txt|dat)$/i.test(source.name))
+            unitless.push(`${source.name} (${formatCount(missing, 'signal')})`);
+        }
+        known = new Set(next.sources.map((source) => source.id));
       }
-      if (selected.length > 1) setSourceId('all');
-      // A gentle hint, not an error: the recording imported correctly.
+      if (added > 1) setSourceId('all');
+      // Gentle hints, not errors: the recordings imported correctly.
+      const hints = [...notes];
       if (unitless.length)
-        announceChange(
-          `Imported. Some headers have no unit: ${unitless.join(', ')}. Add units in brackets, such as Torque [Nm], so plots and values show them.`,
+        hints.push(
+          `Some headers have no unit: ${unitless.join(', ')}. Add units in brackets, such as Torque [Nm], so plots and values show them.`,
         );
+      if (hints.length) announceChange(`Imported. ${hints.join(' ')}`);
     })().catch(() => {});
   }
   async function openRunDialog(
@@ -889,6 +936,7 @@ export default function WorkflowWorkbench() {
         batchName: plan.batchName,
         itemId: item.itemId,
         file: item.file,
+        ...(item.table !== undefined ? { table: item.table } : {}),
         sourceId: item.sourceId,
         ...(Object.keys(item.mapping).length
           ? { channelMap: item.mapping }
@@ -1591,7 +1639,7 @@ export default function WorkflowWorkbench() {
     })),
     {
       id: 'command:import',
-      label: 'Import CSV…',
+      label: 'Import recordings…',
       hint: 'Add a recording',
       icon: ArrowDownToLine,
       disabled: engine.busy || !engine.ready,
@@ -1858,11 +1906,11 @@ export default function WorkflowWorkbench() {
             files.filter((item) => item !== workflow),
           );
         else {
-          const recordings = files.filter((item) => /\.csv$/i.test(item.name));
+          const recordings = files.filter((item) => isRecordingName(item.name));
           if (recordings.length) importFiles(recordings);
           else
             engine.setError(
-              `${files[0].name} is not a CSV file. Save the recording as comma-separated CSV and drop it again.`,
+              `${files[0].name} is not a recording Stratum can import. Drop ${RECORDING_FORMAT_LIST} files.`,
             );
         }
       }}
@@ -2065,8 +2113,8 @@ export default function WorkflowWorkbench() {
             </button>
             <button
               className="secondary-button workflow-import-button"
-              aria-label="Import CSV"
-              title="Import CSV recordings"
+              aria-label="Import recordings"
+              title="Import recordings: CSV, MDF, TDMS, MAT, WAV or Excel"
               disabled={engine.busy || !engine.ready}
               onClick={() => file.current?.click()}
             >
@@ -2154,10 +2202,10 @@ export default function WorkflowWorkbench() {
         <input
           ref={file}
           type="file"
-          accept=".csv,text/csv"
+          accept={RECORDING_ACCEPT}
           multiple
           className="sr-only"
-          aria-label="Import CSV recording"
+          aria-label="Import recordings"
           onChange={(event) => {
             const selected = Array.from(event.target.files ?? []);
             event.target.value = '';
@@ -2927,6 +2975,17 @@ export default function WorkflowWorkbench() {
           onRun={(text, name) => {
             setSaveOpen(false);
             void openRunDialog(text, name);
+          }}
+        />
+      )}
+      {importChoice && (
+        <WorkflowImportDialog
+          key={`${importChoice.file.name}:${importChoice.file.lastModified}`}
+          fileName={importChoice.file.name}
+          recording={importChoice.recording}
+          onClose={(tables) => {
+            importChoice.resolve(tables);
+            setImportChoice(null);
           }}
         />
       )}

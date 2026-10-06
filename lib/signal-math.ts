@@ -4,6 +4,8 @@ import type { PlotBlock } from './plot-index';
 
 // Stateful RFC 4180 parser; state survives arbitrary character boundaries.
 export class CsvParser {
+  /** Commas by default; semicolons, tabs or bars for other delimited text. */
+  constructor(private delimiter = ',') {}
   private field = '';
   private row: string[] = [];
   private quoted = false;
@@ -33,7 +35,7 @@ export class CsvParser {
         }
         this.quoted = false;
         this.afterQuote = false;
-        if (c !== ',' && c !== '\r' && c !== '\n')
+        if (c !== this.delimiter && c !== '\r' && c !== '\n')
           throw new Error('Unexpected character after a CSV quote.');
       }
       if (this.quoted) {
@@ -43,14 +45,14 @@ export class CsvParser {
         if (this.field.length)
           throw new Error('Unexpected quote in CSV field.');
         this.quoted = true;
-      } else if (c === ',') endField();
+      } else if (c === this.delimiter) endField();
       else if (c === '\r' || c === '\n') {
         endRow();
         this.skipLF = c === '\r';
       } else this.field += c;
-      if (this.field.length > 65536 || this.row.length > 256)
+      if (this.field.length > 65536 || this.row.length > 1025)
         throw new Error(
-          'CSV field or column limit exceeded (64 KB / 256 columns).',
+          'CSV field or column limit exceeded (64 KB / 1,025 columns).',
         );
     }
     if (final) {

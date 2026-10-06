@@ -823,3 +823,33 @@
     display: none;
   }
 }
+
+/* Choosing the groups of a multi-group recording (MDF, TDMS …). */
+.workflow-import-dialog h3 > button + button {
+  margin-left: 0;
+}
+.workflow-import-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+}
+.workflow-import-filter input {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-batch-steps.workflow-import-groups {
+  max-height: min(360px, 45vh);
+}
+.workflow-import-groups .workflow-import-signals {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-import-groups .workflow-import-note {
+  color: var(--warning);
+}
+.workflow-import-dialog .workflow-batch-actions > span {
+  align-self: center;
+  margin-right: auto;
+}

@@ -12,7 +12,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts tests/time-bases.test.ts tests/high-rate.test.ts tests/mockup-data.test.ts tests/mockup-chart.test.ts tests/plot-ticks.test.ts tests/report-data.test.ts tests/report-templates.test.ts tests/workflow-batch.test.ts tests/parameter-scale.test.ts",
+    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts tests/time-bases.test.ts tests/high-rate.test.ts tests/mockup-data.test.ts tests/mockup-chart.test.ts tests/plot-ticks.test.ts tests/report-data.test.ts tests/report-templates.test.ts tests/workflow-batch.test.ts tests/parameter-scale.test.ts tests/formats.test.ts tests/formats-mdf.test.ts tests/formats-tdms.test.ts tests/formats-mat.test.ts tests/formats-xlsx.test.ts",
     "test:preview": "electron tests/preview-worker-smoke.mjs",
     "examples:eol": "node --import ./tests/typescript-loader.mjs examples/eol-rig/generate.ts",
     "desktop:build": "vite build --config desktop/vite.config.ts",

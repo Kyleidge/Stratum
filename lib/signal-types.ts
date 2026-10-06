@@ -191,6 +191,8 @@ export type EngineRequest =
       batchName: string;
       itemId: string;
       file?: File;
+      /** The group of a multi-group file chosen in pre-flight. */
+      table?: number;
       sourceId?: string;
       /** Pre-flight column choices for missing channels: alias → column. */
       channelMap?: Record<string, string>;
@@ -213,7 +215,7 @@ export type EngineRequest =
   | { type: 'init-workflow'; refreshExample?: boolean }
   | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
   | { type: 'init' }
-  | { type: 'import'; file: File }
+  | { type: 'import'; file: File; tables?: number[] }
   | { type: 'demo' }
   | { type: 'example'; key: string }
   | {

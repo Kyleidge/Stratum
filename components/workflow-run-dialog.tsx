@@ -35,6 +35,7 @@ import {
   type PreflightState,
 } from '@/lib/workflow-batch';
 import { formatCount } from '@/lib/format-count';
+import { isRecordingName, RECORDING_ACCEPT } from '@/lib/formats/index';
 import type { Project } from '@/lib/signal-types';
 
 export const MAX_BATCH_ITEMS = 500;
@@ -199,7 +200,9 @@ export default function WorkflowRunDialog({
     const known = new Set(items.map((item) => item.key));
     const added = await Promise.all(
       csvs
-        .filter((file) => /\.csv$/i.test(file.name) || file.type === 'text/csv')
+        .filter(
+          (file) => isRecordingName(file.name) || file.type === 'text/csv',
+        )
         .map((file) => preflightFile(active!, file)),
     );
     const fresh = added.filter((item) => !known.has(item.key));
@@ -320,7 +323,7 @@ export default function WorkflowRunDialog({
           </h3>
           {!parsed ? (
             <p className="workflow-muted">
-              Open a workflow file, or drop it here together with CSV
+              Open a workflow file, or drop it here together with its
               recordings.
             </p>
           ) : 'error' in parsed ? (
@@ -367,7 +370,7 @@ export default function WorkflowRunDialog({
               disabled={!recipe}
               onClick={() => csvInput.current?.click()}
             >
-              <FilePlus2 size={13} /> Add CSV files…
+              <FilePlus2 size={13} /> Add recordings…
             </button>
           </h3>
           {recipe && !!unused.length && (
@@ -396,8 +399,10 @@ export default function WorkflowRunDialog({
           )}
           {!items.length ? (
             <p className="workflow-batch-drop">
-              Drop CSV recordings here, or choose Add CSV files. Only each
-              file&apos;s first line is read until you run the batch.
+              Drop recordings here, or choose Add recordings. Only each
+              file&apos;s header or channel list is read until you run the
+              batch; in MDF or TDMS files, the group with the workflow&apos;s
+              inputs is processed.
             </p>
           ) : (
             <>
@@ -473,8 +478,15 @@ export default function WorkflowRunDialog({
                               }
                             />
                           </td>
-                          <td title={item.name}>
+                          <td
+                            title={
+                              item.group
+                                ? `${item.name} · ${item.group}`
+                                : item.name
+                            }
+                          >
                             {item.name}
+                            {item.group ? ` · ${item.group}` : ''}
                             {item.sourceId ? ' · in workspace' : ''}
                           </td>
                           <td title={problems.join(' ')}>
@@ -722,7 +734,7 @@ export default function WorkflowRunDialog({
           className="sr-only"
           type="file"
           multiple
-          accept=".csv,text/csv"
+          accept={RECORDING_ACCEPT}
           aria-label="Recordings to process"
           onChange={(event) => {
             const files = Array.from(event.target.files ?? []);

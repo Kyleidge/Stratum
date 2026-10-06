@@ -8,11 +8,16 @@ blocked external navigation, and no general-purpose filesystem IPC.
 
 ## Data and lineage
 
-The worker owns an IndexedDB database. CSV import decodes 256 KiB slices with
-backpressure. A stateful quoted-field parser preserves boundaries across slices,
-including UTF-8 sequences, CRLF, quoted newlines, and escaped quotes. The first
-column is strictly increasing time in seconds. Signal cells are finite numbers
-or empty (stored as NaN). Invalid imports fail without publishing a source.
+The worker owns an IndexedDB database. Imports go through `lib/formats/`:
+each reader describes a file's tables (one time axis each) from its metadata
+and streams bounded sample blocks; the engine validates strictly increasing
+finite times, writes chunks and publishes every chosen table of a file in one
+commit (see [file-formats.md](file-formats.md)). Delimited text decodes 256 KiB
+slices with backpressure. A stateful quoted-field parser preserves boundaries
+across slices, including UTF-8 sequences, CRLF, quoted newlines, and escaped
+quotes. The first column is strictly increasing time in seconds. Signal cells
+are finite numbers or empty (stored as NaN); infinite binary samples are stored
+as NaN. Invalid imports fail without publishing a source.
 
 Data is stored in append-only, 16,384-sample Float64 columns. Each recording has a
 shared timestamp column and a time-range index for its chunks. Reads return

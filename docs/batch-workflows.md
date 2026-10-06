@@ -61,8 +61,11 @@ The design rationale and remaining follow-ups are in
 ## Run a workflow
 
 **Import ▾ → Run a workflow on recordings…**, **Open a workflow file…**, or drop
-a `.stratum.yaml` file (with or without CSV recordings) onto the window. Add CSV
-files or recordings already in the workspace. Item IDs come from the file name
+a `.stratum.yaml` file (with or without recordings) onto the window. Add
+recording files (CSV, MDF, TDMS, MAT, WAV or Excel) or recordings already in
+the workspace. For a file with several groups, pre-flight picks the group that
+matches the most workflow inputs and shows its name; only that group is
+imported. Item IDs come from the file name
 pattern and can be edited before you run.
 
 - Items commit one at a time. Cancelling keeps the items already processed.

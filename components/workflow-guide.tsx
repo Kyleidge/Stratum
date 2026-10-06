@@ -122,9 +122,11 @@ export function WorkflowGuide({
             <ol className="workflow-guide-steps">
               <li>
                 <strong>Import a recording.</strong> Choose Import and pick a
-                CSV file, or drop it on the window. Time in seconds comes first,
-                then one column per signal with its unit in brackets:{' '}
-                <code>{CSV_FORMAT_EXAMPLE},…</code>
+                file, or drop it on the window. In a CSV, time in seconds comes
+                first, then one column per signal with its unit in brackets:{' '}
+                <code>{CSV_FORMAT_EXAMPLE},…</code> MDF 4/3, TDMS, MATLAB .mat,
+                WAV and Excel .xlsx files keep their own names and units; for a
+                file with several groups, choose which to import.
               </li>
               <li>
                 <strong>Process it.</strong> Select a signal in History, then
@@ -156,8 +158,9 @@ export function WorkflowGuide({
             <dl className="workflow-guide-terms">
               <dt>Recording and original signals</dt>
               <dd>
-                An imported CSV file is a recording; its columns are original
-                signals. They are stored on this device and never change.
+                An imported file (or each group of an MDF or TDMS file) is a
+                recording; its columns are original signals. They are stored on
+                this device and never change.
               </dd>
               <dt>Step</dt>
               <dd>
@@ -233,7 +236,7 @@ export function WorkflowGuide({
               <li>
                 <strong>Run it on many recordings.</strong> Choose Run a
                 workflow on recordings…, or drop a workflow file together with
-                CSV files. A check before running lists missing signals.
+                recordings. A check before running lists missing signals.
               </li>
               <li>
                 <strong>Review the results.</strong> The batch table shows one
