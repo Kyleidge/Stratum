@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowUpLeft,
-  Copy,
+  CopyPlus,
   GitBranch,
   Hash,
   LockKeyhole,
@@ -27,8 +27,15 @@ import type { WorkflowSelection } from './workflow-history';
 import type { ToolbarAction } from './workflow-toolbar';
 import WorkflowList from './workflow-list';
 import WorkflowChecksPanel from './workflow-checks-panel';
-import type { CheckDefinition } from '@/lib/workflow-types';
+import type {
+  CheckDefinition,
+  RunStatus,
+  WorkflowBatch,
+} from '@/lib/workflow-types';
+import { STATUS_LABELS } from '@/lib/workflow-checks';
+import { StatusIcon } from './workflow-batch-view';
 import { formatValue } from './signal-chart';
+import { formatCount } from '@/lib/format-count';
 
 /** Lists longer than this page through WorkflowList to bound the DOM. */
 const INLINE_ITEMS = 8;
@@ -56,8 +63,164 @@ function StepIcon({ step, size = 12 }: { step: WorkflowStep; size?: number }) {
   return <Icon size={size} />;
 }
 
-/** Right-hand inspector: what the selection is, where it came from, what uses it. */
-export default function WorkflowProperties({
+const BATCH_STATUSES: RunStatus[] = [
+  'pass',
+  'warning',
+  'fail',
+  'error',
+  'none',
+];
+const dateTime = (iso?: string) => {
+  const date = iso ? new Date(iso) : undefined;
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      })
+    : '—';
+};
+
+/** Details while batch results are open: the run as a whole, not one item. */
+function BatchDetails({
+  project,
+  batch,
+  onClose,
+}: {
+  project: Project;
+  batch: WorkflowBatch;
+  onClose: () => void;
+}) {
+  const recipe = project.workflowRecipes?.find(
+    (item) => item.hash === batch.recipeHash,
+  );
+  const counts = new Map<RunStatus, number>();
+  for (const run of batch.runs)
+    counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
+  const finished = batch.runs.reduce<string | undefined>(
+    (latest, run) =>
+      !latest || run.finishedAt > latest ? run.finishedAt : latest,
+    undefined,
+  );
+  const state = {
+    running: 'Running',
+    complete: 'Complete',
+    cancelled: 'Cancelled',
+  }[batch.state];
+  return (
+    <section
+      id="workflow-properties"
+      className="workflow-properties"
+      aria-label="Batch details"
+    >
+      <div className="workflow-inspector-bar">
+        <strong>Details</strong>
+        <button
+          className="workflow-icon-button workflow-quiet"
+          aria-label="Close Details"
+          title="Hide Details"
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
+      <header className="workflow-properties-heading">
+        <span className="workflow-kind" data-kind="segment">
+          <i />
+          Batch · {state}
+        </span>
+        <div className="workflow-properties-title">
+          <h2 title={batch.name}>{batch.name}</h2>
+        </div>
+      </header>
+      <div className="workflow-properties-content">
+        <section>
+          <h3>Workflow</h3>
+          <dl className="workflow-property-grid">
+            <div>
+              <dt>Name</dt>
+              <dd title={recipe?.name}>{recipe?.name ?? batch.name}</dd>
+            </div>
+            {recipe?.revision && (
+              <div>
+                <dt>Revision</dt>
+                <dd>{recipe.revision}</dd>
+              </div>
+            )}
+            {batch.recipeHash && (
+              <div>
+                <dt>Hash</dt>
+                <dd title={batch.recipeHash}>
+                  <code>{batch.recipeHash.slice(0, 12)}</code>
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+        <section>
+          <h3>
+            Items <span>{formatCount(batch.runs.length, 'item')}</span>
+          </h3>
+          <ul className="workflow-batch-statuses">
+            {BATCH_STATUSES.filter((status) => counts.get(status)).map(
+              (status) => (
+                <li key={status} data-status={status}>
+                  <StatusIcon status={status} size={13} decorative />
+                  <span>{STATUS_LABELS[status]}</span>
+                  <strong>{counts.get(status)!.toLocaleString()}</strong>
+                </li>
+              ),
+            )}
+            {!!batch.failures?.length && (
+              <li data-status="error">
+                <StatusIcon status="error" size={13} decorative />
+                <span>Not imported</span>
+                <strong>{batch.failures.length.toLocaleString()}</strong>
+              </li>
+            )}
+          </ul>
+          {!batch.runs.length && !batch.failures?.length && (
+            <p className="workflow-muted">No items have finished yet.</p>
+          )}
+        </section>
+        <section>
+          <h3>Ran</h3>
+          <dl className="workflow-property-grid">
+            <div>
+              <dt>Started</dt>
+              <dd>{dateTime(batch.createdAt)}</dd>
+            </div>
+            {batch.state !== 'running' && (
+              <div>
+                <dt>Finished</dt>
+                <dd>{dateTime(finished)}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+/** Details: what the selection is, where it came from, what uses it. */
+export default function WorkflowProperties(props: WorkflowPropertiesProps) {
+  return props.batch ? (
+    <BatchDetails
+      project={props.project}
+      batch={props.batch}
+      onClose={props.onClose}
+    />
+  ) : (
+    <SelectionDetails {...props} />
+  );
+}
+
+type WorkflowPropertiesProps = Parameters<typeof SelectionDetails>[0] & {
+  /** Batch results are open: summarise the batch instead of the selection. */
+  batch?: WorkflowBatch;
+};
+
+function SelectionDetails({
   project,
   index,
   graph,
@@ -195,9 +358,9 @@ export default function WorkflowProperties({
         (selection.kind === 'output' && id === selection.id),
     );
     return item.id === step?.id && selection.kind === 'step'
-      ? `${item.outputIds.length} output${item.outputIds.length === 1 ? '' : 's'}`
+      ? formatCount(item.outputIds.length, 'output')
       : ids.length === item.outputIds.length && ids.length > 1
-        ? `All ${ids.length} outputs`
+        ? `All ${ids.length.toLocaleString()} outputs`
         : ids
             .slice(0, 3)
             .map((id) => index.label(id))
@@ -242,11 +405,11 @@ export default function WorkflowProperties({
       aria-label="Selection details"
     >
       <div className="workflow-inspector-bar">
-        <strong>Inspector</strong>
+        <strong>Details</strong>
         <button
           className="workflow-icon-button workflow-quiet"
-          aria-label="Close inspector"
-          title="Hide the inspector"
+          aria-label="Close Details"
+          title="Hide Details"
           onClick={onClose}
         >
           <X size={15} />
@@ -258,8 +421,8 @@ export default function WorkflowProperties({
           {selection.kind === 'output'
             ? kind
             : step
-              ? `${STEP_KIND[step.kind]} operation · ${reference(step)}`
-              : 'Operation'}
+              ? `${STEP_KIND[step.kind]} step · ${reference(step)}`
+              : 'Step'}
         </span>
         <div className="workflow-properties-title">
           <h2 title={label}>{label}</h2>
@@ -286,10 +449,6 @@ export default function WorkflowProperties({
         <section>
           <h3>Properties</h3>
           <dl className="workflow-property-grid">
-            <div>
-              <dt>Type</dt>
-              <dd>{selection.kind === 'output' ? kind : 'Operation'}</dd>
-            </div>
             {(node || value) && (
               <div>
                 <dt>Unit</dt>
@@ -343,18 +502,20 @@ export default function WorkflowProperties({
             )}
             {step && (
               <>
-                <div>
-                  <dt>{selection.kind === 'step' ? 'Step' : 'Produced by'}</dt>
-                  <dd>
-                    <button
-                      className="workflow-property-link"
-                      onClick={() => onStep(step.id)}
-                      title={stepName(step)}
-                    >
-                      {reference(step)} {stepName(step)}
-                    </button>
-                  </dd>
-                </div>
+                {selection.kind === 'output' && (
+                  <div>
+                    <dt>Produced by</dt>
+                    <dd>
+                      <button
+                        className="workflow-property-link"
+                        onClick={() => onStep(step.id)}
+                        title={stepName(step)}
+                      >
+                        {reference(step)} {stepName(step)}
+                      </button>
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt>Revision</dt>
                   <dd>{step.revision ?? 1}</dd>
@@ -398,15 +559,6 @@ export default function WorkflowProperties({
             </dl>
           </section>
         )}
-        {step && onSetChecks && editable && (
-          <WorkflowChecksPanel
-            key={step.id}
-            step={step}
-            index={index}
-            busy={busy}
-            onSave={(checks) => onSetChecks(step.id, checks)}
-          />
-        )}
         {!!inputs.length && (
           <section>
             <h3>
@@ -431,7 +583,7 @@ export default function WorkflowProperties({
                 className="workflow-property-link"
                 onClick={() => onAction('inputs')}
               >
-                All {inputs.length} inputs…
+                All {inputs.length.toLocaleString()} inputs…
               </button>
             )}
           </section>
@@ -439,10 +591,7 @@ export default function WorkflowProperties({
         {!!chain.length && (
           <section>
             <h3>
-              Lineage{' '}
-              <span>
-                {chain.length} {chain.length === 1 ? 'step' : 'steps'}
-              </span>
+              Lineage <span>{formatCount(chain.length, 'step')}</span>
             </h3>
             {chain.length <= INLINE_ITEMS ? (
               <ol className="workflow-lineage">{chain.map(chainItem)}</ol>
@@ -454,7 +603,7 @@ export default function WorkflowProperties({
                 <WorkflowList
                   key={selection.id}
                   items={chain}
-                  summary={`All ${chain.length} contributing steps`}
+                  summary={`All ${chain.length.toLocaleString()} contributing steps`}
                 >
                   {(visible) => (
                     <ol className="workflow-lineage">
@@ -469,7 +618,9 @@ export default function WorkflowProperties({
         <section>
           <h3>Used by {!!usedBy.length && <span>{usedBy.length}</span>}</h3>
           {!usedBy.length ? (
-            <p className="workflow-muted">No later operations use this yet.</p>
+            <p className="workflow-muted">
+              Nothing uses this yet. Try Derive, Segment or Value above.
+            </p>
           ) : usedBy.length <= INLINE_ITEMS ? (
             <ul className="workflow-property-links">
               {usedBy.map(usedByItem)}
@@ -479,7 +630,7 @@ export default function WorkflowProperties({
               key={selection.id}
               items={usedBy}
               initialOpen
-              summary={`${usedBy.length} later operations`}
+              summary={formatCount(usedBy.length, 'later step')}
             >
               {(visible) => (
                 <ul className="workflow-property-links">
@@ -489,6 +640,15 @@ export default function WorkflowProperties({
             </WorkflowList>
           )}
         </section>
+        {step && onSetChecks && editable && (
+          <WorkflowChecksPanel
+            key={step.id}
+            step={step}
+            index={index}
+            busy={busy}
+            onSave={(checks) => onSetChecks(step.id, checks)}
+          />
+        )}
         {!!sources.length && (
           <section>
             <h3>
@@ -506,7 +666,7 @@ export default function WorkflowProperties({
                 className="workflow-property-link"
                 onClick={() => onAction('inputs')}
               >
-                All source signals…
+                All original signals…
               </button>
             )}
           </section>
@@ -518,7 +678,7 @@ export default function WorkflowProperties({
           disabled={busy || !editable}
           title={
             editable
-              ? 'Rebuild with new settings'
+              ? 'Change this step’s settings and recalculate what uses it'
               : 'Recordings and saved ranges are immutable'
           }
           onClick={() => onAction('edit')}
@@ -529,10 +689,11 @@ export default function WorkflowProperties({
         <button
           className="secondary-button"
           disabled={busy || !step || step.kind === 'import'}
+          title="Open this step’s settings to make a new step beside it"
           onClick={() => onAction('duplicate')}
         >
-          <Copy size={13} />
-          Duplicate
+          <CopyPlus size={13} />
+          New version…
         </button>
         <button
           className="secondary-button workflow-danger"
@@ -540,7 +701,11 @@ export default function WorkflowProperties({
           onClick={() => onAction('delete')}
         >
           <Trash2 size={13} />
-          Delete
+          {step?.kind === 'import'
+            ? 'Remove recording…'
+            : step
+              ? `Delete step ${reference(step)}…`
+              : 'Delete…'}
         </button>
         <button
           className="workflow-property-link"

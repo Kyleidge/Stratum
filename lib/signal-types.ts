@@ -192,6 +192,8 @@ export type EngineRequest =
       itemId: string;
       file?: File;
       sourceId?: string;
+      /** Pre-flight column choices for missing channels: alias → column. */
+      channelMap?: Record<string, string>;
     }
   | {
       type: 'finish-batch';
@@ -265,7 +267,15 @@ export type EngineRequest =
   | { type: 'cancel'; requestIds?: number[] };
 export type EngineResponse = { requestId: number } & (
   | { type: 'region-plan'; plan: RegionPlan }
-  | { type: 'project'; project: Project; canUndo?: boolean; canRedo?: boolean }
+  | {
+      type: 'project';
+      project: Project;
+      canUndo?: boolean;
+      canRedo?: boolean;
+      /** What Undo/Redo would reverse or repeat; absent when unnamed. */
+      undoLabel?: string;
+      redoLabel?: string;
+    }
   | { type: 'segment-plan'; plan: SegmentationPlan }
   | { type: 'derive-preview'; preview: DerivePreview }
   | {

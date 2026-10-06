@@ -25,6 +25,13 @@ import {
 } from './signal-arithmetic';
 import { withWorkflowHistory, WorkflowIndex } from './workflow-history';
 import {
+  columnCountProblem,
+  headerProblem,
+  importError,
+  timeProblem,
+  valueProblem,
+} from './csv-import-messages';
+import {
   bindChannels,
   createResolver,
   outputLabels,
@@ -45,6 +52,7 @@ import {
 } from './workflow-checks';
 import {
   affectedOperations,
+  describeChange,
   withoutOperations,
   savedCommand,
   remapProject,
@@ -193,12 +201,30 @@ export class SignalEngine {
   private redoStack: Project[] = [];
   /** Batch that owns the newest Undo entry, so its later items coalesce. */
   private journalTag?: string;
+  /** What each Undo/Redo entry does, aligned with its stack; '' is unnamed. */
+  private undoLabels: string[] = [];
+  private redoLabels: string[] = [];
   private staging = false;
   get canUndo() {
     return this.undoStack.length > 0;
   }
   get canRedo() {
     return this.redoStack.length > 0;
+  }
+  /** The action Undo reverses, or undefined when unnamed (older entries). */
+  get undoLabel(): string | undefined {
+    const target = this.undoStack.at(-1);
+    if (!target) return undefined;
+    // A coalesced batch entry grows with each item: describe it as it stands.
+    if (this.journalTag) {
+      const live = describeChange(target, this.project)?.label;
+      if (live) return live;
+    }
+    return this.undoLabels.at(-1) || undefined;
+  }
+  get redoLabel(): string | undefined {
+    if (!this.redoStack.length) return undefined;
+    return this.redoLabels.at(-1) || undefined;
   }
   private invalidate() {
     this.cache.clear();
@@ -247,11 +273,28 @@ export class SignalEngine {
       ((await result(snapshot)) as Project | undefined) ?? emptyProject();
     this.revision = Number(await result(revision)) || 0;
     const history = (await result(journal)) as
-      | { undo: Project[]; redo: Project[]; tag?: string }
+      | {
+          undo: Project[];
+          redo: Project[];
+          tag?: string;
+          undoLabels?: unknown;
+          redoLabels?: unknown;
+        }
       | undefined;
     this.undoStack = history?.undo ?? [];
     this.redoStack = history?.redo ?? [];
     this.journalTag = history?.tag;
+    // Older journals have no labels; their entries read as "last change".
+    const align = (labels: unknown, length: number) => {
+      const list = Array.isArray(labels)
+        ? labels.map((label) => (typeof label === 'string' ? label : ''))
+        : [];
+      return list.length >= length
+        ? list.slice(list.length - length)
+        : [...Array<string>(length - list.length).fill(''), ...list];
+    };
+    this.undoLabels = align(history?.undoLabels, this.undoStack.length);
+    this.redoLabels = align(history?.redoLabels, this.redoStack.length);
     const restored = restoreSegmentationOperations(this.project);
     if (restored !== this.project)
       await this.save(restored, { undo: this.undoStack, redo: this.redoStack });
@@ -269,12 +312,19 @@ export class SignalEngine {
   /**
    * Commit a project. `batch` coalesces consecutive commits of one batch into a
    * single Undo entry; `null` clears that association (Undo/Redo). Explicit
-   * housekeeping journals keep it.
+   * housekeeping journals keep it and the entries' labels. `label` names a new
+   * Undo entry; otherwise it is described from the change itself.
    */
   private async save(
     next: Project,
-    history?: { undo: Project[]; redo: Project[] },
+    history?: {
+      undo: Project[];
+      redo: Project[];
+      undoLabels?: string[];
+      redoLabels?: string[];
+    },
     batch?: string | null,
+    label?: string,
   ) {
     this.check();
     if (this.project.workflowSteps) next = withWorkflowHistory(next);
@@ -289,14 +339,29 @@ export class SignalEngine {
       !!batch &&
       this.journalTag === batch &&
       !this.redoStack.length;
-    const journal =
-      history ??
-      (coalesce
-        ? { undo: this.undoStack, redo: [] }
+    const journal = history
+      ? {
+          undo: history.undo,
+          redo: history.redo,
+          undoLabels: history.undoLabels ?? this.undoLabels,
+          redoLabels: history.redoLabels ?? this.redoLabels,
+        }
+      : coalesce
+        ? {
+            undo: this.undoStack,
+            redo: [],
+            undoLabels: this.undoLabels,
+            redoLabels: [],
+          }
         : {
             undo: [...this.undoStack.slice(-19), this.project],
             redo: [],
-          });
+            undoLabels: [
+              ...this.undoLabels.slice(-19),
+              label ?? describeChange(this.project, next)?.label ?? '',
+            ],
+            redoLabels: [],
+          };
     const tag =
       batch === null
         ? undefined
@@ -329,6 +394,8 @@ export class SignalEngine {
     this.revision++;
     this.undoStack = journal.undo;
     this.redoStack = journal.redo;
+    this.undoLabels = journal.undoLabels;
+    this.redoLabels = journal.redoLabels;
     this.journalTag = tag;
     this.invalidate();
   }
@@ -336,16 +403,23 @@ export class SignalEngine {
     const stack = direction === 'undo' ? this.undoStack : this.redoStack;
     const target = stack.at(-1);
     if (!target) throw new Error(`Nothing to ${direction}.`);
+    // The entry keeps its name as it moves between the Undo and Redo stacks.
+    const label =
+      (direction === 'undo' ? this.undoLabel : this.redoLabel) ?? '';
     await this.save(
       target,
       direction === 'undo'
         ? {
             undo: this.undoStack.slice(0, -1),
             redo: [...this.redoStack, this.project],
+            undoLabels: this.undoLabels.slice(0, -1),
+            redoLabels: [...this.redoLabels, label],
           }
         : {
             undo: [...this.undoStack, this.project],
             redo: this.redoStack.slice(0, -1),
+            undoLabels: [...this.undoLabels, label],
+            redoLabels: this.redoLabels.slice(0, -1),
           },
       null,
     );
@@ -515,7 +589,12 @@ export class SignalEngine {
           )
       )
         throw new Error('The archive is truncated or missing samples.');
-      await this.save(remapProject(next, sourceMapping));
+      await this.save(
+        remapProject(next, sourceMapping),
+        undefined,
+        undefined,
+        'Restore workspace backup',
+      );
       for (const id of sourceMapping.values())
         await this.trackImport(id, false).catch(() => {});
     } catch (error) {
@@ -763,8 +842,17 @@ export class SignalEngine {
     itemId: string;
     file?: File;
     sourceId?: string;
+    /** Pre-flight column choices for missing channels: alias → column. */
+    channelMap?: Record<string, string>;
   }): Promise<WorkflowRun> {
     const recipe = parseWorkflow(options.recipe);
+    // Keep only string choices for this recipe's channels; recorded with the run.
+    const channelMap: Record<string, string> = {};
+    for (const channel of recipe.channels) {
+      const column = options.channelMap?.[channel.alias];
+      if (typeof column === 'string' && column.trim())
+        channelMap[channel.alias] = column.trim().slice(0, 255);
+    }
     const hash = await recipeHash(recipe);
     const itemId = options.itemId.trim().slice(0, 120);
     if (!itemId) throw new Error('Enter an item ID.');
@@ -790,6 +878,7 @@ export class SignalEngine {
       for (const binding of bindChannels(
         recipe,
         source.channels.map((id) => this.find(id)),
+        channelMap,
       )) {
         if (binding.problem)
           flags.push({ severity: 'error', message: binding.problem });
@@ -973,6 +1062,7 @@ export class SignalEngine {
         ),
         steps: stepMap,
         flags,
+        ...(Object.keys(channelMap).length ? { channelMap } : {}),
         startedAt,
         finishedAt: new Date().toISOString(),
       };
@@ -1258,36 +1348,25 @@ export class SignalEngine {
         this.check();
         if (!headers.length) {
           headers = record.map((v) => v.trim().replace(/^\uFEFF/, ''));
-          if (
-            headers.length < 2 ||
-            headers.length > 256 ||
-            headers.some((v) => !v) ||
-            new Set(headers).size !== headers.length
-          )
-            throw new Error(
-              'Use unique headers: time in seconds, followed by 1–255 numeric signals.',
-            );
+          const problem = headerProblem(headers);
+          if (problem) throw new Error(problem);
           columns = headers.slice(1).map(() => []);
           continue;
         }
         if (record.length !== headers.length)
           throw new Error(
-            `Row ${rows + 2}: expected ${headers.length} columns, received ${record.length}.`,
+            columnCountProblem(rows + 2, headers.length, record.length),
           );
         const t = record[0].trim() ? Number(record[0]) : NaN;
         if (!Number.isFinite(t) || t <= end)
-          throw new Error(
-            `Row ${rows + 2}: time must be finite and strictly increasing in seconds.`,
-          );
+          throw new Error(timeProblem(rows + 2, record[0], end));
         if (!rows) start = t;
         end = t;
         times.push(t);
         for (let c = 1; c < record.length; c++) {
           const value = record[c].trim() ? Number(record[c]) : NaN;
           if (record[c].trim() && !Number.isFinite(value))
-            throw new Error(
-              `Row ${rows + 2}, ${headers[c]}: expected a finite number or empty cell.`,
-            );
+            throw new Error(valueProblem(rows + 2, headers[c], record[c]));
           columns[c - 1].push(value);
         }
         rows++;
@@ -1350,7 +1429,7 @@ export class SignalEngine {
     } catch (error) {
       await this.removeIncomplete(id);
       await this.trackImport(id, false);
-      throw error;
+      throw importError(error, file.name || 'The recording');
     }
   }
   async workflowExample(refresh = false, sourceId?: string) {
@@ -1394,7 +1473,14 @@ export class SignalEngine {
       this.invalidate();
     }
     try {
-      await this.save(next);
+      await this.save(
+        next,
+        undefined,
+        undefined,
+        refresh && existing
+          ? 'Refresh example recording'
+          : 'Open example recording',
+      );
     } catch (error) {
       await this.removeIncomplete(imported.id);
       await this.trackImport(imported.id, false);
@@ -2862,12 +2948,15 @@ export class SignalEngine {
         'No complete segments match these settings. Preview the triggers, offsets, or time ranges.',
       );
     const nodes: SignalNode[] = [];
-    const baseIndex = this.project.segments.filter(
-      (s) => s.sourceId === sourceId,
-    ).length;
+    // New segments are numbered within this step (per member when members
+    // are segmented independently) and named after each parent's display
+    // label. Saved segments keep their names.
+    const numbers = new Map<string, number>();
     const savedDefinition = structuredClone(definition);
     const batchId = uid();
-    const segments = plan.ranges.map((boundary, index): Segment => {
+    const segments = plan.ranges.map((boundary): Segment => {
+      const number = (numbers.get(boundary.inputId ?? '') ?? 0) + 1;
+      numbers.set(boundary.inputId ?? '', number);
       const recipe = boundary.inputId
         ? this.memberDefinition(savedDefinition, targetIds[0], boundary.inputId)
         : savedDefinition;
@@ -2881,7 +2970,7 @@ export class SignalEngine {
               : [];
           const node = this.node(
             sourceId,
-            parent.name,
+            this.project.labels?.[id] ?? parent.name,
             parent.unit,
             'crop',
             [...new Set([id, ...triggers])],
@@ -2901,7 +2990,7 @@ export class SignalEngine {
         sourceId,
         batchId,
         scope: savedScope,
-        name: `Segment ${String(baseIndex + index + 1).padStart(2, '0')}`,
+        name: `Segment ${String(number).padStart(2, '0')}`,
         start: boundary.start,
         end: boundary.end,
         nodes: cropped.map((node) => node.id),

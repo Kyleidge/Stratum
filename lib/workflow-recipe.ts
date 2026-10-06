@@ -1276,7 +1276,7 @@ export function serializeWorkflow(recipe: WorkflowRecipe): string {
       `Stratum workflow · ${recipe.name}`,
       'Inputs bind by CSV column name. Steps refer to channels and earlier steps',
       'by id; step[2] is the second output of a step. Open it in Stratum with',
-      'Workspace → Open workflow, or edit it in any text editor.',
+      'Import → Open a workflow file…, or edit it in any text editor.',
     ],
   });
 }
@@ -1321,33 +1321,44 @@ export type ChannelBinding = {
   problem?: string;
 };
 
-/** Match aliases to channels by name, then check units. Case is ignored. */
+/**
+ * Match aliases to channels by name, then check units. Case is ignored.
+ * `mapping` (alias → column name) binds a channel to a differently named
+ * column for one item, without changing the workflow.
+ */
 export function bindChannels(
   recipe: Pick<WorkflowRecipe, 'channels'>,
   channels: { name: string; unit: string }[],
+  mapping: Readonly<Record<string, string>> = {},
 ): ChannelBinding[] {
   return recipe.channels.map((channel) => {
+    const mapped = Object.hasOwn(mapping, channel.alias)
+      ? mapping[channel.alias]
+      : undefined;
+    const name = mapped ?? channel.name;
     const matches = channels.flatMap((item, index) =>
-      comparable(item.name) === comparable(channel.name) ? [index] : [],
+      comparable(item.name) === comparable(name) ? [index] : [],
     );
     if (!matches.length)
       return {
         alias: channel.alias,
         channel: -1,
-        problem: `Missing channel "${channel.name}${channel.unit ? ` [${channel.unit}]` : ''}".`,
+        problem: mapped
+          ? `Column "${mapped}", chosen for "${channel.name}", is missing.`
+          : `Missing channel "${channel.name}${channel.unit ? ` [${channel.unit}]` : ''}".`,
       };
     if (matches.length > 1)
       return {
         alias: channel.alias,
         channel: -1,
-        problem: `More than one channel is named "${channel.name}".`,
+        problem: `More than one channel is named "${name}".`,
       };
     const found = channels[matches[0]];
     if (channel.unit !== undefined && found.unit !== channel.unit)
       return {
         alias: channel.alias,
         channel: matches[0],
-        problem: `"${channel.name}" is in ${found.unit}, but the workflow expects ${channel.unit}.`,
+        problem: `"${name}" is in ${found.unit}, but the workflow expects ${channel.unit}.`,
       };
     return { alias: channel.alias, channel: matches[0] };
   });

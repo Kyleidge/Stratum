@@ -11,6 +11,14 @@ import {
   resolveReportAssets,
 } from '../lib/report-data';
 import { createBlock } from '../lib/report-mockup';
+import { formatReportValue } from '../lib/report-format';
+import { reportSnapshotStates } from '../lib/report-data';
+import {
+  openReportDraftStore,
+  restoreReportDraft,
+} from '../lib/report-draft-store';
+import { createBlankReport } from '../lib/report-mockup';
+import { exportFileName } from '../lib/workflow-delivery';
 import type { EngineRequest, EngineResponse } from '../lib/signal-types';
 import type { PlotSheet } from '../lib/plot-scratchpad';
 
@@ -150,7 +158,7 @@ void test('workspace outputs capture all original recordings and the actual shar
   );
 });
 
-void test('values preserve exact stored results, individual membership and deduplicated explicit batches', async (t) => {
+void test('values show stored results in the app format, with individual membership and deduplicated explicit batches', async (t) => {
   const { engine, a, request, requests } = await fixture(t);
   const values = await engine.calculateValues(a.channels, 'minimum');
   const step = engine.project.workflowSteps!.find((candidate) =>
@@ -169,8 +177,9 @@ void test('values preserve exact stored results, individual membership and dedup
     noPlot,
   );
   assert.equal(individual.tableData.length, 2);
-  assert.equal(individual.tableData[1][1], String(values[0].value));
-  assert.equal(individual.tableData[1][1], '1.23456789012345');
+  // Reports use the value tiles' format; exact values stay in Values CSV.
+  assert.equal(individual.tableData[1][1], formatReportValue(values[0].value));
+  assert.equal(individual.tableData[1][1], '1.235');
   assert.deepEqual(individual.source?.outputIds, [values[0].id]);
   const [batch] = await resolveReportAssets(
     engine.project,
@@ -187,7 +196,7 @@ void test('values preserve exact stored results, individual membership and dedup
   assert.equal(batch.tableData.at(-1)?.[1], 'Unavailable');
   assert.equal(requests.length, 0);
   values[0].value = 777;
-  assert.equal(batch.tableData[1][1], '1.23456789012345');
+  assert.equal(batch.tableData[1][1], '1.235');
 });
 
 void test('large explicit value batches split into bounded tables without losing rows', async (t) => {
@@ -223,7 +232,7 @@ void test('large explicit value batches split into bounded tables without losing
   );
   assert.deepEqual(
     blocks.flatMap((block) => block.tableData.slice(1).map((row) => row[1])),
-    values.map((value) => String(value.value)),
+    values.map((value) => formatReportValue(value.value)),
   );
   const memberSelection = reportTargetAssets(index, {
     kind: 'output',
@@ -352,5 +361,155 @@ void test('saved plot capture receives independent layout data and returns indep
   await assert.rejects(
     resolveReportAssets(engine.project, [stale], [asset.id], request, noPlot),
     /no longer available/,
+  );
+});
+
+void test('report values use the value tiles format and never collapse tiny or huge results', () => {
+  assert.equal(formatReportValue(272608.4105695499), '272,608.411');
+  assert.equal(formatReportValue(2), '2.000');
+  assert.equal(formatReportValue(-0.5), '-0.500');
+  assert.equal(formatReportValue(0), '0.000');
+  assert.equal(formatReportValue(0.000123456), '0.0001235');
+  assert.equal(formatReportValue(1.5e13), '1.500e+13');
+  assert.equal(formatReportValue(null), 'Unavailable');
+  assert.equal(formatReportValue(Number.NaN), 'Unavailable');
+});
+
+void test('captures record their data identity and report edits as changed until updated, never refreshing', async (t) => {
+  const { engine, a, request } = await fixture(t);
+  const scaled = await engine.derive(a.channels[0], 'scale', 2);
+  const [value] = await engine.calculateValues([scaled.id], 'maximum');
+  const blocks = await resolveReportAssets(
+    engine.project,
+    [],
+    [`signal:${scaled.id}`, `value:${value.id}`],
+    request,
+    noPlot,
+  );
+  const sources = blocks.map((block) => block.source!);
+  assert.deepEqual(
+    sources.map((source) => source.assetIds),
+    [[`signal:${scaled.id}`], [`value:${value.id}`]],
+  );
+  assert.ok(sources.every((source) => source.fingerprint));
+  assert.deepEqual(reportSnapshotStates(engine.project, sources), [
+    'current',
+    'current',
+  ]);
+  const captured = structuredClone(blocks);
+  const step = new WorkflowIndex(engine.project).owner.get(scaled.id)!;
+  await engine.editOperation(step.id, {
+    type: 'derive-many',
+    parentIds: [a.channels[0]],
+    operation: 'scale',
+    parameter: 3,
+  });
+  assert.deepEqual(reportSnapshotStates(engine.project, sources), [
+    'changed',
+    'changed',
+  ]);
+  // Comparing never changes the capture.
+  assert.deepEqual(blocks, captured);
+  // Capturing the same assets again gives the current identity.
+  const fresh = await resolveReportAssets(
+    engine.project,
+    [],
+    sources.flatMap((source) => source.assetIds!),
+    request,
+    noPlot,
+  );
+  assert.deepEqual(
+    reportSnapshotStates(
+      engine.project,
+      fresh.map((block) => block.source!),
+    ),
+    ['current', 'current'],
+  );
+  // Undo restores the earlier revision, and with it the earlier identity.
+  await engine.travel('undo');
+  assert.deepEqual(reportSnapshotStates(engine.project, sources), [
+    'current',
+    'current',
+  ]);
+  await engine.deleteOperation(step.id);
+  assert.deepEqual(reportSnapshotStates(engine.project, sources), [
+    'missing',
+    'missing',
+  ]);
+  // Captures from before identities were recorded stay unknown, not stale.
+  const legacy = { ...sources[0], fingerprint: undefined };
+  assert.deepEqual(
+    reportSnapshotStates(engine.project, [
+      { ...legacy, outputIds: [a.channels[0]] },
+    ]),
+    ['unknown'],
+  );
+});
+
+void test('report drafts persist in their own device-local database and reject invalid records', async () => {
+  const name = `report-drafts-${crypto.randomUUID()}`;
+  const store = openReportDraftStore(name);
+  assert.equal(await store.load(), null);
+  const report = createBlankReport();
+  report.title = 'Bench summary';
+  report.pages[0].blocks.push(
+    createBlock('table', {
+      x: 60,
+      y: 80,
+      tableData: [
+        ['Value', 'Result'],
+        ['Peak', '1.235'],
+      ],
+    }),
+  );
+  await store.save(report);
+  store.close();
+  const reopened = openReportDraftStore(name);
+  const restored = await reopened.load();
+  assert.deepEqual(restored, report);
+  await reopened.clear();
+  assert.equal(await reopened.load(), null);
+  reopened.close();
+  // Records missing newer block fields gain defaults; broken records are refused.
+  const { fontSize: _fontSize, ...partial } = report.pages[0].blocks[0];
+  void _fontSize;
+  const upgraded = restoreReportDraft({
+    version: 1,
+    report: { ...report, pages: [{ id: 'p', blocks: [partial] }] },
+  });
+  assert.equal(upgraded?.pages[0].blocks[0].fontSize, 13);
+  assert.equal(restoreReportDraft({ version: 2, report }), null);
+  assert.equal(
+    restoreReportDraft({ version: 1, report: { ...report, pages: [] } }),
+    null,
+  );
+  assert.equal(
+    restoreReportDraft({
+      version: 1,
+      report: { ...report, pages: [{ id: 'p', blocks: [{ id: 'x' }] }] },
+    }),
+    null,
+  );
+});
+
+void test('export file names say which recording, scope and kind they hold', async (t) => {
+  const { engine, a, b } = await fixture(t);
+  const values = await engine.calculateValues([a.channels[0]], 'maximum');
+  assert.equal(
+    exportFileName(engine.project, [values[0].id], '#002 Maximum', 'values'),
+    'Logger A · #002 Maximum · values.csv',
+  );
+  assert.equal(
+    exportFileName(
+      engine.project,
+      [a.channels[0], b.channels[0]],
+      'checked 2 signals',
+      'samples',
+    ),
+    'Logger A, Logger B · checked 2 signals · samples.csv',
+  );
+  assert.equal(
+    exportFileName(engine.project, [a.channels[0]], 'x/y: "z"', 'report'),
+    'Logger A · x_y_ _z_ · summary.html',
   );
 });

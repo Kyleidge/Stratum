@@ -1,6 +1,8 @@
 import type { EngineRequest, Project } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
 import { segmentationOperation } from './segmentation-operation';
+import { formatCount } from './format-count';
+import { stepName } from './workflow-history';
 
 export type WorkflowCommand =
   | Extract<
@@ -254,4 +256,147 @@ export function remapProject(
       typeof value === 'string' ? (ids.get(value) ?? value) : value,
     ),
   ) as Project;
+}
+
+/** A History reference such as `#009`. */
+export const stepReference = (step: Pick<WorkflowStep, 'sequence'>) =>
+  `#${String(step.sequence + 1).padStart(3, '0')}`;
+
+const stepTitle = (step: WorkflowStep) =>
+  `${stepReference(step)} ${stepName(step)}`;
+const quoted = (text: string) =>
+  `'${text.length > 60 ? `${text.slice(0, 59)}…` : text}'`;
+const bySequence = (a: WorkflowStep, b: WorkflowStep) =>
+  a.sequence - b.sequence;
+
+/** A journaled change: its Undo/Redo label and the step it centres on. */
+export type JournalChange = { label: string; stepId?: string };
+
+/**
+ * Names the user action that turned `before` into `after`, for Undo/Redo
+ * labels ("Edit #009 Segment signals"). Reads only explicit records (steps,
+ * batches, names, checks); returns undefined when nothing recognisable changed.
+ */
+export function describeChange(
+  before: Project,
+  after: Project,
+): JournalChange | undefined {
+  const priorBatches = new Map(
+    before.workflowBatches?.map((batch) => [batch.id, batch]),
+  );
+  for (const batch of after.workflowBatches ?? []) {
+    const prior = priorBatches.get(batch.id);
+    const added = batch.runs.length - (prior?.runs.length ?? 0);
+    if (added > 0)
+      return {
+        label: `Run ${quoted(batch.name)} on ${formatCount(added, 'recording')}`,
+      };
+    if (prior && prior.state !== batch.state)
+      return { label: `Finish batch ${quoted(batch.name)}` };
+  }
+  const priorSteps = new Map(
+    (before.workflowSteps ?? []).map((step) => [step.id, step]),
+  );
+  const steps = after.workflowSteps ?? [];
+  const kept = new Set(steps.map((step) => step.id));
+  const removed = (before.workflowSteps ?? [])
+    .filter((step) => !kept.has(step.id))
+    .sort(bySequence);
+  const added = steps
+    .filter((step) => !priorSteps.has(step.id))
+    .sort(bySequence);
+  const sourceName = (project: Project, id: string) =>
+    project.sources.find((source) => source.id === id)?.name ?? 'recording';
+  if (removed.length && !added.length) {
+    const [first] = removed;
+    const rest = removed.length - 1;
+    const target =
+      first.kind === 'import'
+        ? `Remove recording ${sourceName(before, first.sourceId)}`
+        : `Delete ${stepTitle(first)}`;
+    return {
+      label: rest
+        ? `${target} and ${formatCount(rest, first.kind === 'import' ? 'step' : 'dependent step')}`
+        : target,
+      stepId: first.id,
+    };
+  }
+  if (added.length && !removed.length) {
+    const imports = added.filter((step) => step.kind === 'import');
+    const [first] = imports.length ? imports : added;
+    const rest = added.length - 1;
+    const target =
+      imports.length > 1
+        ? `Import ${formatCount(imports.length, 'recording')}`
+        : first.kind === 'import'
+          ? `Import ${sourceName(after, first.sourceId)}`
+          : `Add ${stepTitle(first)}`;
+    return {
+      label:
+        rest && imports.length <= 1
+          ? `${target} and ${formatCount(rest, 'more step', 'more steps')}`
+          : target,
+      stepId: first.id,
+    };
+  }
+  if (added.length) return undefined;
+  const changed = steps
+    .map((step) => [priorSteps.get(step.id)!, step] as const)
+    .sort(([a], [b]) => bySequence(a, b));
+  const edited = changed.find(
+    ([old, step]) => (step.revision ?? 1) > (old.revision ?? 1),
+  );
+  if (edited)
+    return { label: `Edit ${stepTitle(edited[0])}`, stepId: edited[1].id };
+  const renamed = changed.find(([old, step]) => old.name !== step.name);
+  if (renamed)
+    return {
+      label: `Rename ${stepReference(renamed[1])} to ${quoted(stepName(renamed[1]))}`,
+      stepId: renamed[1].id,
+    };
+  const checked = changed.find(
+    ([old, step]) =>
+      JSON.stringify(old.checks ?? []) !== JSON.stringify(step.checks ?? []),
+  );
+  if (checked)
+    return {
+      label: `Change checks on ${stepTitle(checked[1])}`,
+      stepId: checked[1].id,
+    };
+  const priorSources = new Map(
+    before.sources.map((source) => [source.id, source]),
+  );
+  const recording = after.sources.find(
+    (source) =>
+      priorSources.has(source.id) &&
+      priorSources.get(source.id)!.name !== source.name,
+  );
+  if (recording)
+    return {
+      label: `Rename recording to ${quoted(recording.name)}`,
+      stepId: steps.find(
+        (step) => step.kind === 'import' && step.sourceId === recording.id,
+      )?.id,
+    };
+  const labels = after.labels ?? {},
+    priorLabels = before.labels ?? {};
+  const output = Object.keys(labels).find(
+    (id) => labels[id] !== priorLabels[id],
+  );
+  if (output)
+    return {
+      label: `Rename ${after.nodes.some((node) => node.id === output) ? 'signal' : 'value'} to ${quoted(labels[output])}`,
+      stepId: steps.find((step) => step.outputIds.includes(output))?.id,
+    };
+  const imported = after.sources.filter(
+    (source) => !priorSources.has(source.id),
+  );
+  if (imported.length)
+    return {
+      label:
+        imported.length === 1
+          ? `Import ${imported[0].name}`
+          : `Import ${formatCount(imported.length, 'recording')}`,
+    };
+  return undefined;
 }

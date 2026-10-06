@@ -735,7 +735,13 @@ export async function plotUiSmoke() {
           entry.textContent?.includes(format) &&
           !entry.hasAttribute('data-disabled'),
       );
-    await click('Export plot');
+    // Narrow plots offer export from the "More plot tools" menu instead.
+    const visibleExport = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label="Export plot"]',
+      ),
+    ].some((button) => button.offsetParent !== null);
+    await click(visibleExport ? 'Export plot' : 'More plot tools');
     await until(() => !!item(), `${format} export menu`);
     item()!.click();
     await until(

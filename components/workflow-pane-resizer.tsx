@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 const PANES = {
   history: {
     id: 'workflow-navigation',
-    label: 'Operation history',
-    initial: 300,
+    label: 'History',
+    initial: 340,
     min: 250,
     max: 640,
     fraction: 0.48,
@@ -14,7 +14,7 @@ const PANES = {
   },
   inspector: {
     id: 'workflow-inspector',
-    label: 'Inspector',
+    label: 'Details',
     initial: 300,
     min: 260,
     max: 520,

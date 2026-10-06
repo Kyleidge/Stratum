@@ -6,6 +6,7 @@ import {
 } from './report-mockup';
 import { resolveReportAssets } from './report-data';
 import { captureReportPlot } from './report-plot';
+import { formatCaptureTime } from './report-format';
 import { createReportPdf } from './report-pdf';
 import { stepName, WorkflowIndex } from './workflow-history';
 import {
@@ -140,7 +141,7 @@ export async function renderRunReport(options: {
     'item.id': run.itemId,
     'item.label': recipe.item.label,
     'file.name': run.fileName,
-    'run.date': new Date(run.finishedAt).toLocaleString(),
+    'run.date': formatCaptureTime(run.finishedAt),
     'run.status': STATUS_LABELS[status],
     'run.flags': problems.length
       ? `${problems.length} ${problems.length === 1 ? 'problem' : 'problems'}: ${problems[0].message}`

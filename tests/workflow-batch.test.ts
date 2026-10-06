@@ -13,11 +13,24 @@ import {
 } from '../lib/workflow-recipe';
 import { extractWorkflow } from '../lib/workflow-extract';
 import {
+  isFlagged,
   liveRunStatus,
   runEdited,
   runProblems,
+  runStatus,
+  STATUS_LABELS,
   stepStatus,
+  validateWorkflowRecords,
 } from '../lib/workflow-checks';
+import {
+  batchColumns,
+  batchSummaryCsv,
+  headerSignature,
+  preflightFile,
+  preflightStatus,
+  rankColumns,
+  remapItem,
+} from '../lib/workflow-batch';
 import {
   fillPlaceholders,
   templateRefs,
@@ -313,14 +326,19 @@ void test('a batch publishes each item atomically, flags checks and undoes as on
       Math.abs(engine.bounds(halves.outputIds[0])[0] - sweepStart) < 1e-9,
     );
     // One Undo removes the whole batch; Redo restores it, including after restart.
+    const runLabel = `Run 'Lot 42' on ${EOL_COMPONENTS.length} recordings`;
+    assert.equal(engine.undoLabel, runLabel);
     await engine.travel('undo');
     assert.deepEqual(engine.project, before);
+    assert.equal(engine.redoLabel, runLabel);
     engine.close();
     const reopened = new SignalEngine(undefined, database);
     try {
       await reopened.open();
       await reopened.recoverImports();
+      assert.equal(reopened.redoLabel, runLabel);
       await reopened.travel('redo');
+      assert.equal(reopened.undoLabel, runLabel);
       assert.equal(reopened.project.sources.length, EOL_COMPONENTS.length);
       assert.deepEqual(
         reopened.project.workflowBatches,
@@ -447,8 +465,10 @@ void test('a workflow saved from History replays to identical results on another
       file,
     });
     const run = engine.project.workflowBatches![0].runs[0];
-    assert.equal(run.status, 'pass');
+    // The example has no checks: its items are No checks, never Pass.
+    assert.equal(run.status, 'none');
     const steps = stepsOf(engine.project);
+    assert.equal(liveRunStatus(run, steps), 'none');
     const index = new WorkflowIndex(engine.project);
     for (const included of extracted.included) {
       const old = before.workflowSteps!.find(
@@ -495,7 +515,7 @@ void test('a workflow saved from History replays to identical results on another
     assert.equal(partial.skipped.length, 3);
     assert.match(
       partial.skipped[0].reason,
-      /^Compare average product by run uses “Run 1 · Torque × speed”, which is not from this recording or an included step\.$/,
+      /^Average product per run uses “Run 1 · Torque × speed”, which is not from this recording or an included step\.$/,
     );
     // Steps that depend on nothing from this recording cannot be saved at all.
     assert.throws(
@@ -516,7 +536,7 @@ void test('checks are undoable, survive Edit and re-evaluate against the new rev
   try {
     await engine.workflowExample();
     const step = engine.project.workflowSteps!.find(
-      (item) => item.name === 'Compare average product by run',
+      (item) => item.name === 'Average product per run',
     )!;
     await engine.setChecks(step.id, [
       { kind: 'limits', max: 1, severity: 'warning', message: 'Too high.' },
@@ -656,6 +676,174 @@ void test('running a workflow on an existing recording adds steps without import
     await engine.travel('undo');
     assert.equal(engine.project.workflowBatches?.length ?? 0, 0);
     assert.equal(engine.project.sources.length, 1);
+  } finally {
+    engine.close();
+  }
+});
+
+void test('items without evaluated checks are No checks, neither Pass nor flagged', () => {
+  const plain = {
+    id: 'a',
+    kind: 'derive',
+    sourceId: 's',
+    sequence: 1,
+    inputIds: [],
+    outputIds: ['x'],
+    createdAt: '',
+  } as unknown as Parameters<typeof runStatus>[1][number];
+  assert.equal(runStatus([], []), 'none');
+  assert.equal(runStatus([], [plain]), 'none');
+  assert.equal(
+    runStatus([{ severity: 'warning', message: 'Odd.' }], [plain]),
+    'warning',
+  );
+  assert.equal(STATUS_LABELS.none, 'No checks');
+  assert.equal(isFlagged('none'), false);
+  assert.equal(isFlagged('pass'), false);
+  assert.equal(isFlagged('warning'), true);
+  // Batch records with the new status, and older ones without it, validate.
+  const record = (status: string, extra = {}) => [
+    {
+      id: 'b',
+      name: 'Lot',
+      createdAt: '',
+      recipeHash: 'h',
+      state: 'complete',
+      runs: [
+        {
+          id: 'r',
+          batchId: 'b',
+          itemId: 'SN-1',
+          fileName: 'SN-1.csv',
+          sourceId: 's',
+          status,
+          steps: {},
+          flags: [],
+          ...extra,
+        },
+      ],
+    },
+  ];
+  const recipes = [{ hash: 'h', name: 'W', text: '' }];
+  for (const status of ['none', 'pass', 'error'])
+    validateWorkflowRecords([], record(status), recipes, new Set(['s']));
+  validateWorkflowRecords(
+    [],
+    record('pass', { channelMap: { torque: 'Shaft torque' } }),
+    recipes,
+    new Set(['s']),
+  );
+  assert.throws(
+    () =>
+      validateWorkflowRecords(
+        [],
+        record('pass', { channelMap: { torque: 7 } }),
+        recipes,
+        new Set(['s']),
+      ),
+    /Invalid batch item/,
+  );
+});
+
+void test('pre-flight maps a missing channel to a column and the run matches a correctly named file', async () => {
+  const recipe = parseWorkflow(EOL_WORKFLOW);
+  const { name, text } = componentRecording(
+    EOL_COMPONENTS[0].serial,
+    EOL_COMPONENTS[0].variant,
+  );
+  const renamed = text.replace('Torque [Nm]', 'Shaft torque [Nm]');
+  assert.notEqual(renamed, text);
+  const odd = new File([renamed], name, { type: 'text/csv' });
+  const item = await preflightFile(recipe, odd);
+  assert.equal(preflightStatus(item), 'error');
+  assert.match(
+    item.bindings.find((binding) => binding.alias === 'torque')!.problem!,
+    /Missing channel "Torque \[Nm\]"/,
+  );
+  // The columns found are listed; the best match for Torque comes first.
+  assert.deepEqual(
+    item.columns.map((column) => column.name),
+    ['Motor speed', 'Shaft torque', 'Supply current', 'Winding temperature'],
+  );
+  const torque = recipe.channels.find((channel) => channel.alias === 'torque')!;
+  assert.equal(rankColumns(torque, item.columns)[0].name, 'Shaft torque');
+  const mapped = remapItem(recipe, item, { torque: 'Shaft torque' });
+  assert.equal(preflightStatus(mapped), 'ready');
+  assert.deepEqual(mapped.mapping, { torque: 'Shaft torque' });
+  assert.equal(headerSignature(mapped), headerSignature(item));
+  assert.equal(
+    preflightStatus(remapItem(recipe, mapped, { torque: '' })),
+    'error',
+  );
+  const unreadable = await preflightFile(
+    recipe,
+    new File(['just one column\n'], 'bad.csv'),
+  );
+  assert.equal(preflightStatus(unreadable), 'unreadable');
+
+  const { engine } = await open();
+  try {
+    const batchId = crypto.randomUUID();
+    await engine.runWorkflow({
+      recipe: EOL_WORKFLOW,
+      batchId,
+      batchName: 'Mapped',
+      itemId: 'Named',
+      file: componentFiles()[0],
+    });
+    await engine.runWorkflow({
+      recipe: EOL_WORKFLOW,
+      batchId,
+      batchName: 'Mapped',
+      itemId: 'Mapped',
+      file: odd,
+      channelMap: mapped.mapping,
+    });
+    const project = engine.project;
+    const batch = project.workflowBatches![0];
+    const [named, other] = batch.runs;
+    assert.equal(named.channelMap, undefined);
+    assert.deepEqual(other.channelMap, { torque: 'Shaft torque' });
+    assert.equal(other.status, named.status);
+    assert.deepEqual(other.flags, named.flags);
+    assert.deepEqual(Object.keys(other.steps), Object.keys(named.steps));
+    const index = new WorkflowIndex(project);
+    for (const [recipeStepId, stepId] of Object.entries(named.steps)) {
+      const a = index.steps.get(stepId)!;
+      const b = index.steps.get(other.steps[recipeStepId])!;
+      assert.equal(a.outputIds.length, b.outputIds.length, recipeStepId);
+      a.outputIds.forEach((id, position) => {
+        const value = index.values.get(id);
+        if (value)
+          assert.equal(
+            index.values.get(b.outputIds[position])!.value,
+            value.value,
+          );
+        else
+          assert.deepEqual(
+            engine.bounds(b.outputIds[position]),
+            engine.bounds(id),
+          );
+      });
+    }
+    // Columns follow the workflow's step order; the mapping is in the CSV.
+    const order = recipe.steps.map((step) => step.id);
+    const columns = batchColumns(project, batch);
+    assert.deepEqual(
+      columns.map((column) => order.indexOf(column.recipeStepId)),
+      columns
+        .map((column) => order.indexOf(column.recipeStepId))
+        .sort((a, b) => a - b),
+    );
+    const csv = batchSummaryCsv(project, batch).split('\r\n');
+    assert.match(csv[0], /,Problems,Mapped channels,/);
+    assert.match(csv[2], /Torque ← Shaft torque/);
+    // A backup keeps the mapping.
+    const backup = await engine.backupWorkspace();
+    await engine.restoreWorkspace(new File([backup], 'mapped.stratum'));
+    assert.deepEqual(engine.project.workflowBatches![0].runs[1].channelMap, {
+      torque: 'Shaft torque',
+    });
   } finally {
     engine.close();
   }

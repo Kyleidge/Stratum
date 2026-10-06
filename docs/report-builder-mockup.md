@@ -3,8 +3,18 @@
 The main application includes a freeform report canvas connected to Data
 Inspector. Reports capture workspace signals, calculated values and saved plots,
 alongside editable text, images and tables. Report edits do not change signal
-data, calculations or workflow history. Drafts stay in memory for the current
-session; reloading the page or closing the window discards the draft.
+data, calculations or workflow history.
+
+The draft is saved on this device: shortly after each edit it is written to its
+own IndexedDB database (`stratum-report-drafts`, `lib/report-draft-store.ts`),
+separate from the signal engine's storage and not part of workspace backups.
+Reopening the application restores it. The header shows **Saved on this
+device**, **Saving on this device…** or, when the browser refuses the write,
+**Not saved: this device’s storage is unavailable**. In a browser, leaving the
+page while a save is pending or has failed asks for confirmation; the desktop
+app starts the pending write instead, because Electron would silently keep the
+window open. Report Undo/Redo stays session-only (40 edits). The standalone
+`/report-mockup` preview never saves.
 
 ## Open it
 
@@ -13,10 +23,13 @@ session; reloading the page or closing the window discards the draft.
 - Choose **Data Inspector** to return to your signals. Switching workspaces
   preserves the report, its undo history, the inspected item and checked inputs.
   Reports hides the signal tools; the theme and guide buttons stay available.
-- **Report** in the top bar captures the viewed output or operation. Drop a
+- **Add to report** in the top bar captures the viewed output or step. Drop a
   different history item onto it to capture that item without changing the
-  inspected item or checked processing inputs. The same action is in Inspect /
-  export, a History item's context menu, the Outputs dock and Ctrl+K.
+  inspected item or checked processing inputs. The same action is in a History
+  item's context menu, the Outputs dock and Ctrl+K. Data Inspector stays shown;
+  a notification offers **Open Reports**.
+- **Export data…** is separate: it downloads exact CSV files or a quick HTML
+  summary and does not touch the report.
 - **Apply to** opens the checked-input review; choose **Add checked signals to
   report** to capture that explicit processing scope.
 - Use the report button beside a plot's Export menu to capture its displayed
@@ -28,11 +41,24 @@ session; reloading the page or closing the window discards the draft.
   report only; workflow Undo/Redo and Ctrl+K are inactive until you return.
 
 Workspace captures are immutable report snapshots. Changes to a signal's
-operation or a saved plot do not silently alter existing report blocks; capture
-the item again to include its latest state. Signal and plot captures use the
+operation or a saved plot do not silently alter existing report blocks. Each new
+capture records the library assets it came from and an identity of its data:
+the outputs, every contributing step revision, the original recordings and the
+value results. When that identity no longer matches the workspace, the block
+shows **Data changed** on the canvas (never in the PDF), its Workspace snapshot
+section says **Data changed since capture**, and the status bar counts the
+out-of-date snapshots. **Update snapshot** (or **Update all**) captures the data
+again and replaces only the block's data, keeping its position, size, title and
+formatting; it is one undoable report edit. Nothing updates automatically. Undo
+in Data Inspector restores the earlier revision, so the capture becomes current
+again. Outputs that were deleted show **Data removed**. Captures without a
+recorded identity show no state. Signal and plot captures use the
 engine's bounded drawing data, retaining the current time axis and visible plot
 settings. Calculated-value tables use stored scalar results, including missing
-values, rather than deriving measurements from plot envelopes. Capturing one
+values, rather than deriving measurements from plot envelopes. They show values
+in the Data Inspector value tiles' format (`lib/report-format.ts`: grouped digits,
+three decimals, four significant digits for tiny or huge magnitudes); exact
+values stay in the Values CSV export. Capturing one
 output includes only that output; capturing an operation includes its explicit
 output membership. All capture and PDF rendering stays on the device.
 
@@ -62,16 +88,21 @@ formatted through the inspector. Uploaded images stay on the device.
 The **Templates** tab offers four page designs: **Classic** (double-rule border,
 serif type), **Drawing sheet** (zoned engineering border with a title block),
 **Banner** (a colour band with modern type) and **Sidebar** (an accent stripe).
-Choosing a template starts a new draft with that design and an editable title
-page: eyebrow, title, subtitle, prepared by/date/reference details, and Summary
-and Results headings. It keeps the current paper size and orientation, and a
-title you already typed. Undo restores the previous draft. A blank report's
+Choosing a template for an empty draft starts a new draft with that design and
+an editable title page: eyebrow, title, subtitle, prepared by/date/reference
+details, and Summary and Results headings. It keeps the current paper size and
+orientation, and a title you already typed. When the draft already has blocks,
+the editor asks first: **Apply design only** keeps the content and changes the
+border and header, and **Start over with this template** replaces the draft.
+Undo restores the previous draft. A blank report's
 canvas also offers **Browse templates**.
 
 To restyle an existing report without replacing its content, choose a design
 under **Page design** in the Templates tab or Page settings, and an accent
 colour. The editor reports blocks that reach into the new border, header or
-footer; it never moves them. A design is drawn behind every page's blocks and
+footer and offers **Move inside**, which moves (and if necessary shrinks) only
+those blocks into the clear area as one undoable edit; it never moves them on
+its own. A design is drawn behind every page's blocks and
 cannot be selected. It repeats the report title and page numbers (the Banner
 and Sidebar title pages leave the title to the page itself), so renaming the
 report updates every page. Starter text uses neutral ink so it stays legible
@@ -93,7 +124,9 @@ illustrative; the main application's workspace library captures real results.
 ## PDF export
 
 **Export PDF** creates an actual multipage `.pdf` download entirely on the
-client. Each page uses the same SVG content as the editor, rasterized at 192 dpi
+client. The file is named after the report title; an untitled report is named
+after the recordings it captures and the date, such as
+`SN-24001 · report · 2026-10-06.pdf`. Each page uses the same SVG content as the editor, rasterized at 192 dpi
 for the standard paper sizes and embedded as a high-quality JPEG. Page size,
 orientation, background, formatting, and block order are retained. Individual
 raster canvases are capped at 16 million pixels and released after encoding.
@@ -127,6 +160,19 @@ capture limits. `pnpm desktop:ui-smoke` checks that the top bar keeps the
 report action beside the operations. `pnpm test` includes engine-backed source
 membership and provenance tests.
 
+Blocks inserted from Insert or the toolbar go below the page's last block, as
+captures do, continuing on a new page when the page is full. In Reports, the
+**Plot** insert opens the Data library on signals and saved plots. **Add
+selected** clears the library's check boxes once the items are added.
+
+## Batch item reports
+
+**Report** on a batch item opens that item's rendered report as a read-only
+preview beside the draft, which stays unchanged. **Back to batch** returns to the
+batch results, **Close preview** returns to the draft, **Export PDF** exports the
+previewed report, and **Edit as draft…** replaces the draft with it, asking
+first when the draft has blocks (Undo restores it).
+
 Insert up to 30 library assets together. Value batches are limited to 330
 results per insertion and split into tables of 11 results each, with repeated
 headers. Larger batches should be selected in smaller groups. Saved plots
@@ -140,7 +186,7 @@ Use the bottom-right handle to resize a selected block, or its exact Width and
 Height fields. Arrow keys nudge a selected block by 1 px (Shift: 10 px).
 Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z redoes, Ctrl/Cmd+D duplicates, and Delete
 removes the selected block. Escape cancels an active drag. The history retains
-40 edits for this session. All report changes, including a new blank report,
+40 edits for this session; the draft itself is saved on the device. All report changes, including a new blank report,
 can be undone. Image uploads accept PNG, JPEG, and WebP files up to 6 MiB and
 24 million pixels.
 
@@ -167,9 +213,13 @@ For a focused manual review:
 6. Launch the native mockup alongside the normal app and verify that exporting
    downloads a `.pdf`, closing the mockup leaves the saved workspace unchanged,
    and reopening the mockup starts a new draft.
+7. In the main app, add snapshots, reload, and confirm the draft returns. Edit a
+   step a snapshot depends on and confirm **Data changed** appears without the
+   block changing; choose **Update snapshot**, then Undo.
 
 Relevant implementation files are `components/report-builder-mockup.tsx`,
 `components/report-content.tsx`, `lib/report-mockup.ts`, `lib/report-data.ts`,
-`lib/report-plot.tsx`, `lib/report-integration.ts`, `lib/report-pdf.ts`, and
+`lib/report-plot.tsx`, `lib/report-integration.ts`, `lib/report-pdf.ts`,
+`lib/report-draft-store.ts`, `lib/report-format.ts`, and
 `app/report-builder-mockup.css`. `app/report-mockup/page.tsx` and the desktop
 `report-mockup` entry point expose the prototype independently of the workspace.

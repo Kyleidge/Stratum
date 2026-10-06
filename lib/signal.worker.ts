@@ -248,6 +248,8 @@ globalThis.onmessage = (
           project: engine.project,
           canUndo: engine.canUndo,
           canRedo: engine.canRedo,
+          undoLabel: engine.undoLabel,
+          redoLabel: engine.redoLabel,
         });
       } catch (error) {
         send({

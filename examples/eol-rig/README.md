@@ -27,8 +27,8 @@ summary, a torque plot, a key-results table and a checks table.
 ## Try it
 
 - In Stratum, choose **Import ▾ → Try the batch example (8 motors)**, then
-  **Run 8 recordings**. Or open the workflow with **Workspace → Open
-  workflow…**, then add these CSV files. You can also drop the `.stratum.yaml`
+  **Run 8 recordings (1 will error)**. Or open the workflow with **Import ▾ →
+  Open a workflow file…**, then add these CSV files. You can also drop the `.stratum.yaml`
   file and the CSVs onto the window together.
 - Read the workflow file in any text editor. Change a limit, save it, and run
   it again to see different flags.

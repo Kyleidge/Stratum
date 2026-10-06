@@ -7,6 +7,8 @@ import type { PlotSheet } from './plot-scratchpad';
 import type { ReportAsset } from './report-integration';
 import { checkTableRows, currentResults } from './workflow-checks';
 import type { WorkflowStep } from './workflow-types';
+import { formatReportValue } from './report-format';
+import { formatCount } from './format-count';
 
 const MAX_ASSETS = 30;
 const MAX_VALUES = 330;
@@ -66,7 +68,7 @@ export function reportAssets(
         id: `plot:${sheet.id}`,
         kind: 'plot',
         name: sheet.name,
-        detail: `Saved plot · ${sheet.traces.filter((trace) => trace.visible).length} visible traces`,
+        detail: `Saved plot · ${formatCount(sheet.traces.filter((trace) => trace.visible).length, 'visible trace')}`,
         outputIds: [
           ...new Set(
             sheet.traces
@@ -92,7 +94,7 @@ export function reportAssets(
         id: `value:${value.id}`,
         kind: 'value',
         name: index.label(value.id),
-        detail: `Calculated value · ${value.value === null ? 'Unavailable' : String(value.value)}${value.unit ? ` ${value.unit}` : ''}${recording(value.id)}`,
+        detail: `Calculated value · ${formatReportValue(value.value)}${value.unit && value.unit !== '—' ? ` ${value.unit}` : ''}${recording(value.id)}`,
         outputIds: [value.id],
       }),
     ),
@@ -103,7 +105,7 @@ export function reportAssets(
           id: `values:${step.id}`,
           kind: 'values',
           name: stepName(step),
-          detail: `${step.outputIds.length} calculated values · step ${step.sequence + 1}${step.outputIds.length ? recording(step.outputIds[0]) : ''}`,
+          detail: `${formatCount(step.outputIds.length, 'calculated value')} · step #${String(step.sequence + 1).padStart(3, '0')}${step.outputIds.length ? recording(step.outputIds[0]) : ''}`,
           outputIds: [...step.outputIds],
         }),
       ),
@@ -143,10 +145,81 @@ function checkAssets(project: Project): ReportAsset[] {
         id: `checks:${sourceId}`,
         kind: 'checks' as const,
         name: `Check results · ${source.name}`,
-        detail: `${results.length} ${results.length === 1 ? 'check' : 'checks'} · ${flagged} flagged`,
+        detail: `${formatCount(results.length, 'check')} · ${flagged} flagged`,
         outputIds: steps.flatMap((step) => step.outputIds),
       },
     ];
+  });
+}
+
+/** 64-bit FNV-1a, as hex: a compact identity, not a security hash. */
+function hashText(text: string): string {
+  let a = 0x811c9dc5,
+    b = 0x01000193 ^ text.length;
+  for (let position = 0; position < text.length; position++) {
+    const code = text.charCodeAt(position);
+    a = Math.imul(a ^ code, 0x01000193);
+    b = Math.imul(b ^ code, 0x5bd1e995);
+  }
+  return (
+    (a >>> 0).toString(16).padStart(8, '0') +
+    (b >>> 0).toString(16).padStart(8, '0')
+  );
+}
+
+/**
+ * Identity of captured data: the outputs, every contributing step revision,
+ * the original recordings and the value results. Null when an output no
+ * longer exists. Undo restores earlier revisions, and so the same identity.
+ */
+function dataFingerprint(
+  index: WorkflowIndex,
+  ids: readonly string[],
+): string | null {
+  if (ids.some((id) => !index.nodes.has(id) && !index.values.has(id)))
+    return null;
+  const lineage = index.lineage([...ids]);
+  return hashText(
+    [
+      ...ids.map((id) => {
+        const value = index.values.get(id);
+        return value ? `v:${id}=${value.value}:${value.unit}` : `n:${id}`;
+      }),
+      ...lineage.steps.map(
+        (step) => `s:${step.id}@${step.revision ?? 1}:${step.updatedAt ?? ''}`,
+      ),
+      ...lineage.originals.map((node) => `o:${node.id}:${node.sourceId}`),
+    ].join('|'),
+  );
+}
+
+/** `current`, `changed` since capture, `missing` outputs, or `unknown` (no identity recorded). */
+export type ReportSnapshotState = 'current' | 'changed' | 'missing' | 'unknown';
+
+const snapshotCache = new WeakMap<
+  Project,
+  { index: WorkflowIndex; prints: Map<string, string | null> }
+>();
+
+/** Compares captures with the workspace. Never changes a capture. */
+export function reportSnapshotStates(
+  project: Project,
+  sources: readonly NonNullable<ReportBlock['source']>[],
+): ReportSnapshotState[] {
+  let cache = snapshotCache.get(project);
+  if (!cache) {
+    cache = { index: new WorkflowIndex(project), prints: new Map() };
+    snapshotCache.set(project, cache);
+  }
+  const { index, prints } = cache;
+  return sources.map((source) => {
+    const key = source.outputIds.join('\n');
+    if (!prints.has(key))
+      prints.set(key, dataFingerprint(index, source.outputIds));
+    const print = prints.get(key);
+    if (print === null) return 'missing';
+    if (!source.fingerprint) return 'unknown';
+    return print === source.fingerprint ? 'current' : 'changed';
   });
 }
 
@@ -183,6 +256,7 @@ function sourceMetadata(
       .filter((source) => sourceIds.has(source.id))
       .map((source) => source.name),
     timeReferences: [...references.values()],
+    fingerprint: dataFingerprint(index, outputIds) ?? undefined,
   };
 }
 
@@ -259,7 +333,15 @@ export async function resolveReportAssets(
       checkAborted(signal);
       if (!captured.length)
         throw new Error(`“${asset.name}” did not produce a plot snapshot.`);
-      blocks.push(...structuredClone(captured));
+      // Each panel records its asset and position, so it can be captured again.
+      blocks.push(
+        ...structuredClone(captured).map((block, part) => ({
+          ...block,
+          ...(block.source
+            ? { source: { ...block.source, assetIds: [asset.id], part } }
+            : {}),
+        })),
+      );
     } else if (asset.kind === 'signal') {
       const id = asset.outputIds[0];
       // Report capture must not join/coalesce the interactive inspection queue.
@@ -296,14 +378,17 @@ export async function resolveReportAssets(
             range: [...range],
             label: asset.name,
           },
-          source: sourceMetadata(
-            project,
-            index,
-            graph,
-            [id],
-            'signal',
-            asset.name,
-          ),
+          source: {
+            ...sourceMetadata(
+              project,
+              index,
+              graph,
+              [id],
+              'signal',
+              asset.name,
+            ),
+            assetIds: [asset.id],
+          },
         }),
       );
     }
@@ -331,6 +416,8 @@ export async function resolveReportAssets(
             .filter((source) => source.id === sourceId)
             .map((source) => source.name),
           timeReferences: [],
+          assetIds: [asset.id],
+          fingerprint: dataFingerprint(index, asset.outputIds) ?? undefined,
         },
       }),
     );
@@ -355,20 +442,16 @@ export async function resolveReportAssets(
             const value = index.values.get(id)!;
             return [
               index.label(id),
-              value.value === null ? 'Unavailable' : String(value.value),
+              formatReportValue(value.value),
               value.unit,
               index.label(value.inputId),
             ];
           }),
         ],
-        source: sourceMetadata(
-          project,
-          index,
-          graph,
-          tableIds,
-          'values',
-          title,
-        ),
+        source: {
+          ...sourceMetadata(project, index, graph, tableIds, 'values', title),
+          assetIds: tableIds.map((id) => `value:${id}`),
+        },
       }),
     );
   }

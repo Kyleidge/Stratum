@@ -10,11 +10,12 @@ import {
 } from 'react';
 import type { Plot, Segment, SignalNode } from '@/lib/signal-types';
 import { plotDrawing, type PlotView } from '@/lib/plot-view';
-import type {
-  PlotAnnotation,
-  PlotAxes,
-  PlotRange,
-  PlotTrace,
+import {
+  seriesColor,
+  type PlotAnnotation,
+  type PlotAxes,
+  type PlotRange,
+  type PlotTrace,
 } from '@/lib/plot-scratchpad';
 import {
   groupPlotAxes,
@@ -194,7 +195,7 @@ export default function SignalChart({
         traces.map((trace) => ({
           unit: trace.node.unit,
           name: trace.label || trace.node.name,
-          color: trace.color || trace.node.color,
+          color: seriesColor(trace.color || trace.node.color),
           axisId: trace.axisId,
           reference: trace.referenceLine,
         })),
@@ -326,7 +327,7 @@ export default function SignalChart({
             traceAxisKey(trace.node.unit, trace.axisId, interaction.axes),
       )!;
       const { min, max, log: logarithmic } = scale;
-      const color = trace.color || trace.node.color;
+      const color = seriesColor(trace.color || trace.node.color);
       const dots =
         trace.style === 'points' ||
         trace.node.operation === 'min-max' ||
@@ -414,7 +415,7 @@ export default function SignalChart({
     return [
       {
         key: trace.node.id,
-        color: trace.color || trace.node.color,
+        color: seriesColor(trace.color || trace.node.color),
         label: trace.referenceLabel,
         x: Math.max(start + 40, end - 4),
         y,
@@ -528,7 +529,11 @@ export default function SignalChart({
             {traces.length > 1 ? (
               traces.map((t) => (
                 <span className="trace-legend" key={t.node.id}>
-                  <i style={{ background: t.color || t.node.color }} />
+                  <i
+                    style={{
+                      background: seriesColor(t.color || t.node.color),
+                    }}
+                  />
                   {t.label}
                 </span>
               ))
@@ -811,14 +816,14 @@ export default function SignalChart({
                     x2={position}
                     y1="15"
                     y2={bottom}
-                    style={{ stroke: axis.color }}
+                    style={{ stroke: seriesColor(axis.color) }}
                     opacity="0.6"
                   />
                   <text
                     className="plot-axis-title"
                     transform={`translate(${position + direction * 73}, ${15 + plotHeight / 2}) rotate(${axisIndex ? 90 : -90})`}
                     textAnchor="middle"
-                    style={{ fill: axis.color }}
+                    style={{ fill: seriesColor(axis.color) }}
                   >
                     {label.length > labelLimit
                       ? `${label.slice(0, labelLimit - 1)}…`
@@ -832,7 +837,6 @@ export default function SignalChart({
                   x={position + direction * 9}
                   y={tick.y + 4}
                   textAnchor={axisIndex ? 'start' : 'end'}
-                  style={interaction ? { fill: axis.color } : undefined}
                 >
                   {tick.label}
                 </text>
@@ -908,8 +912,8 @@ export default function SignalChart({
               <path
                 key={key}
                 d={d}
-                fill={dots ? color : 'none'}
-                stroke={color}
+                // Style, not attributes: theme series colours are var() tokens.
+                style={{ fill: dots ? color : 'none', stroke: color }}
                 strokeWidth={strokeWidth}
                 strokeDasharray={reference ? '6 4' : undefined}
                 vectorEffect="non-scaling-stroke"

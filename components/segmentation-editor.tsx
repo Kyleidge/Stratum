@@ -40,6 +40,8 @@ import type {
   EngineResponse,
 } from '@/lib/signal-types';
 import type { ExplorerEntry } from '@/lib/signal-explorer';
+import { formatCount } from '@/lib/format-count';
+import { rangeMidpoint } from '@/lib/parameter-scale';
 
 type TriggerForm = {
   signalId: string;
@@ -145,6 +147,7 @@ function number(value: string): number {
   return Number(value);
 }
 const time = (value: number) => `${Number(value.toFixed(3))} s`;
+const seconds = (value: number) => String(Number(value.toFixed(3)));
 const methods = [
   {
     value: 'ranges',
@@ -207,7 +210,7 @@ export default function SegmentationEditor({
               : source.channels[0],
           edge: 'rising',
           threshold: '900',
-          offset: '-20',
+          offset: workflowMode ? '0' : '-20',
         },
   );
   const [end, setEnd] = useState<TriggerForm>(
@@ -223,6 +226,69 @@ export default function SegmentationEditor({
           offset: '0',
         },
   );
+  // New workflow triggers start halfway through their signal's range until
+  // the threshold is edited. Saved trigger settings are always kept.
+  const autoDefaults = workflowMode && !savedTriggers && !!rangePlot;
+  const [autoThreshold, setAutoThreshold] = useState({
+    start: autoDefaults,
+    end: autoDefaults,
+  });
+  const [midpoints, setMidpoints] = useState<Record<string, number | null>>({});
+  const midpointIds = [
+    ...new Set([
+      ...(autoThreshold.start ? [start.signalId] : []),
+      ...(autoThreshold.end ? [end.signalId] : []),
+    ]),
+  ].filter((id) => !(id in midpoints));
+  const midpointKey = rangePlot ? JSON.stringify(midpointIds) : '[]';
+  const plotRequest = rangePlot?.request;
+  useEffect(() => {
+    const ids = JSON.parse(midpointKey) as string[];
+    if (!ids.length || !plotRequest) return;
+    let alive = true;
+    for (const id of ids)
+      void plotRequest({ type: 'view', ids: [id] })
+        .then((response) => {
+          const summary =
+            response.type === 'plots' ? response.plots[0]?.summary : undefined;
+          const value = summary?.count
+            ? rangeMidpoint(summary.min, summary.max)
+            : undefined;
+          if (alive) setMidpoints((old) => ({ ...old, [id]: value ?? null }));
+        })
+        .catch(() => {
+          if (alive) setMidpoints((old) => ({ ...old, [id]: null }));
+        });
+    return () => {
+      alive = false;
+    };
+  }, [midpointKey, plotRequest]);
+  const automatic = (form: TriggerForm, auto: boolean): TriggerForm => {
+    if (!auto) return form;
+    const value = midpoints[form.signalId];
+    return {
+      ...form,
+      threshold:
+        value === undefined
+          ? ''
+          : value === null
+            ? form.threshold
+            : String(value),
+    };
+  };
+  const startForm = automatic(start, autoThreshold.start);
+  const endForm = automatic(end, autoThreshold.end);
+  const findingThreshold =
+    (autoThreshold.start && midpoints[start.signalId] === undefined) ||
+    (autoThreshold.end && midpoints[end.signalId] === undefined);
+  const editTrigger =
+    (boundary: 'start' | 'end') =>
+    (next: TriggerForm): void => {
+      const form = boundary === 'start' ? startForm : endForm;
+      if (next.threshold !== form.threshold)
+        setAutoThreshold((old) => ({ ...old, [boundary]: false }));
+      (boundary === 'start' ? setStart : setEnd)(next);
+    };
   const [minimum, setMinimum] = useState(
     String(savedTriggers?.minimumDuration ?? 0),
   );
@@ -269,8 +335,8 @@ export default function SegmentationEditor({
   const [error, setError] = useState('');
   const key = JSON.stringify([
     method,
-    start,
-    end,
+    startForm,
+    endForm,
     minimum,
     ranges,
     windowStart,
@@ -293,6 +359,7 @@ export default function SegmentationEditor({
     (!rangeRows.length ||
       rangeRows.length > 1000 ||
       rangeRows.some((fields) => !validTimeRange(fields)));
+  const pendingThreshold = method === 'triggers' && findingThreshold;
   const signals = nodes
     .filter((node) => node.sourceId === source.id)
     .map((node) => ({
@@ -305,14 +372,14 @@ export default function SegmentationEditor({
         method,
         boundary,
         start: {
-          ...start,
-          threshold: number(start.threshold),
-          offset: number(start.offset),
+          ...startForm,
+          threshold: number(startForm.threshold),
+          offset: number(startForm.offset),
         },
         end: {
-          ...end,
-          threshold: number(end.threshold),
-          offset: number(end.offset),
+          ...endForm,
+          threshold: number(endForm.threshold),
+          offset: number(endForm.offset),
         },
         minimumDuration: number(minimum),
       };
@@ -382,7 +449,7 @@ export default function SegmentationEditor({
     },
   );
   useEffect(() => {
-    if (!autoPreview || invalidRanges) return;
+    if (!autoPreview || invalidRanges || pendingThreshold) return;
     let current = true;
     // Debounced so typing and dragging produce one preview per pause.
     const timer = setTimeout(
@@ -393,20 +460,19 @@ export default function SegmentationEditor({
       current = false;
       clearTimeout(timer);
     };
-  }, [autoPreview, invalidRanges, key]);
+  }, [autoPreview, invalidRanges, pendingThreshold, key]);
   const bandPlan =
     plan ?? (lastPlan?.method === method ? lastPlan.plan : undefined);
   const thresholdLine = (
     boundary: 'start' | 'end',
     trigger: TriggerForm,
-    update: (change: (old: TriggerForm) => TriggerForm) => void,
   ): PlotThreshold => ({
     boundary,
     signalId: trigger.signalId,
     value: trigger.threshold.trim() ? Number(trigger.threshold) : NaN,
     edge: trigger.edge,
     onChange: (value) =>
-      update((old) => ({ ...old, threshold: String(value) })),
+      editTrigger(boundary)({ ...trigger, threshold: String(value) }),
   });
   const windowSpan: [number, number] | undefined =
     windowStart.trim() &&
@@ -490,13 +556,13 @@ export default function SegmentationEditor({
           items={[
             {
               value: 'file',
-              label: `Entire file · ${source.channels.length} original signals`,
+              label: `Whole recording · ${formatCount(source.channels.length, 'original signal')}`,
             },
             {
               value: 'selection',
               label:
                 selectedIds.length > 1
-                  ? `Selected ${selectedIds.length} signals`
+                  ? `Selected ${formatCount(selectedIds.length, 'signal')}`
                   : 'Single signal · selected output',
             },
             ...signals,
@@ -517,11 +583,37 @@ export default function SegmentationEditor({
           : 'Creates signal segments beneath their input signals. Other channels keep their existing history.'}
     </p>
   );
-  return (
-    <fieldset
-      className={`segmentation-editor${workflowMode ? ' workflow-segmentation-editor' : ''}`}
-      disabled={busy}
-    >
+  const createLabel =
+    applyLabel ??
+    (savedOperation
+      ? 'Create revised segments'
+      : target === 'file'
+        ? 'Create file segments'
+        : 'Create signal segments');
+  // Segment numbers restart per member when members are segmented separately,
+  // matching the names the engine gives new segments.
+  const planNumbers = new Map<string, number>();
+  const rangeNumbers =
+    plan?.ranges.map((range) => {
+      const number = (planNumbers.get(range.inputId ?? '') ?? 0) + 1;
+      planNumbers.set(range.inputId ?? '', number);
+      return number;
+    }) ?? [];
+  const clipped = plan?.ranges.filter((range) => range.clipped).length ?? 0;
+  const blocked = invalidRanges
+    ? 'Add a valid time range to create segments.'
+    : currentPreview?.error
+      ? `The preview failed: ${currentPreview.error}`
+      : plan && !plan.ranges.length
+        ? 'No segments match these settings yet.'
+        : '';
+  const footerSummary = pendingThreshold
+    ? 'Finding a starting threshold…'
+    : plan
+      ? `${formatCount(plan.ranges.length, 'segment')} · ${seconds(Math.min(...plan.ranges.map((range) => range.start)))}–${seconds(Math.max(...plan.ranges.map((range) => range.end)))} s · ${clipped} clipped`
+      : 'Updating the segment preview…';
+  const body = (
+    <>
       {!workflowMode && (
         <>
           {targetEditor()}
@@ -600,15 +692,15 @@ export default function SegmentationEditor({
                 busy={busy}
                 ranges={bandPlan?.ranges}
                 thresholds={[
-                  thresholdLine('start', start, setStart),
-                  thresholdLine('end', end, setEnd),
+                  thresholdLine('start', startForm),
+                  thresholdLine('end', endForm),
                 ]}
                 help="Drag a threshold line up or down. Shaded bands are the segments these settings create; triangles mark the crossings."
               />
             )}
             <div className={workflowMode ? 'segment-trigger-grid' : undefined}>
-              {triggerEditor('Start', start, setStart)}
-              {triggerEditor('End', end, setEnd)}
+              {triggerEditor('Start', startForm, editTrigger('start'))}
+              {triggerEditor('End', endForm, editTrigger('end'))}
             </div>
             <Numeric
               label="Minimum output duration"
@@ -809,12 +901,15 @@ export default function SegmentationEditor({
         {plan ? (
           <>
             <strong>
-              {plan.ranges.length} {target === 'file' ? 'file' : 'signal'}{' '}
-              {plan.ranges.length === 1 ? 'segment' : 'segments'} ·{' '}
-              {plan.ranges.filter((range) => range.clipped).length} clipped
+              {formatCount(
+                plan.ranges.length,
+                `${target === 'file' ? 'file' : 'signal'} segment`,
+              )}{' '}
+              · {clipped} clipped
             </strong>
             <small>
-              {plan.skipped} excluded · {plan.incomplete} unpaired starts
+              {plan.skipped} excluded ·{' '}
+              {formatCount(plan.incomplete, 'unpaired start')}
             </small>
             {!plan.ranges.length && (
               <p className="input-hint">
@@ -829,7 +924,7 @@ export default function SegmentationEditor({
                   key={index}
                   title={`${range.inputId ? `${signalLabel ? signalLabel(range.inputId) : nodes.find((node) => node.id === range.inputId)?.name} · ` : ''}Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
                 >
-                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <span>{String(rangeNumbers[index]).padStart(2, '0')}</span>
                   <code>
                     {range.inputId && (
                       <small>
@@ -853,6 +948,11 @@ export default function SegmentationEditor({
               <>
                 <Eye size={16} /> Add a valid range to preview segments.
               </>
+            ) : pendingThreshold ? (
+              <>
+                <LoaderCircle size={16} className="segment-preview-spinner" />
+                Finding a starting threshold from the signal’s range…
+              </>
             ) : (
               <>
                 <LoaderCircle size={16} className="segment-preview-spinner" />
@@ -866,6 +966,50 @@ export default function SegmentationEditor({
           </small>
         )}
       </div>
+    </>
+  );
+  if (workflowMode)
+    return (
+      <div className="segmentation-editor workflow-segmentation-editor">
+        <div className="operation-body">
+          <fieldset className="segmentation-fields" disabled={busy}>
+            {body}
+          </fieldset>
+        </div>
+        <div className="operation-footer">
+          <p className="operation-footer-summary" aria-live="polite">
+            {error ? (
+              <span className="operation-footer-reason" role="alert" data-error>
+                {error}
+              </span>
+            ) : blocked ? (
+              <span
+                className="operation-footer-reason"
+                data-error={
+                  (!invalidRanges && !!currentPreview?.error) || undefined
+                }
+              >
+                {blocked}
+              </span>
+            ) : (
+              footerSummary
+            )}
+          </p>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void run(false)}
+            disabled={busy || !!blocked || pendingThreshold}
+          >
+            <Scissors size={14} />
+            {createLabel}
+          </button>
+        </div>
+      </div>
+    );
+  return (
+    <fieldset className="segmentation-editor" disabled={busy}>
+      {body}
       {error && (
         <p className="segment-error" role="alert">
           {error}
@@ -890,24 +1034,17 @@ export default function SegmentationEditor({
           disabled={invalidRanges}
         >
           <Scissors size={14} />
-          {applyLabel ??
-            (savedOperation
-              ? 'Create revised segments'
-              : target === 'file'
-                ? 'Create file segments'
-                : 'Create signal segments')}
+          {createLabel}
         </button>
       </div>
-      {!workflowMode && (
-        <p className="input-hint">
-          <GitBranch size={12} />{' '}
-          {applyLabel
-            ? 'Saving updates this operation and recalculates its dependent results. Undo restores the previous version.'
-            : savedOperation
-              ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
-              : 'Creates immutable crop recipes. Calculations remain separate steps.'}
-        </p>
-      )}
+      <p className="input-hint">
+        <GitBranch size={12} />{' '}
+        {applyLabel
+          ? 'Saving updates this operation and recalculates its dependent results. Undo restores the previous version.'
+          : savedOperation
+            ? 'Revised settings create a new Segment operation. Existing segments retain their original settings.'
+            : 'Creates immutable crop recipes. Calculations remain separate steps.'}
+      </p>
     </fieldset>
   );
 }

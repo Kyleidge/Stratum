@@ -325,6 +325,7 @@ export function validateWorkspace(value: unknown): Project {
       typeof step.operation !== 'string' ||
       typeof step.createdAt !== 'string' ||
       !optionalText(step.name) ||
+      !optionalText(step.fileName) ||
       !optionalText(step.updatedAt) ||
       (step.revision !== undefined &&
         (!Number.isSafeInteger(step.revision) || step.revision < 1)) ||

@@ -37,6 +37,12 @@ export interface ReportBlock {
     outputIds: string[];
     sourceNames: string[];
     timeReferences: string[];
+    /** Library assets that produced this capture, so it can be captured again. */
+    assetIds?: string[];
+    /** Which block of a multi-panel capture this is (saved plots). */
+    part?: number;
+    /** Identity of the captured data; a mismatch means the data changed. */
+    fingerprint?: string;
   };
   signalPlot?: {
     points: [number, number | null][];

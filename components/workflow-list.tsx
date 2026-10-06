@@ -1,5 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
+import { formatCount } from '@/lib/format-count';
 
 /** Disclosures do no hidden row rendering; every member remains reachable. */
 export default function WorkflowList<T>({
@@ -39,7 +40,8 @@ export default function WorkflowList<T>({
                 Previous
               </button>
               <span>
-                Page {current + 1} of {pages} · {items.length} items
+                Page {current + 1} of {pages} ·{' '}
+                {formatCount(items.length, 'item')}
               </span>
               <button
                 className="workflow-link"

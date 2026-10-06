@@ -17,6 +17,7 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowUpToLine,
   Bold,
   Check,
@@ -35,6 +36,7 @@ import {
   Moon,
   MousePointer2,
   Plus,
+  RefreshCw,
   Redo2,
   Settings2,
   Sun,
@@ -62,6 +64,7 @@ import {
 import {
   blocksOutsideFrame,
   createTemplateReport,
+  fitBlocksInsideFrame,
   FRAME_ACCENTS,
   frameInsets,
   REPORT_DESIGNS,
@@ -73,8 +76,16 @@ import { ReportFrameArt } from '@/components/report-frame';
 import { downloadReportPdf } from '@/lib/report-pdf';
 import type {
   ReportBuilderHandle,
+  ReportPreview,
   ReportWorkspace,
 } from '@/lib/report-integration';
+import type { ReportSnapshotState } from '@/lib/report-data';
+import {
+  openReportDraftStore,
+  type ReportDraftStore,
+} from '@/lib/report-draft-store';
+import { formatCaptureTime } from '@/lib/report-format';
+import { formatCount } from '@/lib/format-count';
 import { WORKFLOW_DRAG_TYPE } from '@/lib/workflow-drag';
 import {
   ReportDataLibrary,
@@ -128,6 +139,36 @@ type Gesture = {
 };
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
+/** `saved` on this device, a write `pending`, or a `failed` write or read. */
+type SaveState = 'off' | 'loading' | 'pending' | 'saved' | 'failed';
+type Notice = { text: string; action?: { label: string; run: () => void } };
+const blockCount = (report: ReportDocument) =>
+  report.pages.reduce((total, item) => total + item.blocks.length, 0);
+
+/**
+ * A fresh capture's data in an existing block: position, size, name, title
+ * and formatting stay as the user arranged them.
+ */
+function refreshedBlock(old: ReportBlock, fresh: ReportBlock): ReportBlock {
+  const rowsChanged = old.tableData.length !== fresh.tableData.length;
+  return {
+    ...old,
+    source: fresh.source,
+    ...(old.signalPlot ? { signalPlot: fresh.signalPlot } : {}),
+    ...(old.plotSnapshot
+      ? {
+          plotSnapshot: fresh.plotSnapshot,
+          plotSheet: fresh.plotSheet ?? old.plotSheet,
+        }
+      : {}),
+    ...(old.type === 'table'
+      ? {
+          tableData: fresh.tableData,
+          height: rowsChanged ? fresh.height : old.height,
+        }
+      : {}),
+  };
+}
 
 function Tool({
   icon: Icon,
@@ -269,7 +310,24 @@ export default function ReportBuilderMockup({
   const [snap, setSnap] = useState(true);
   const [preview, setPreview] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [toast, setToast] = useState<Notice | null>(null);
+  const setNotice = (text: string, action?: Notice['action']) =>
+    setToast(text ? { text, action } : null);
+  // A batch item's report (or similar) shown read-only beside the draft.
+  const [itemPreview, setItemPreview] = useState<ReportPreview | null>(null);
+  const [confirmUse, setConfirmUse] = useState(false);
+  // A template chosen while the draft has blocks waits for an explicit choice.
+  const [pendingTemplate, setPendingTemplate] =
+    useState<ReportFrameStyle | null>(null);
+  const [dataKind, setDataKind] = useState('all');
+  // Drafts persist on this device in their own database (workspace only).
+  const [saveState, setSaveState] = useState<SaveState>(
+    workspace ? 'loading' : 'off',
+  );
+  const saveStateRef = useRef(saveState);
+  const draftStore = useRef<ReportDraftStore | null>(null);
+  const savedReport = useRef<ReportDocument | null>(null);
+  const flushSave = useRef<(() => void) | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [gestureActive, setGestureActive] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -280,6 +338,8 @@ export default function ReportBuilderMockup({
   const reportEpoch = useRef(0);
   const gesture = useRef<Gesture | null>(null);
   const { width, height } = pageDimensions(report);
+  // Fit-to-width follows the shown document, including a previewed report.
+  const fitWidth = pageDimensions(itemPreview?.report ?? report).width;
   const scale = zoom ?? fitZoom;
   const shownPageIndex = Math.min(pageIndex, report.pages.length - 1);
   const page = report.pages[shownPageIndex];
@@ -306,17 +366,102 @@ export default function ReportBuilderMockup({
     const viewport = viewportRef.current;
     if (!viewport) return;
     const observer = new ResizeObserver(([entry]) => {
-      setFitZoom(clamp((entry.contentRect.width - 96) / width, 0.25, 1));
+      setFitZoom(clamp((entry.contentRect.width - 96) / fitWidth, 0.25, 1));
     });
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [width, preview]);
+  }, [fitWidth, preview]);
 
   useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(''), 5000);
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), toast.action ? 9000 : 5000);
     return () => clearTimeout(timer);
-  }, [notice]);
+  }, [toast]);
+
+  // Restore the saved draft once; the store is the report's own database.
+  const persist = saveState !== 'off';
+  useEffect(() => {
+    if (!persist) return;
+    const store = openReportDraftStore();
+    draftStore.current = store;
+    let live = true;
+    store
+      .load()
+      .then((saved) => {
+        if (!live) return;
+        setHistory((current) => {
+          // Edits made while loading win over the stored draft.
+          if (!saved || current.past.length || current.future.length) {
+            return current;
+          }
+          savedReport.current = saved;
+          return { report: saved, past: [], future: [] };
+        });
+        setSaveState('saved');
+      })
+      .catch(() => {
+        if (live) setSaveState('failed');
+      });
+    return () => {
+      live = false;
+      flushSave.current?.();
+      store.close();
+      draftStore.current = null;
+    };
+  }, [persist]);
+
+  // Save edits shortly after they stop; Undo/Redo stay session-only.
+  const loaded = saveState !== 'off' && saveState !== 'loading';
+  useEffect(() => {
+    const store = draftStore.current;
+    if (!loaded || !store || report === savedReport.current) return;
+    setSaveState('pending');
+    let done = false;
+    const write = () => {
+      if (done) return;
+      done = true;
+      flushSave.current = null;
+      store
+        .save(report)
+        .then(() => {
+          savedReport.current = report;
+          if (currentRef.current.report === report) setSaveState('saved');
+        })
+        .catch(() => setSaveState('failed'));
+    };
+    flushSave.current = write;
+    const timer = setTimeout(write, 400);
+    return () => clearTimeout(timer);
+  }, [report, loaded]);
+
+  // Warn before leaving while a save is pending or failed.
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
+  useEffect(() => {
+    if (!persist) return;
+    // Electron cancels a prevented unload without asking, which would trap
+    // the window, so the desktop app only starts the pending write.
+    const native = navigator.userAgent.includes('Electron');
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      flushSave.current?.();
+      if (
+        !native &&
+        (saveStateRef.current === 'pending' ||
+          saveStateRef.current === 'failed')
+      )
+        event.preventDefault();
+    };
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') flushSave.current?.();
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, [persist]);
 
   function commit(
     next: ReportDocument | ((current: ReportDocument) => ReportDocument),
@@ -388,9 +533,14 @@ export default function ReportBuilderMockup({
     patch?: Partial<ReportBlock>,
   ) {
     if (workspace && type === 'plot' && !patch?.source) {
+      // Plots come from the workspace: open the Data library on its plots.
       setLibraryTab('data');
+      setDataKind('plottable');
       setPreview(false);
-      setNotice('Choose a signal or saved plot from Data Inspector.');
+      setItemPreview(null);
+      setNotice(
+        'Choose a signal or saved plot, then click it or drag it onto the page.',
+      );
       return;
     }
     const defaults = workspace
@@ -407,28 +557,37 @@ export default function ReportBuilderMockup({
           : undefined
       : undefined;
     const block = createBlock(type, { ...defaults, ...patch });
-    block.width = Math.min(block.width, width - 80);
-    block.height = Math.min(block.height, height - 80);
-    block.x = clamp(
-      at?.x ?? insets.left + (page.blocks.length % 5) * 16,
-      0,
-      width - block.width,
+    block.width = Math.min(block.width, width - insets.left - insets.right);
+    block.height = Math.min(block.height, height - insets.top - insets.bottom);
+    // Without a drop point, place it below the page's last block, as captures
+    // are; a full page continues on a new page.
+    const below = Math.max(
+      insets.top,
+      ...page.blocks.map((item) => item.y + item.height + 24),
     );
+    const overflow = !at && below + block.height > height - insets.bottom;
+    const targetIndex = overflow ? report.pages.length : shownPageIndex;
+    const area = overflow ? frameInsets(report, targetIndex) : insets;
+    block.x = clamp(at?.x ?? area.left, 0, width - block.width);
     block.y = clamp(
-      at?.y ?? insets.top + 16 + (page.blocks.length % 5) * 32,
+      at?.y ?? (overflow ? area.top : below),
       0,
       height - block.height,
     );
     commit({
       ...report,
-      pages: report.pages.map((item) =>
-        item.id === page.id
-          ? { ...item, blocks: [...item.blocks, block] }
-          : item,
-      ),
+      pages: overflow
+        ? [...report.pages, { id: crypto.randomUUID(), blocks: [block] }]
+        : report.pages.map((item) =>
+            item.id === page.id
+              ? { ...item, blocks: [...item.blocks, block] }
+              : item,
+          ),
     });
+    setPageIndex(targetIndex);
     setSelectedId(block.id);
     setPreview(false);
+    if (overflow) setNotice(`Added on new page ${targetIndex + 1}.`);
     return block.id;
   }
   function cancelCapture() {
@@ -498,9 +657,8 @@ export default function ReportBuilderMockup({
     setPageIndex(place(currentRef.current.report).firstPage);
     setSelectedId(inserted[0].id);
     setPreview(false);
-    setNotice(
-      `${blocks.length} ${blocks.length === 1 ? 'snapshot added' : 'snapshots added'} to report.`,
-    );
+    setItemPreview(null);
+    setNotice(`${formatCount(blocks.length, 'snapshot')} added to the report.`);
   }
   function addBlocks(blocks: ReportBlock[]) {
     insertBlocks(blocks, page.id);
@@ -538,6 +696,75 @@ export default function ReportBuilderMockup({
           error instanceof Error
             ? error.message
             : 'Could not capture report data.',
+        );
+    } finally {
+      if (captureRef.current === controller) {
+        captureRef.current = null;
+        setCapturing(false);
+      }
+    }
+  }
+
+  /**
+   * Captures blocks' data again on request and replaces only their data;
+   * layout, titles and formatting stay. One undoable edit.
+   */
+  async function updateSnapshots(blockIds: readonly string[]) {
+    if (!workspace || captureRef.current || workspace.busy) return;
+    const targets = report.pages
+      .flatMap((item) => item.blocks)
+      .filter(
+        (block) =>
+          blockIds.includes(block.id) && block.source?.assetIds?.length,
+      );
+    if (!targets.length) return;
+    const controller = new AbortController();
+    captureRef.current = controller;
+    setCapturing(true);
+    const epoch = reportEpoch.current;
+    const revision = workspace.revision;
+    try {
+      const replacements = new Map<string, ReportBlock>();
+      for (const block of targets) {
+        const source = block.source!;
+        const captured = await workspace.resolveAssets(
+          source.assetIds!,
+          controller.signal,
+        );
+        if (controller.signal.aborted || epoch !== reportEpoch.current) return;
+        const fresh = captured[source.part ?? 0];
+        if (!fresh)
+          throw new Error(
+            `“${block.name}” could not be captured again. Add it from the Data library.`,
+          );
+        replacements.set(block.id, refreshedBlock(block, fresh));
+      }
+      if (revision !== currentRef.current.workspace?.revision) {
+        setNotice('The workspace changed during the update. Try again.');
+        return;
+      }
+      if (gesture.current) {
+        setNotice('Finish moving the block, then update the snapshot again.');
+        return;
+      }
+      commit((current) => ({
+        ...current,
+        pages: current.pages.map((item) => ({
+          ...item,
+          blocks: item.blocks.map(
+            (block) => replacements.get(block.id) ?? block,
+          ),
+        })),
+      }));
+      setNotice(
+        `${formatCount(replacements.size, 'snapshot')} updated. Undo restores the earlier capture.`,
+      );
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setNotice(
+          error instanceof Error && !/no longer available/.test(error.message)
+            ? error.message
+            : 'Some captured data no longer exists. Add it again from the Data library.',
         );
     } finally {
       if (captureRef.current === controller) {
@@ -613,7 +840,13 @@ export default function ReportBuilderMockup({
     setPreview(false);
     setZoom(null);
   }
+  function chooseTemplate(style: ReportFrameStyle) {
+    // A draft with content asks first: keep it under the new design, or start over.
+    if (blockCount(report)) setPendingTemplate(style);
+    else startFromTemplate(style);
+  }
   function startFromTemplate(style: ReportFrameStyle) {
+    setPendingTemplate(null);
     // A title the user already typed carries over to the new title page.
     const title = report.title.trim();
     replaceReport(
@@ -637,21 +870,53 @@ export default function ReportBuilderMockup({
     commit(next);
     // Designs keep about 16 px clear around their artwork.
     const overlapping = blocksOutsideFrame(next, 16);
-    setNotice(
-      overlapping
-        ? `${reportDesign(style).name} page design applied. ${overlapping} ${overlapping === 1 ? 'block overlaps' : 'blocks overlap'} its border, header or footer.`
-        : `${reportDesign(style).name} page design applied.`,
-    );
+    const name = reportDesign(style).name;
+    if (overlapping)
+      setNotice(
+        `${name} page design applied. ${formatCount(overlapping, 'block')} ${overlapping === 1 ? 'overlaps' : 'overlap'} its border, header or footer.`,
+        {
+          label: 'Move inside',
+          run: () => {
+            commit((current) => fitBlocksInsideFrame(current, 16));
+            setNotice(
+              `Moved ${formatCount(overlapping, 'block')} inside the page design. Undo puts ${overlapping === 1 ? 'it' : 'them'} back.`,
+            );
+          },
+        },
+      );
+    else setNotice(`${name} page design applied.`);
   }
   function setFrameAccent(accent: string) {
     if (report.frame && accent !== report.frame.accent)
       commit({ ...report, frame: { ...report.frame, accent } });
+  }
+  function openItemPreview(next: ReportPreview) {
+    setItemPreview(next);
+    setConfirmUse(false);
+    setSelectedId(null);
+    setZoom(null);
+  }
+  function closeItemPreview() {
+    setItemPreview(null);
+    setConfirmUse(false);
+  }
+  function adoptItemPreview() {
+    if (!itemPreview) return;
+    if (blockCount(report) && !confirmUse) {
+      setConfirmUse(true);
+      return;
+    }
+    const { label } = itemPreview;
+    closeItemPreview();
+    replaceReport(structuredClone(itemPreview.report));
+    setNotice(`${label} is now your draft. Undo restores your previous draft.`);
   }
   useImperativeHandle(ref, () => ({
     addAssets,
     addBlocks,
     getReport: () => currentRef.current.report,
     loadReport: replaceReport,
+    previewReport: openItemPreview,
   }));
   function setPageLayout(patch: Partial<ReportDocument>) {
     const next = { ...report, ...patch };
@@ -884,8 +1149,8 @@ export default function ReportBuilderMockup({
     if (exporting) return;
     setExporting(true);
     try {
-      await downloadReportPdf(report);
-      setNotice('Your PDF is ready. Check your downloads.');
+      const filename = await downloadReportPdf(itemPreview?.report ?? report);
+      setNotice(`Saved ${filename}. Check your downloads.`);
     } catch (error) {
       setNotice(
         error instanceof Error
@@ -898,6 +1163,39 @@ export default function ReportBuilderMockup({
   }
   const SelectionIcon =
     BLOCKS.find((item) => item.type === selected?.type)?.icon ?? Settings2;
+  // Compare captures with the workspace; never refresh them automatically.
+  const sourced = report.pages.flatMap((item) =>
+    item.blocks.filter((block) => block.source),
+  );
+  const states = workspace?.snapshotStates?.(
+    sourced.map((block) => block.source!),
+  );
+  const snapshotState = new Map<string, ReportSnapshotState>(
+    sourced.map((block, position) => [
+      block.id,
+      states?.[position] ?? 'unknown',
+    ]),
+  );
+  const changedIds = sourced
+    .filter(
+      (block) =>
+        snapshotState.get(block.id) === 'changed' &&
+        block.source?.assetIds?.length,
+    )
+    .map((block) => block.id);
+  const showingPreview = preview || !!itemPreview;
+  const previewDocument = itemPreview?.report ?? report;
+  const previewSize = pageDimensions(previewDocument);
+  const saveLabel =
+    saveState === 'off'
+      ? 'Sample draft · not saved'
+      : saveState === 'loading'
+        ? 'Opening saved draft…'
+        : saveState === 'pending'
+          ? 'Saving on this device…'
+          : saveState === 'failed'
+            ? 'Not saved: this device’s storage is unavailable'
+            : 'Saved on this device';
 
   return (
     // Keyboard shortcuts are delegated from the editor's focusable controls.
@@ -929,8 +1227,9 @@ export default function ReportBuilderMockup({
         if (event.key === 'Escape') {
           setSelectedId(null);
           setPreview(false);
+          closeItemPreview();
         }
-        if (preview) return;
+        if (showingPreview) return;
         if (
           (event.ctrlKey || event.metaKey) &&
           event.key.toLowerCase() === 'z'
@@ -997,18 +1296,41 @@ export default function ReportBuilderMockup({
             <span className="rb-badge">MOCKUP</span>
           </div>
         )}
-        <div className="rb-document-name">
-          <input
-            aria-label="Report name"
-            value={report.title}
-            onChange={(event) =>
-              commit({ ...report, title: event.target.value })
-            }
-          />
-          <span>
-            <span className="rb-dot" /> Local draft · this session
-          </span>
-        </div>
+        {itemPreview ? (
+          <div className="rb-document-name">
+            <input
+              aria-label="Previewed report name"
+              value={itemPreview.report.title}
+              readOnly
+            />
+            <span>
+              <span className="rb-dot" /> {itemPreview.label} · read-only
+              preview · your draft is unchanged
+            </span>
+          </div>
+        ) : (
+          <div className="rb-document-name">
+            <input
+              aria-label="Report name"
+              value={report.title}
+              onChange={(event) =>
+                commit({ ...report, title: event.target.value })
+              }
+            />
+            <output
+              data-state={saveState}
+              title={
+                saveState === 'failed'
+                  ? 'Report drafts are kept in this browser’s storage, which could not be written. Keep this window open, or export a PDF.'
+                  : saveState === 'off'
+                    ? undefined
+                    : 'The draft is kept in this browser’s storage on this device. It is not part of workspace backups.'
+              }
+            >
+              <span className="rb-dot" /> {saveLabel}
+            </output>
+          </div>
+        )}
         <div className="rb-header-actions">
           {!workspace && (
             <Tool
@@ -1017,19 +1339,45 @@ export default function ReportBuilderMockup({
               onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
             />
           )}
-          <button
-            className={cn(
-              'rb-button rb-preview-button',
-              preview && 'is-active',
-            )}
-            onClick={() => {
-              setPreview(!preview);
-              setSelectedId(null);
-            }}
-          >
-            <Eye size={15} />
-            {preview ? 'Back to editor' : 'Preview'}
-          </button>
+          {itemPreview ? (
+            <>
+              {itemPreview.back && (
+                <button
+                  className="rb-button"
+                  onClick={() => {
+                    const back = itemPreview.back!;
+                    closeItemPreview();
+                    back.run();
+                  }}
+                >
+                  <ArrowLeft size={15} />
+                  {itemPreview.back.label}
+                </button>
+              )}
+              <button className="rb-button" onClick={closeItemPreview}>
+                <X size={15} />
+                Close preview
+              </button>
+              <button className="rb-button" onClick={adoptItemPreview}>
+                <FilePlus2 size={15} />
+                Edit as draft…
+              </button>
+            </>
+          ) : (
+            <button
+              className={cn(
+                'rb-button rb-preview-button',
+                preview && 'is-active',
+              )}
+              onClick={() => {
+                setPreview(!preview);
+                setSelectedId(null);
+              }}
+            >
+              <Eye size={15} />
+              {preview ? 'Back to editor' : 'Preview'}
+            </button>
+          )}
           <button
             className="rb-button rb-primary"
             disabled={exporting}
@@ -1040,27 +1388,45 @@ export default function ReportBuilderMockup({
           </button>
         </div>
       </header>
+      {itemPreview && confirmUse && (
+        <div className="rb-confirm" role="alert">
+          <p>
+            Replace your draft ({formatCount(blockCount(report), 'block')}) with
+            this report? Undo in Reports restores your draft.
+          </p>
+          <button className="rb-button" onClick={() => setConfirmUse(false)}>
+            Keep my draft
+          </button>
+          <button className="rb-button rb-primary" onClick={adoptItemPreview}>
+            Replace draft
+          </button>
+        </div>
+      )}
       <div className="rb-toolbar">
         <div className="rb-toolbar-group">
           <Tool
             icon={Undo2}
             label="Undo (Ctrl+Z)"
-            disabled={preview || !history.past.length}
+            disabled={showingPreview || !history.past.length}
             onClick={undo}
           />
           <Tool
             icon={Redo2}
             label="Redo (Ctrl+Shift+Z)"
-            disabled={preview || !history.future.length}
+            disabled={showingPreview || !history.future.length}
             onClick={redo}
           />
           <span className="rb-divider" />
           <span className="rb-editing-label">
             <MousePointer2 size={14} />
-            {preview ? 'Preview mode' : 'Design report'}
+            {itemPreview
+              ? 'Report preview'
+              : preview
+                ? 'Preview mode'
+                : 'Design report'}
           </span>
         </div>
-        {!preview && (
+        {!showingPreview && (
           <div className="rb-quick-insert">
             {BLOCKS.map(({ type, label, icon: Icon }) => (
               <button key={type} onClick={() => addBlock(type)}>
@@ -1072,7 +1438,8 @@ export default function ReportBuilderMockup({
         )}
         <div className="rb-toolbar-group rb-toolbar-end">
           <span className="rb-page-format">
-            {report.pageSize.toUpperCase()} · {report.orientation}
+            {previewDocument.pageSize.toUpperCase()} ·{' '}
+            {previewDocument.orientation}
           </span>
           <span className="rb-divider" />
           <Tool
@@ -1094,8 +1461,8 @@ export default function ReportBuilderMockup({
           />
         </div>
       </div>
-      <div className={cn('rb-body', preview && 'rb-preview')}>
-        {!preview && (
+      <div className={cn('rb-body', showingPreview && 'rb-preview')}>
+        {!showingPreview && (
           <aside className="rb-library">
             <div className="rb-tabs">
               {workspace && (
@@ -1132,6 +1499,8 @@ export default function ReportBuilderMockup({
                   selectionIds={workspace.selectionIds}
                   busy={workspace.busy}
                   capturing={capturing}
+                  kind={dataKind}
+                  onKindChange={setDataKind}
                   onAdd={(ids) => void addAssets(ids)}
                   onCancel={cancelCapture}
                 />
@@ -1252,18 +1621,56 @@ export default function ReportBuilderMockup({
                 <>
                   <div className="rb-section-heading">
                     <h2>Start from a template</h2>
-                    <p>
-                      A designed border, header and title page to build on. Undo
-                      restores your current draft.
-                    </p>
+                    <p>A designed border, header and title page to build on.</p>
                   </div>
+                  {pendingTemplate && (
+                    <fieldset
+                      className="rb-template-choice"
+                      aria-label={`Use the ${reportDesign(pendingTemplate).name} template`}
+                    >
+                      <p>
+                        Your draft has{' '}
+                        {formatCount(blockCount(report), 'block')}. Use the{' '}
+                        {reportDesign(pendingTemplate).name} template how?
+                      </p>
+                      <button
+                        className="rb-button rb-primary rb-wide"
+                        onClick={() => {
+                          const style = pendingTemplate;
+                          setPendingTemplate(null);
+                          applyDesign(style);
+                        }}
+                      >
+                        Apply design only
+                      </button>
+                      <small>
+                        Keeps your content; changes border and header.
+                      </small>
+                      <button
+                        className="rb-button rb-wide"
+                        onClick={() => startFromTemplate(pendingTemplate)}
+                      >
+                        Start over with this template
+                      </button>
+                      <small>
+                        Replaces the draft with a title page. Undo restores it.
+                      </small>
+                      <button
+                        className="rb-text-button"
+                        onClick={() => setPendingTemplate(null)}
+                      >
+                        Cancel
+                      </button>
+                    </fieldset>
+                  )}
                   <div className="rb-template-grid">
                     {REPORT_DESIGNS.map((design, index) => (
                       <button
                         key={design.style}
                         className="rb-template"
                         aria-label={`Start from the ${design.name} template`}
-                        onClick={() => startFromTemplate(design.style)}
+                        aria-pressed={pendingTemplate === design.style}
+                        onClick={() => chooseTemplate(design.style)}
                       >
                         <span className="rb-template-sheet">
                           <ReportPageSvg
@@ -1396,13 +1803,21 @@ export default function ReportBuilderMockup({
           <div className="rb-canvas-heading">
             <span>
               <FileText size={13} />
-              Page {Math.min(pageIndex + 1, report.pages.length)}{' '}
-              <span className="rb-muted">of {report.pages.length}</span>
+              {showingPreview ? (
+                formatCount(previewDocument.pages.length, 'page')
+              ) : (
+                <>
+                  Page {Math.min(pageIndex + 1, report.pages.length)}{' '}
+                  <span className="rb-muted">of {report.pages.length}</span>
+                </>
+              )}
             </span>
             <span>
-              {preview
-                ? 'Your exported layout'
-                : 'Click to select · drag to arrange'}
+              {itemPreview
+                ? `${itemPreview.label} · read-only`
+                : preview
+                  ? 'Your exported layout'
+                  : 'Click to select · drag to arrange'}
             </span>
           </div>
           <div
@@ -1412,18 +1827,21 @@ export default function ReportBuilderMockup({
               if (event.target === event.currentTarget) setSelectedId(null);
             }}
           >
-            {preview ? (
+            {showingPreview ? (
               <div className="rb-preview-pages">
-                {report.pages.map((item, index) => (
+                {previewDocument.pages.map((item, index) => (
                   <div key={item.id}>
                     <div className="rb-preview-page-label">
                       Page {index + 1}
                     </div>
                     <div
                       className="rb-preview-sheet"
-                      style={{ width: width * scale, height: height * scale }}
+                      style={{
+                        width: previewSize.width * scale,
+                        height: previewSize.height * scale,
+                      }}
                     >
-                      <ReportPageSvg report={report} page={item} />
+                      <ReportPageSvg report={previewDocument} page={item} />
                     </div>
                   </div>
                 ))}
@@ -1517,8 +1935,17 @@ export default function ReportBuilderMockup({
                     <button
                       key={block.id}
                       type="button"
-                      aria-label={block.name + ' block'}
+                      aria-label={
+                        block.name +
+                        ' block' +
+                        (snapshotState.get(block.id) === 'changed'
+                          ? ', data changed since capture'
+                          : snapshotState.get(block.id) === 'missing'
+                            ? ', captured data no longer in the workspace'
+                            : '')
+                      }
                       data-block-type={block.type}
+                      data-snapshot={snapshotState.get(block.id)}
                       className={cn(
                         'rb-block',
                         selectedId === block.id && 'is-selected',
@@ -1541,6 +1968,15 @@ export default function ReportBuilderMockup({
                       onClick={(event) => event.stopPropagation()}
                     >
                       <ReportBlockContent block={block} />
+                      {(snapshotState.get(block.id) === 'changed' ||
+                        snapshotState.get(block.id) === 'missing') && (
+                        <span className="rb-stale-badge" aria-hidden="true">
+                          <RefreshCw size={11} />
+                          {snapshotState.get(block.id) === 'changed'
+                            ? 'Data changed'
+                            : 'Data removed'}
+                        </span>
+                      )}
                       {selectedId === block.id && (
                         <>
                           <span className="rb-selection-label">
@@ -1572,7 +2008,7 @@ export default function ReportBuilderMockup({
                 </div>
               </div>
             )}
-            {!preview && (
+            {!showingPreview && (
               <button className="rb-add-page" onClick={addPage}>
                 <Plus size={14} />
                 Add page
@@ -1582,22 +2018,24 @@ export default function ReportBuilderMockup({
           <div className="rb-canvas-footer">
             <span>
               <span className="rb-dot" />
-              {preview
-                ? 'Ready for a closer look'
+              {showingPreview
+                ? 'As it will look in the PDF'
                 : selected
                   ? selected.name
-                  : 'Everything starts with a blank canvas'}
+                  : page.blocks.length
+                    ? 'Select a block to edit it'
+                    : 'Add a block, or drag data onto the page'}
             </span>
             <span>
-              {preview
-                ? report.pages.length + ' pages'
-                : page.blocks.length + ' blocks'}
+              {showingPreview
+                ? formatCount(previewDocument.pages.length, 'page')
+                : formatCount(page.blocks.length, 'block')}
               <span className="rb-footer-separator">·</span>
-              {preview ? 'PDF export' : 'Arrow keys to nudge'}
+              {showingPreview ? 'PDF export' : 'Arrow keys to nudge'}
             </span>
           </div>
         </section>
-        {!preview && (
+        {!showingPreview && (
           <aside className="rb-inspector">
             <div className="rb-inspector-heading">
               <span>
@@ -1669,9 +2107,12 @@ export default function ReportBuilderMockup({
                       <h3>Workspace snapshot</h3>
                       <strong>{selected.source.label}</strong>
                       <p>
-                        {selected.source.outputIds.length.toLocaleString()}{' '}
-                        source outputs ·{' '}
-                        {new Date(selected.source.capturedAt).toLocaleString()}
+                        {formatCount(
+                          selected.source.outputIds.length,
+                          'source output',
+                        )}{' '}
+                        · captured{' '}
+                        {formatCaptureTime(selected.source.capturedAt)}
                       </p>
                       <p title={selected.source.sourceNames.join(', ')}>
                         {selected.source.sourceNames.slice(0, 4).join(', ')}
@@ -1682,10 +2123,49 @@ export default function ReportBuilderMockup({
                       <p title={selected.source.timeReferences.join(', ')}>
                         {selected.source.timeReferences.slice(0, 3).join(', ')}
                       </p>
-                      <p className="rb-field-note">
-                        Captured data stays fixed. Add a new snapshot to include
-                        changes from Data Inspector.
-                      </p>
+                      {snapshotState.get(selected.id) === 'changed' ? (
+                        <output className="rb-snapshot-state">
+                          <strong>
+                            <RefreshCw size={13} /> Data changed since capture
+                          </strong>
+                          <p>
+                            A step it depends on was edited, or a value was
+                            recalculated. This snapshot still shows the data as
+                            captured.
+                          </p>
+                          {selected.source.assetIds?.length ? (
+                            <button
+                              className="rb-button rb-wide"
+                              disabled={capturing || workspace?.busy}
+                              onClick={() =>
+                                void updateSnapshots([selected.id])
+                              }
+                            >
+                              <RefreshCw size={14} />
+                              Update snapshot
+                            </button>
+                          ) : (
+                            <p>Add it again from the Data library.</p>
+                          )}
+                        </output>
+                      ) : snapshotState.get(selected.id) === 'missing' ? (
+                        <output className="rb-snapshot-state">
+                          <strong>
+                            Captured data no longer in the workspace
+                          </strong>
+                          <p>
+                            Some of its outputs were deleted or replaced. The
+                            snapshot keeps the data as captured.
+                          </p>
+                        </output>
+                      ) : (
+                        <p className="rb-field-note">
+                          {snapshotState.get(selected.id) === 'current'
+                            ? 'Up to date with Data Inspector. '
+                            : ''}
+                          Captured data stays fixed until you update it.
+                        </p>
+                      )}
                     </section>
                   )}
                   {selected.type === 'text' && (
@@ -2241,21 +2721,48 @@ export default function ReportBuilderMockup({
           <span className="rb-local-indicator" />
           On your device<span className="rb-footer-separator">·</span>
           {workspace ? 'Workspace snapshots' : 'Illustrative motor-test data'}
+          {changedIds.length > 0 && !showingPreview && (
+            <>
+              <span className="rb-footer-separator">·</span>
+              <span className="rb-stale-summary">
+                {formatCount(changedIds.length, 'snapshot')} out of date
+              </span>
+              <button
+                className="rb-text-button"
+                disabled={capturing || workspace?.busy}
+                onClick={() => void updateSnapshots(changedIds)}
+              >
+                Update all
+              </button>
+            </>
+          )}
         </span>
         <span>
           {workspace ? 'Reports' : 'Report builder concept'}
           <span className="rb-footer-separator">·</span>
-          Draft resets when closed
+          {saveState === 'off' ? 'Draft resets when closed' : saveLabel}
         </span>
       </footer>
-      {notice && (
+      {toast && (
         <output className="rb-toast">
           <Check size={16} />
-          <span>{notice}</span>
+          <span>{toast.text}</span>
+          {toast.action && (
+            <button
+              className="rb-toast-action"
+              onClick={() => {
+                const action = toast.action!;
+                setToast(null);
+                action.run();
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
           <Tool
             icon={X}
             label="Dismiss notification"
-            onClick={() => setNotice('')}
+            onClick={() => setToast(null)}
           />
         </output>
       )}

@@ -4,7 +4,12 @@ export const MAX_PLOT_TABS = 12;
 // Bounded persisted metadata; complete normal segment batches remain intact.
 export const MAX_PLOT_TRACES = 10000;
 export const MAX_CUSTOM_AXES = 32;
-/** Categorical series order, distinguishable with colour-vision deficiency. */
+/**
+ * Categorical series order, distinguishable with colour-vision deficiency.
+ * Saved traces store these values as stable identities of the theme's
+ * `--series-1`…`--series-8` tokens; `seriesColor` draws them in the current
+ * theme. Any other stored hex is a user's own colour and draws unchanged.
+ */
 export const TRACE_COLORS = [
   '#3987e5',
   '#d95926',
@@ -15,6 +20,26 @@ export const TRACE_COLORS = [
   '#9085e9',
   '#e66767',
 ];
+/** Theme-aware drawing colour for a stored trace colour. */
+export function seriesColor(color: string): string {
+  const slot = TRACE_COLORS.indexOf(color.trim().toLowerCase());
+  return slot < 0 ? color : `var(--series-${slot + 1})`;
+}
+
+/**
+ * Concrete colour for standalone exports, report captures and colour inputs:
+ * resolves a `var(--token)` against the current theme.
+ */
+export function resolveColor(color: string, element?: Element): string {
+  const token = /^var\((--[\w-]+)\)$/.exec(color.trim())?.[1];
+  if (!token || typeof document === 'undefined') return color;
+  return (
+    getComputedStyle(element ?? document.documentElement)
+      .getPropertyValue(token)
+      .trim() || color
+  );
+}
+
 /** Short tags for a value's direct label at the end of its reference line. */
 export const VALUE_TAGS: Record<string, string> = {
   'time-average': 'avg',

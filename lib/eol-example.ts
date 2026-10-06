@@ -153,7 +153,7 @@ export const EOL_WORKFLOW_NAME = 'Motor EOL test.stratum.yaml';
 export const EOL_WORKFLOW = `# Stratum workflow · Motor EOL test
 # Inputs bind by CSV column name. Steps refer to channels and earlier steps
 # by id; step[2] is the second output of a step. Open it in Stratum with
-# Workspace → Open workflow, or edit it in any text editor.
+# Import → Open a workflow file…, or edit it in any text editor.
 format: stratum-workflow
 version: 1
 name: Motor EOL test

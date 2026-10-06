@@ -189,11 +189,14 @@ export function evaluateChecks(
 }
 
 const RANK: Record<RunStatus, number> = {
-  pass: 0,
-  warning: 1,
-  fail: 2,
-  error: 3,
+  none: 0,
+  pass: 1,
+  warning: 2,
+  fail: 3,
+  error: 4,
 };
+/** Warning, Fail and Error need attention; Pass and No checks do not. */
+export const isFlagged = (status: RunStatus) => RANK[status] > RANK.pass;
 export function worst<T extends RunStatus>(
   statuses: Iterable<T>,
   fallback: T,
@@ -234,6 +237,10 @@ export function outputFlags(step: WorkflowStep): Map<string, CheckStatus> {
   return flags;
 }
 
+/**
+ * Worst of processing flags and evaluated checks. An item without problems
+ * whose steps evaluated no check is `none` (No checks), never Pass.
+ */
 export function runStatus(
   flags: RunFlag[],
   steps: (WorkflowStep | undefined)[],
@@ -243,9 +250,12 @@ export function runStatus(
       ...flags.map(
         (flag): RunStatus => (flag.severity === 'error' ? 'error' : 'warning'),
       ),
-      ...steps.flatMap((step) => (step ? [stepStatus(step) ?? 'pass'] : [])),
+      ...steps.flatMap((step) => {
+        const status = step && stepStatus(step);
+        return status ? [status] : [];
+      }),
     ],
-    'pass',
+    'none',
   );
 }
 
@@ -446,10 +456,11 @@ export function validateWorkflowRecords(
         typeof run.itemId !== 'string' ||
         typeof run.fileName !== 'string' ||
         !sourceIds.has(run.sourceId) ||
-        !['pass', 'warning', 'fail', 'error'].includes(run.status) ||
+        !['none', 'pass', 'warning', 'fail', 'error'].includes(run.status) ||
         !run.steps ||
         typeof run.steps !== 'object' ||
         Object.values(run.steps).some((id) => !stepIds.has(id as string)) ||
+        !validChannelMap(run.channelMap) ||
         !Array.isArray(run.flags) ||
         run.flags.some(
           (flag) =>
@@ -460,6 +471,22 @@ export function validateWorkflowRecords(
       )
         throw new Error('Invalid batch item.');
   }
+}
+/** Optional pre-flight mapping: recipe channel alias → column name. */
+function validChannelMap(map: unknown): boolean {
+  if (map === undefined) return true;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return false;
+  const entries = Object.entries(map);
+  return (
+    entries.length <= 500 &&
+    entries.every(
+      ([alias, column]) =>
+        alias.length <= 120 &&
+        typeof column === 'string' &&
+        !!column &&
+        column.length <= 255,
+    )
+  );
 }
 type WorkflowBatchLike = {
   id: string;
@@ -480,7 +507,7 @@ export function checkTableRows(
   const rows: { rank: number; cells: string[] }[] = [];
   for (const flag of options.flags ?? [])
     rows.push({
-      rank: flag.severity === 'error' ? 3 : 1,
+      rank: RANK[flag.severity],
       cells: ['Processing', flag.message, STATUS_LABELS[flag.severity]],
     });
   for (const step of steps)
@@ -503,6 +530,7 @@ export function checkTableRows(
 }
 
 export const STATUS_LABELS: Record<RunStatus, string> = {
+  none: 'No checks',
   pass: 'Pass',
   warning: 'Warning',
   fail: 'Fail',

@@ -32,6 +32,7 @@ import type {
   Operation,
   Plot,
   Project,
+  SignalNode,
 } from '@/lib/signal-types';
 import ValueOperationPalette from './value-operation-palette';
 import {
@@ -43,6 +44,16 @@ import ParameterControl from './parameter-control';
 import PreviewLanes, { type PreviewTrace } from './preview-lanes';
 import { RegionSelect, finite } from './region-controls';
 import { formatValue } from './signal-chart';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { formatCount } from '@/lib/format-count';
 
 export type FunctionDraft = {
   editingStepId?: string;
@@ -58,10 +69,92 @@ type Range = [number, number];
 const PREVIEW_CHOICES = 100;
 /** Inputs whose values are calculated ahead of creation. */
 const VALUE_PREVIEW_LIMIT = 12;
+/** Device-local memory of the last created operation; never workflow history. */
+const LAST_OPERATION_KEY = {
+  derive: 'stratum-last-derive-v1',
+  value: 'stratum-last-value-v1',
+} as const;
 const reference = (step?: WorkflowStep) =>
   step ? `#${String(step.sequence + 1).padStart(3, '0')}` : '';
 const message = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+
+function initialOperation(kind: 'derive' | 'value') {
+  try {
+    const stored = window.localStorage.getItem(LAST_OPERATION_KEY[kind]);
+    if (
+      stored &&
+      (kind === 'value'
+        ? VALUE_FUNCTIONS.some((spec) => spec.operation === stored)
+        : SIGNAL_FUNCTIONS.some((spec) => spec.operation === stored))
+    )
+      return stored;
+  } catch {
+    // Storage can be unavailable; fall back to the default below.
+  }
+  return kind === 'value' ? 'time-average' : 'smooth';
+}
+
+function rememberOperation(kind: 'derive' | 'value', operation: string) {
+  try {
+    window.localStorage.setItem(LAST_OPERATION_KEY[kind], operation);
+  } catch {
+    // Remembering the choice is a convenience only.
+  }
+}
+
+/**
+ * The sample-grid identity the engine checks before combining two signals,
+ * mirrored here only to group Input B choices. The engine still validates.
+ */
+function gridKey(nodes: ReadonlyMap<string, SignalNode>, id: string): string {
+  const operations: [string, Record<string, number>][] = [];
+  let node = nodes.get(id);
+  while (node && node.operation !== 'raw') {
+    if (node.timeRecipe?.kind === 'resample')
+      return JSON.stringify([
+        node.timeReference?.id,
+        node.timeRecipe.grid,
+        operations,
+      ]);
+    if (
+      node.timeRecipe?.kind === 'align' ||
+      node.timeRecipe?.kind === 'crop' ||
+      node.operation === 'min-max'
+    )
+      return JSON.stringify([node.id, operations]);
+    if (
+      ['crop', 'resample', 'time-shift', 'zero-time'].includes(node.operation)
+    ) {
+      const last = operations.at(-1);
+      if (node.operation === 'crop' && last?.[0] === 'crop') {
+        const a = last[1],
+          b = node.parameters;
+        const end = Math.min(a.end, b.end);
+        last[1] = {
+          start: Math.max(a.start, b.start),
+          end,
+          endExclusive:
+            (a.end === end && a.endExclusive === 1) ||
+            (b.end === end && b.endExclusive === 1)
+              ? 1
+              : 0,
+        };
+      } else
+        operations.push([
+          node.operation,
+          node.operation === 'crop'
+            ? {
+                ...node.parameters,
+                endExclusive: node.parameters.endExclusive ?? 0,
+              }
+            : node.parameters,
+        ]);
+    }
+    node = nodes.get(node.parents[0]);
+  }
+  return JSON.stringify([node?.sourceId, operations]);
+}
 
 export default function FunctionEditor({
   editor,
@@ -70,6 +163,7 @@ export default function FunctionEditor({
   request,
   busy,
   onApply,
+  onCompare,
 }: {
   editor: FunctionDraft;
   project: Project;
@@ -81,12 +175,16 @@ export default function FunctionEditor({
     parameter: number,
     secondaryId: string,
   ) => Promise<void>;
+  /** Opens Compare & align for inputs from other recordings or time grids. */
+  onCompare?: () => void;
 }) {
   const values = editor.kind === 'value';
   const [operation, setOperation] = useState<string>(
-    editor.operation ?? (values ? 'time-average' : 'multiply'),
+    () =>
+      editor.operation ??
+      initialOperation(editor.kind === 'value' ? 'value' : 'derive'),
   );
-  const [parameter, setParameter] = useState(
+  const [parameter, setParameter] = useState(() =>
     String(
       editor.parameter ??
         SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation)
@@ -106,6 +204,7 @@ export default function FunctionEditor({
     FUNCTIONS.find((spec) => spec.operation === operation);
   const binary = isBinaryOperation(operation);
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
+  const inputGrids = new Set(editor.ids.map((id) => gridKey(index.nodes, id)));
   const secondInputs = project.nodes.filter(
     (node) =>
       node.sourceId === sourceId &&
@@ -115,6 +214,15 @@ export default function FunctionEditor({
           ? node.unit.toLowerCase() === 'rpm'
           : node.unit.toLowerCase() === 'kw')),
   );
+  const secondItem = (node: SignalNode) => ({
+    value: node.id,
+    label: `${reference(index.owner.get(node.id))} ${index.label(node.id)}${node.unit ? ` [${node.unit}]` : ''}`,
+  });
+  const compatible = secondInputs.filter(
+    (node) =>
+      inputGrids.size === 1 && inputGrids.has(gridKey(index.nodes, node.id)),
+  );
+  const otherGrid = secondInputs.filter((node) => !compatible.includes(node));
   let unit = '';
   let unitError = '';
   if (isArithmetic(operation) && secondaryId) {
@@ -188,183 +296,225 @@ export default function FunctionEditor({
     (!binary || !!secondaryId) &&
     !unitError &&
     !!previewNode;
+  const [zoom, setZoom] = useState<{ id: string; range: Range }>();
+  const viewport = zoom?.id === previewId ? zoom.range : undefined;
+  const derived = useDerivePreview({
+    request,
+    inputId: previewId,
+    operation: operation as Operation,
+    parameter: parameterValue,
+    secondaryId: binary ? secondaryId : undefined,
+    ready,
+    viewport,
+  });
+  const waiting = !parameterReady
+    ? `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
+    : binary && !secondaryId
+      ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
+      : unitError || '';
+  // Create stays disabled while the settings or their preview are invalid,
+  // with the reason beside the button.
+  const blocked = values
+    ? statistics.error
+      ? `The preview failed: ${statistics.error}`
+      : ''
+    : waiting || (derived.error ? `The preview failed: ${derived.error}` : '');
+  const blockedError = values
+    ? !!statistics.error
+    : !waiting && !!derived.error;
+  const count = editor.ids.length;
   const create = editor.editingStepId
     ? 'Save changes and recalculate'
     : values
-      ? `Create ${editor.ids.length} value${editor.ids.length === 1 ? '' : 's'}`
-      : `Create ${editor.ids.length} derived signal${editor.ids.length === 1 ? '' : 's'}`;
+      ? `Create ${formatCount(count, 'value')}`
+      : `Create ${formatCount(count, 'derived signal')}`;
+  const focused = statistics.get(previewId);
+  const summary = values
+    ? `${formatCount(count, 'value')}${
+        focused && valueSpec
+          ? ` · ${count > 1 ? `${index.label(previewId)}: ` : ''}${valueText(focused, valueSpec.operation, previewNode?.unit)}`
+          : ''
+      }`
+    : `${formatCount(count, 'derived signal')}${
+        derived.summary?.count
+          ? ` · ${formatQuantity(derived.summary.min, 4)} to ${formatQuantity(derived.summary.max, 4)}${derived.unit ? ` ${derived.unit}` : ''}${viewport ? ' in view' : ''}${count > 1 ? ` (preview of ${index.label(previewId)})` : ''}`
+          : ''
+      }`;
   return (
     <div className="operation-editor">
-      <div className="operation-layout">
-        <fieldset className="workflow-function-editor" disabled={busy}>
-          {values ? (
-            <ValueOperationPalette
-              value={operation}
-              disabled={busy}
-              onChange={changeOperation}
-              results={valueResults(
-                statistics.get(previewId),
-                index.nodes.get(previewId)?.unit,
-              )}
-            />
-          ) : (
-            <SignalOperationPalette
-              value={operation}
-              disabled={busy}
-              onChange={changeOperation}
-            />
-          )}
-          <div className="signal-operation-settings">
-            {!values ? (
-              <div className="signal-settings-heading">
-                <strong>
-                  {spec?.name ?? operationLabels[operation as Operation]}
-                </strong>
-                {OPERATION_FORMULAS[operation] && (
-                  <code>{OPERATION_FORMULAS[operation]}</code>
-                )}
-              </div>
+      <div className="operation-body">
+        <div className="operation-layout">
+          <fieldset className="workflow-function-editor" disabled={busy}>
+            {values ? (
+              <ValueOperationPalette
+                value={operation}
+                disabled={busy}
+                onChange={changeOperation}
+                results={valueResults(focused, previewNode?.unit)}
+              />
             ) : (
-              <div className="signal-settings-heading">
-                <strong>{valueSpec?.name}</strong>
-                <span className="value-output-count">
-                  {editor.ids.length}{' '}
-                  {editor.ids.length === 1 ? 'value' : 'values'}
-                </span>
-              </div>
-            )}
-            <p>
-              {values
-                ? valueSpec?.description
-                : binary && !isArithmetic(operation)
-                  ? operation === 'power'
-                    ? 'Selected inputs must be torque [Nm]. Choose one speed [rpm] signal on the same sample grid.'
-                    : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
-                  : spec?.description}
-            </p>
-            {values && (
-              <p className="value-output-hint">
-                One result per input, in its original unit. Missing samples are
-                excluded.
-              </p>
-            )}
-            {binary && (
-              <div className="signal-first-input">
-                <span>Input A</span>
-                <strong>
-                  {editor.ids.length === 1
-                    ? index.label(editor.ids[0])
-                    : `Each of ${editor.ids.length} selected signals`}
-                </strong>
-              </div>
-            )}
-            {spec?.parameter && (
-              <ParameterControl
-                label={spec.parameter}
-                value={parameter}
-                unit={
-                  operation === 'offset'
-                    ? previewNode?.unit || spec.unit
-                    : spec.unit
-                }
-                scale={parameterScale(operation, context)}
-                hint={parameterHint(
-                  operation,
-                  parameterValue,
-                  context,
-                  previewNode?.unit,
-                )}
+              <SignalOperationPalette
+                value={operation}
                 disabled={busy}
-                onChange={setParameter}
+                onChange={changeOperation}
               />
             )}
-            {binary && (
-              <RegionSelect
-                label={
-                  isArithmetic(operation)
-                    ? 'Input B'
-                    : operation === 'power'
-                      ? 'Speed input'
-                      : 'Power input'
+            <div className="signal-operation-settings">
+              {!values ? (
+                <div className="signal-settings-heading">
+                  <strong>
+                    {spec?.name ?? operationLabels[operation as Operation]}
+                  </strong>
+                  {OPERATION_FORMULAS[operation] && (
+                    <code>{OPERATION_FORMULAS[operation]}</code>
+                  )}
+                </div>
+              ) : (
+                <div className="signal-settings-heading">
+                  <strong>{valueSpec?.name}</strong>
+                  <span className="value-output-count">
+                    {formatCount(count, 'value')}
+                  </span>
+                </div>
+              )}
+              <p>
+                {values
+                  ? valueSpec?.description
+                  : binary && !isArithmetic(operation)
+                    ? operation === 'power'
+                      ? 'Selected inputs must be torque [Nm]. Choose one speed [rpm] signal on the same sample grid.'
+                      : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
+                    : spec?.description}
+              </p>
+              {values && (
+                <p className="value-output-hint">
+                  One result per input, in its original unit. Missing samples
+                  are excluded.
+                </p>
+              )}
+              {binary && (
+                <div className="signal-first-input">
+                  <span>Input A</span>
+                  <strong>
+                    {count === 1
+                      ? index.label(editor.ids[0])
+                      : `Each of ${formatCount(count, 'input')}`}
+                  </strong>
+                </div>
+              )}
+              {spec?.parameter && (
+                <ParameterControl
+                  label={spec.parameter}
+                  value={parameter}
+                  unit={
+                    operation === 'offset'
+                      ? previewNode?.unit || spec.unit
+                      : spec.unit
+                  }
+                  scale={parameterScale(operation, context)}
+                  hint={parameterHint(
+                    operation,
+                    parameterValue,
+                    context,
+                    previewNode?.unit,
+                  )}
+                  disabled={busy}
+                  onChange={setParameter}
+                />
+              )}
+              {binary && (
+                <SecondInput
+                  label={
+                    isArithmetic(operation)
+                      ? 'Input B'
+                      : operation === 'power'
+                        ? 'Speed input'
+                        : 'Power input'
+                  }
+                  value={secondaryId}
+                  compatible={compatible.map(secondItem)}
+                  otherGrid={otherGrid.map(secondItem)}
+                  disabled={busy}
+                  onChange={setSecondaryId}
+                />
+              )}
+              {isArithmetic(operation) && (
+                <p className="signal-math-hint">
+                  B is combined with each A on the same sample times. Missing
+                  samples stay missing.
+                  {unit && !unitError ? ` Output unit: ${unit}.` : ''}
+                </p>
+              )}
+              {isArithmetic(operation) && onCompare && (
+                <p className="signal-math-hint">
+                  Signals from another recording or time grid?{' '}
+                  <button
+                    type="button"
+                    className="workflow-link"
+                    onClick={onCompare}
+                  >
+                    Use Compare &amp; align
+                  </button>
+                </p>
+              )}
+              {unitError && (
+                <p className="segment-error" role="alert">
+                  {unitError}
+                </p>
+              )}
+            </div>
+          </fieldset>
+          <section className="operation-preview" aria-label="Preview">
+            {values ? (
+              <ValuePreview
+                ids={editor.ids}
+                index={index}
+                statistics={statistics}
+                operation={operation as ValueOperation}
+                previewId={previewId}
+                plot={plot}
+                plotError={plotError}
+                onPreview={setPreviewId}
+              />
+            ) : (
+              <DerivedPreview
+                index={index}
+                inputId={previewId}
+                choices={choices}
+                total={count}
+                onInput={setPreviewId}
+                preview={derived}
+                viewport={viewport}
+                onZoom={(range) =>
+                  setZoom(range ? { id: previewId, range } : undefined)
                 }
-                value={secondaryId}
-                items={[
-                  { value: '', label: 'Choose the second input…' },
-                  ...secondInputs.map((node) => ({
-                    value: node.id,
-                    label: `${reference(index.owner.get(node.id))} ${index.label(node.id)}${node.unit ? ` [${node.unit}]` : ''}`,
-                  })),
-                ]}
-                disabled={busy}
-                onChange={setSecondaryId}
+                ready={ready}
+                waiting={waiting}
               />
             )}
-            {isArithmetic(operation) && (
-              <p className="signal-math-hint">
-                B is combined with each A. Inputs must share a recording, sample
-                grid and time transformations. Missing samples stay missing.
-                {unit && !unitError ? ` Output unit: ${unit}.` : ''}
-              </p>
-            )}
-            {unitError && (
-              <p className="segment-error" role="alert">
-                {unitError}
-              </p>
-            )}
-          </div>
-        </fieldset>
-        <section className="operation-preview" aria-label="Preview">
-          {values ? (
-            <ValuePreview
-              ids={editor.ids}
-              index={index}
-              statistics={statistics}
-              operation={operation as ValueOperation}
-              previewId={previewId}
-              plot={plot}
-              plotError={plotError}
-              onPreview={setPreviewId}
-            />
-          ) : (
-            <DerivedPreview
-              key={previewId}
-              request={request}
-              index={index}
-              inputId={previewId}
-              choices={choices}
-              total={editor.ids.length}
-              onInput={setPreviewId}
-              operation={operation as Operation}
-              parameter={parameterValue}
-              secondaryId={binary ? secondaryId : undefined}
-              ready={ready}
-              waiting={
-                !parameterReady
-                  ? `Enter a ${spec?.parameter.toLowerCase() ?? 'parameter'} to preview.`
-                  : binary && !secondaryId
-                    ? 'Choose Input B to preview the result.'
-                    : unitError || ''
-              }
-            />
-          )}
-        </section>
+          </section>
+        </div>
       </div>
-      {error && (
-        <p className="segment-error" role="alert">
-          {error}
-        </p>
-      )}
       <div className="operation-footer">
-        <span>
-          {editor.editingStepId
-            ? 'Saving recalculates dependent results. Undo restores the previous version.'
-            : values
-              ? 'Values keep their input signal and unit.'
-              : 'Inputs stay unchanged; each output records its recipe.'}
-        </span>
+        <p className="operation-footer-summary" aria-live="polite">
+          {error ? (
+            <span className="operation-footer-reason" role="alert" data-error>
+              {error}
+            </span>
+          ) : blocked ? (
+            <span
+              className="operation-footer-reason"
+              data-error={blockedError || undefined}
+            >
+              {blocked}
+            </span>
+          ) : (
+            summary
+          )}
+        </p>
         <button
           className="primary-button"
-          disabled={busy || (binary && !secondaryId) || !!unitError}
+          disabled={busy || !!blocked}
           onClick={() => {
             setError('');
             void (async () => {
@@ -374,6 +524,8 @@ export default function FunctionEditor({
                   spec?.parameter ? finite(parameter) : 0,
                   secondaryId,
                 );
+                if (!editor.editingStepId)
+                  rememberOperation(values ? 'value' : 'derive', operation);
               } catch (caught) {
                 setError(message(caught, 'Operation failed.'));
               }
@@ -386,6 +538,152 @@ export default function FunctionEditor({
       </div>
     </div>
   );
+}
+
+/** Input B choices: the same sample grid first; others need Compare & align. */
+function SecondInput({
+  label,
+  value,
+  compatible,
+  otherGrid,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  compatible: { value: string; label: string }[];
+  otherGrid: { value: string; label: string }[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const placeholder = { value: '', label: 'Choose the second input…' };
+  return (
+    <label className="region-field">
+      <span>{label}</span>
+      <Select
+        value={value}
+        items={[placeholder, ...compatible, ...otherGrid]}
+        disabled={disabled}
+        onValueChange={(next) => {
+          if (next !== null) onChange(next);
+        }}
+      >
+        <SelectTrigger className="workbench-select" aria-label={label}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">{placeholder.label}</SelectItem>
+          <SelectGroup>
+            <SelectLabel>
+              {compatible.length
+                ? 'Same time grid'
+                : 'No signals share this time grid'}
+            </SelectLabel>
+            {compatible.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+          {otherGrid.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>
+                Different time grid · use Compare & align
+              </SelectLabel>
+              {otherGrid.map((item) => (
+                <SelectItem key={item.value} value={item.value} disabled>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
+
+/** Debounced engine preview of an unsaved derived signal for one input. */
+function useDerivePreview({
+  request,
+  inputId,
+  operation,
+  parameter,
+  secondaryId,
+  ready,
+  viewport,
+}: {
+  request: Request;
+  inputId: string;
+  operation: Operation;
+  parameter: number;
+  secondaryId?: string;
+  ready: boolean;
+  viewport?: Range;
+}) {
+  const [result, setResult] = useState<{
+    key: string;
+    inputId: string;
+    preview?: DerivePreview;
+    error?: string;
+  }>();
+  const key = ready
+    ? JSON.stringify([inputId, operation, parameter, secondaryId, viewport])
+    : '';
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    const [id, operation, parameter, secondaryId, range] = JSON.parse(key) as [
+      string,
+      Operation,
+      number,
+      string | undefined,
+      Range | undefined,
+    ];
+    // Debounced so slider drags send one request per pause, not per pixel.
+    const timer = setTimeout(() => {
+      void request({
+        type: 'derive-preview',
+        inputId: id,
+        operation,
+        parameter,
+        secondaryId,
+        range,
+        inspection: true,
+      })
+        .then((response) => {
+          if (alive && response.type === 'derive-preview')
+            setResult({ key, inputId: id, preview: response.preview });
+        })
+        .catch((caught: unknown) => {
+          if (alive)
+            setResult({
+              key,
+              inputId: id,
+              error: message(caught, 'This result could not be previewed.'),
+            });
+        });
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [key, request]);
+  const current = result?.key === key ? result : undefined;
+  // Keep the last good plot of this input while a new one is calculated, so
+  // tuning stays calm.
+  const shown = ready
+    ? (current?.preview ??
+      (result?.inputId === inputId ? result.preview : undefined))
+    : undefined;
+  return {
+    shown,
+    secondaryId,
+    error: ready ? current?.error : undefined,
+    busy: ready && !current,
+    summary: current?.error ? undefined : shown?.plot.summary,
+    unit: shown?.node.unit,
+  };
 }
 
 /** Exact value statistics for the first inputs, computed once per dialog. */
@@ -542,7 +840,7 @@ function ValuePreview({
         <p className="operation-preview-summary">
           {value === null
             ? 'No finite samples: this value will be stored as unavailable.'
-            : `${focused.sampleCount.toLocaleString('en-GB')} valid samples over ${formatDuration(focused.validDuration)}${
+            : `${formatCount(focused.sampleCount, 'valid sample')} over ${formatDuration(focused.validDuration)}${
                 time !== undefined
                   ? ` · first ${operation === 'minimum' ? 'minimum' : 'maximum'} at ${formatValue(time, 3)} s`
                   : ''
@@ -597,81 +895,29 @@ function ValuePreview({
 }
 
 function DerivedPreview({
-  request,
   index,
   inputId,
   choices,
   total,
   onInput,
-  operation,
-  parameter,
-  secondaryId,
+  preview,
+  viewport,
+  onZoom,
   ready,
   waiting,
 }: {
-  request: Request;
   index: WorkflowIndex;
   inputId: string;
   choices: { value: string; label: string }[];
   total: number;
   onInput: (id: string) => void;
-  operation: Operation;
-  parameter: number;
-  secondaryId?: string;
+  preview: ReturnType<typeof useDerivePreview>;
+  viewport?: Range;
+  onZoom: (range?: Range) => void;
   ready: boolean;
   waiting: string;
 }) {
-  const [viewport, setViewport] = useState<Range>();
-  const [result, setResult] = useState<{
-    key: string;
-    preview?: DerivePreview;
-    error?: string;
-  }>();
-  const key = ready
-    ? JSON.stringify([inputId, operation, parameter, secondaryId, viewport])
-    : '';
-  useEffect(() => {
-    if (!key) return;
-    let alive = true;
-    const [id, operation, parameter, secondaryId, range] = JSON.parse(key) as [
-      string,
-      Operation,
-      number,
-      string | undefined,
-      Range | undefined,
-    ];
-    // Debounced so slider drags send one request per pause, not per pixel.
-    const timer = setTimeout(() => {
-      void request({
-        type: 'derive-preview',
-        inputId: id,
-        operation,
-        parameter,
-        secondaryId,
-        range,
-        inspection: true,
-      })
-        .then((response) => {
-          if (alive && response.type === 'derive-preview')
-            setResult({ key, preview: response.preview });
-        })
-        .catch((caught: unknown) => {
-          if (alive)
-            setResult({
-              key,
-              error: message(caught, 'This result could not be previewed.'),
-            });
-        });
-    }, 200);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [key, request]);
-  const current = result?.key === key ? result : undefined;
-  // Keep the last good plot while a new one is calculated, so tuning stays calm.
-  const shown = ready ? (current?.preview ?? result?.preview) : undefined;
-  const error = ready ? current?.error : undefined;
+  const { shown, error, secondaryId } = preview;
   const traces: PreviewTrace[] = [];
   if (shown) {
     const ids = [inputId, ...(secondaryId ? [secondaryId] : [])];
@@ -714,12 +960,12 @@ function DerivedPreview({
             {index.label(inputId)}
           </span>
         )}
-        {ready && !current && <PreviewBusy />}
+        {preview.busy && <PreviewBusy />}
         {viewport && (
           <button
             type="button"
             className="secondary-button"
-            onClick={() => setViewport(undefined)}
+            onClick={() => onZoom(undefined)}
           >
             <Scan size={13} /> Fit
           </button>
@@ -727,14 +973,14 @@ function DerivedPreview({
       </div>
       <div
         className="operation-preview-plot"
-        data-stale={!current || undefined}
+        data-stale={preview.busy || undefined}
       >
         {!ready ? (
           <output className="operation-preview-empty">{waiting}</output>
         ) : error ? (
           <output className="operation-preview-error">{error}</output>
         ) : shown && range ? (
-          <PreviewLanes traces={traces} range={range} onZoom={setViewport} />
+          <PreviewLanes traces={traces} range={range} onZoom={onZoom} />
         ) : (
           <output className="operation-preview-empty">
             Calculating preview…
@@ -744,7 +990,7 @@ function DerivedPreview({
       {shown && summary && !error && (
         <p className="operation-preview-summary">
           {summary.count
-            ? `${viewport ? 'In view' : 'Output'}: ${formatQuantity(summary.min, 4)} to ${formatQuantity(summary.max, 4)}${shown.node.unit ? ` ${shown.node.unit}` : ''} · mean ${formatQuantity(summary.mean, 4)} · ${summary.count.toLocaleString('en-GB')} valid samples.`
+            ? `${viewport ? 'In view' : 'Output'}: ${formatQuantity(summary.min, 4)} to ${formatQuantity(summary.max, 4)}${shown.node.unit ? ` ${shown.node.unit}` : ''} · mean ${formatQuantity(summary.mean, 4)} · ${formatCount(summary.count, 'valid sample')}.`
             : 'No valid output samples in view.'}{' '}
           {total > 1 && `Previewing 1 of ${total} inputs; all are created.`}
         </p>

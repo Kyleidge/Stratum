@@ -20,7 +20,7 @@
   color: var(--rb-ink);
   background: var(--rb-panel);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 /* Inside the application, the top bar already names the workspace. */
@@ -82,12 +82,12 @@
   margin: 0;
 }
 .rb-app h2 {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: -0.2px;
 }
 .rb-app h3 {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .rb-header {
@@ -102,10 +102,10 @@
   align-items: center;
   gap: 11px;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .rb-brand strong {
-  font-size: 18px;
+  font-size: var(--text-lg);
   letter-spacing: -0.65px;
   font-weight: 650;
 }
@@ -120,12 +120,12 @@
 }
 .rb-slash {
   color: var(--rb-border);
-  font-size: 24px;
+  font-size: var(--text-xl);
   font-weight: 300;
   margin: 0 2px;
 }
 .rb-badge {
-  font-size: 8px;
+  font-size: var(--text-xs);
   letter-spacing: 1px;
   font-weight: 650;
   padding: 3px 5px;
@@ -140,19 +140,20 @@
   flex: 1;
 }
 .rb-app .rb-document-name input {
-  font-size: 12px;
+  font-size: var(--text-xs);
   background: transparent;
   border-color: transparent;
   padding: 1px 0;
   font-weight: 600;
   max-width: 340px;
 }
-.rb-document-name > span {
+.rb-document-name > span,
+.rb-document-name > output {
   display: flex;
   align-items: center;
   gap: 5px;
   color: var(--rb-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-dot {
   display: inline-block;
@@ -177,7 +178,7 @@
   border: 1px solid var(--rb-border);
   border-radius: 5px;
   background: var(--rb-panel);
-  font-size: 11px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 .rb-button:hover:not(:disabled) {
@@ -245,7 +246,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rb-editing-label svg {
   color: var(--rb-accent);
@@ -259,7 +260,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 6px 9px;
   border-radius: 4px;
 }
@@ -268,7 +269,7 @@
 }
 .rb-page-format {
   color: var(--rb-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: capitalize;
 }
 .rb-zoom {
@@ -277,7 +278,7 @@
   gap: 5px;
   justify-content: center;
   min-width: 58px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 .rb-body {
@@ -306,7 +307,7 @@
   position: relative;
   flex-shrink: 0;
   color: var(--rb-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 .rb-tabs button.is-active {
@@ -323,7 +324,7 @@
   background: var(--rb-accent);
 }
 .rb-tabs button > span {
-  font-size: 9px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   padding: 1px 4px;
   border-radius: 3px;
@@ -339,11 +340,11 @@
 .rb-section-heading p {
   margin-top: 7px;
   color: var(--rb-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 1.6;
 }
 .rb-section-heading h2 {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .rb-block-library {
   display: grid;
@@ -392,13 +393,13 @@
 }
 .rb-asset strong {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 550;
 }
 .rb-asset small {
   display: block;
   margin-top: 4px;
-  font-size: 9px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   color: var(--rb-muted);
   max-width: 78px;
@@ -413,7 +414,7 @@
   padding: 12px 5px;
   border: 1px dashed var(--rb-border);
   border-radius: 5px;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-upload > svg {
   color: var(--rb-muted);
@@ -421,7 +422,7 @@
 .rb-upload small {
   display: block;
   color: var(--rb-muted);
-  font-size: 9px;
+  font-size: var(--text-xs);
   margin-top: 2px;
 }
 .rb-library-subheading {
@@ -432,7 +433,7 @@
   margin: 27px 0 12px;
 }
 .rb-small-tag {
-  font-size: 8px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   font-weight: 500;
   letter-spacing: 0.6px;
@@ -458,13 +459,13 @@
 }
 .rb-plot-asset > span {
   flex: 1;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-plot-asset small {
   display: block;
   margin-top: 3px;
   color: var(--rb-muted);
-  font-size: 8px;
+  font-size: var(--text-xs);
 }
 .rb-plot-asset > svg:last-child {
   color: var(--rb-muted);
@@ -480,14 +481,14 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .rb-library-tip svg {
   color: var(--rb-accent);
 }
 .rb-library-tip p {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   margin: 8px 0 13px;
   line-height: 1.7;
@@ -496,7 +497,7 @@
   display: flex;
   width: 100%;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-accent);
 }
 .rb-library-bottom {
@@ -533,7 +534,7 @@
   align-items: center;
   gap: 6px;
   margin: 10px -12px 0;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-page-thumbnail-label svg {
   width: 13px;
@@ -577,13 +578,13 @@
 }
 .rb-template strong {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
 }
 .rb-template small {
   display: block;
   margin-top: 2px;
-  font-size: 9px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--rb-muted);
 }
@@ -604,7 +605,7 @@
   padding: 4px 9px;
   border: 1px solid var(--rb-border);
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 .rb-app .rb-design-options button.is-active {
@@ -672,7 +673,7 @@
   padding: 0 24px;
   height: 49px;
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
 }
 .rb-canvas-heading > span:first-child {
@@ -764,7 +765,7 @@
   background: #397aca;
   color: #fff;
   padding: 2px 6px;
-  font-size: calc(10px * var(--rb-inverse-scale));
+  font-size: calc(var(--text-xs) * var(--rb-inverse-scale));
   display: flex;
   align-items: center;
   gap: 12px;
@@ -833,12 +834,12 @@
   margin: 0 auto 22px;
 }
 .rb-empty h2 {
-  font-size: 23px;
+  font-size: var(--text-xl);
   color: #344860;
   letter-spacing: -0.4px;
 }
 .rb-empty p {
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 1.9;
   margin-top: 13px;
 }
@@ -853,7 +854,7 @@
   border: 1px solid #d8e6f7;
   padding: 9px 16px;
   border-radius: 5px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .rb-empty-actions {
   display: flex;
@@ -877,7 +878,7 @@
   gap: 8px;
   padding: 9px 20px;
   margin: 25px auto 0;
-  font-size: 10px;
+  font-size: var(--text-xs);
   border: 1px dashed var(--rb-muted);
   border-radius: 4px;
   color: var(--rb-muted);
@@ -890,7 +891,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  font-size: 9px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   border-top: 1px solid var(--rb-border);
   background: var(--rb-panel);
@@ -926,7 +927,7 @@
   gap: 8px;
   align-items: center;
   font-weight: 550;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rb-inspector-heading svg {
   color: var(--rb-muted);
@@ -946,7 +947,7 @@
   margin-bottom: 12px;
 }
 .rb-property-section h3 > span {
-  font-size: 9px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
 }
 .rb-property-title {
@@ -963,10 +964,10 @@
   flex-direction: column;
   gap: 5px;
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rb-field > span:first-child {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
 }
 .rb-fields-grid {
@@ -1001,11 +1002,11 @@
   border-radius: 3px;
 }
 .rb-color-field > span {
-  font-size: 9px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 .rb-field-note {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   line-height: 1.7;
   margin-top: 10px !important;
@@ -1014,7 +1015,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--text-xs);
   margin-top: 13px;
 }
 .rb-format-bar {
@@ -1036,7 +1037,7 @@
 .rb-text-button {
   margin-top: 12px;
   color: var(--rb-accent) !important;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-arrange-grid {
   display: grid;
@@ -1047,7 +1048,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-align: left;
   padding: 5px 0;
 }
@@ -1068,7 +1069,7 @@
   margin: 0 0 13px;
 }
 .rb-inspector-intro {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
   line-height: 1.7;
   margin: 6px 0 18px !important;
@@ -1087,7 +1088,7 @@
   padding: 7px 5px;
   text-align: left;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .rb-layers button:hover {
   background: var(--rb-hover);
@@ -1110,7 +1111,7 @@
   gap: 10px;
   color: var(--rb-muted);
   margin: 18px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 1.7;
 }
 .rb-table-editor {
@@ -1123,7 +1124,7 @@
 }
 .rb-app .rb-table-editor input {
   border-radius: 0;
-  font-size: 9px;
+  font-size: var(--text-xs);
   padding: 6px 4px;
   margin: -1px 0 0;
 }
@@ -1140,7 +1141,7 @@
   display: flex;
   align-items: center;
   gap: 3px;
-  font-size: 9px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
 }
 .rb-statusbar {
@@ -1150,7 +1151,7 @@
   padding: 0 18px;
   border-top: 1px solid var(--rb-border);
   color: var(--rb-muted);
-  font-size: 9px;
+  font-size: var(--text-xs);
 }
 .rb-statusbar > span {
   display: flex;
@@ -1192,7 +1193,7 @@
   margin: 0 auto;
 }
 .rb-preview-page-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   margin: 0 0 8px;
   color: var(--rb-muted);
 }
@@ -1255,7 +1256,7 @@
     scrollbar-width: none;
   }
   .rb-tabs button {
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .rb-tabs button.is-active::after {
     bottom: 0;
@@ -1265,7 +1266,7 @@
     gap: 4px;
   }
   .rb-color-field > span {
-    font-size: 8px;
+    font-size: var(--text-xs);
   }
 }
 @media (max-width: 950px) {
@@ -1297,7 +1298,7 @@
     width: 39px;
   }
   .rb-section-heading h2 {
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .rb-property-section {
     padding: 15px 12px;
@@ -1386,7 +1387,7 @@
   background: transparent;
   border: 0;
   outline: 0;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rb-data-summary,
 .rb-data-paging,
@@ -1396,7 +1397,7 @@
   align-items: center;
   gap: 8px;
   margin: 14px 0;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--rb-muted);
 }
 .rb-data-paging button,
@@ -1442,17 +1443,22 @@
 .rb-data-item strong,
 .rb-data-item small {
   display: block;
+  overflow-wrap: anywhere;
+}
+/* Long names wrap to two lines; the tooltip holds the rest. */
+.rb-data-item strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .rb-data-item strong {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
 }
 .rb-data-item small {
   color: var(--rb-muted);
-  font-size: 9px;
+  font-size: var(--text-xs);
   margin-top: 3px;
 }
 .rb-data-note {
@@ -1460,7 +1466,7 @@
 }
 .rb-source-info {
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rb-source-info p {
   color: var(--rb-muted);
@@ -1469,4 +1475,129 @@
 .rb-table-editor input[readonly] {
   color: var(--rb-muted);
   cursor: default;
+}
+
+/* Save status: an honest note of where the draft is kept. */
+.rb-document-name > output[data-state='failed'] {
+  color: var(--danger);
+}
+.rb-document-name > output[data-state='failed'] .rb-dot {
+  background: var(--danger);
+}
+.rb-document-name > output[data-state='pending'] .rb-dot,
+.rb-document-name > output[data-state='loading'] .rb-dot {
+  background: var(--warning);
+}
+/* Snapshots whose data changed since capture; never shown on paper or PDF. */
+.rb-stale-badge {
+  position: absolute;
+  top: calc(6px * var(--rb-inverse-scale));
+  right: calc(6px * var(--rb-inverse-scale));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  transform: scale(var(--rb-inverse-scale));
+  transform-origin: top right;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.rb-stale-badge > svg {
+  color: var(--warning);
+}
+.rb-block[data-snapshot='changed'],
+.rb-block[data-snapshot='missing'] {
+  outline: 1px dashed var(--warning);
+  outline-offset: 2px;
+}
+.rb-snapshot-state {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  background: var(--rb-field);
+}
+.rb-snapshot-state strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rb-snapshot-state strong > svg {
+  color: var(--warning);
+}
+.rb-source-info .rb-snapshot-state p {
+  margin: 0;
+}
+.rb-stale-summary {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.rb-statusbar .rb-text-button {
+  margin: 0 0 0 6px;
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+/* Template choice when the draft already has content. */
+.rb-template-choice {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 10px;
+  border: 1px solid var(--rb-accent);
+  border-radius: 7px;
+  background: var(--rb-wash);
+}
+.rb-template-choice p {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.rb-template-choice small {
+  color: var(--rb-muted);
+  font-size: var(--text-xs);
+  margin-bottom: 6px;
+}
+.rb-template.is-pending,
+.rb-template[aria-pressed='true'] {
+  outline: 2px solid var(--rb-accent);
+}
+/* Replacing the draft with a previewed report asks first. */
+.rb-confirm {
+  position: fixed;
+  top: 112px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  max-width: min(640px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--rb-border);
+  border-radius: 7px;
+  background: var(--rb-panel);
+  box-shadow: var(--shadow);
+}
+.rb-confirm p {
+  flex: 1 1 260px;
+}
+.rb-toast-action {
+  padding: 3px 9px;
+  border: 1px solid var(--rb-accent);
+  border-radius: 5px;
+  color: var(--rb-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rb-toast-action:hover {
+  background: var(--rb-wash);
 }

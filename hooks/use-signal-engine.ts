@@ -29,6 +29,8 @@ export function useSignalEngine(
   const [ready, setReady] = useState(false),
     [canUndo, setCanUndo] = useState(false),
     [canRedo, setCanRedo] = useState(false),
+    [undoLabel, setUndoLabel] = useState<string>(),
+    [redoLabel, setRedoLabel] = useState<string>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [status, setStatus] = useState('Opening local workspace…');
@@ -103,6 +105,8 @@ export function useSignalEngine(
           setProject(response.project);
           setCanUndo(!!response.canUndo);
           setCanRedo(!!response.canRedo);
+          setUndoLabel(response.undoLabel);
+          setRedoLabel(response.redoLabel);
           setStatus('Ready · local processing');
           setReady(true);
         }
@@ -131,6 +135,8 @@ export function useSignalEngine(
       setProject(response.project);
       setCanUndo(!!response.canUndo);
       setCanRedo(!!response.canRedo);
+      setUndoLabel(response.undoLabel);
+      setRedoLabel(response.redoLabel);
       setStatus('Saved · source data unchanged');
       return response.project;
     } catch (caught) {
@@ -168,6 +174,8 @@ export function useSignalEngine(
           setProject(response.project);
           setCanUndo(!!response.canUndo);
           setCanRedo(!!response.canRedo);
+          setUndoLabel(response.undoLabel);
+          setRedoLabel(response.redoLabel);
           result = { project: response.project };
         } catch (caught) {
           result = {
@@ -199,6 +207,9 @@ export function useSignalEngine(
     ready,
     canUndo,
     canRedo,
+    /** The action Undo would reverse, when the journal names it. */
+    undoLabel,
+    redoLabel,
     busy,
     error,
     status,
