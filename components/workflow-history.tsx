@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
 import { formatCount } from '@/lib/format-count';
-import type { WorkflowIndex } from '@/lib/workflow-history';
+import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
 import type { WorkflowStep } from '@/lib/workflow-types';
 import {
   ContextMenu,
@@ -148,20 +148,20 @@ export default function WorkflowHistory({
   const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [outputsCollapsed, setOutputsCollapsed] = useState(false);
   const focusedStepId = outputView?.stepId;
-  const selectedKey =
+  const rawSelectedKey =
     selection.kind === 'step' ? selection.id : `output:${selection.id}`;
   const selectedOwner =
     selection.kind === 'output' ? index.owner.get(selection.id)?.id : undefined;
   // Following an input or revealing another operation leaves the focused tree.
   if (
     outputView &&
-    (outputView.selectionKey !== selectedKey ||
+    (outputView.selectionKey !== rawSelectedKey ||
       !steps.some((step) => step.id === outputView.stepId))
   ) {
     setOutputView(
       steps.some((step) => step.id === outputView.stepId) &&
         (selectedOwner ?? selection.id) === outputView.stepId
-        ? { ...outputView, selectionKey: selectedKey }
+        ? { ...outputView, selectionKey: rawSelectedKey }
         : null,
     );
   }
@@ -195,11 +195,19 @@ export default function WorkflowHistory({
       outputKind,
     ],
   );
+  // A selected step that History shows as one merged row highlights that row.
+  const selectedKey =
+    selection.kind === 'step' && !rows.some((row) => row.key === rawSelectedKey)
+      ? (rows.find(
+          (row) => row.kind === 'single' && row.step.id === selection.id,
+        )?.key ?? rawSelectedKey)
+      : rawSelectedKey;
   const container = useRef<HTMLDivElement>(null);
   const positions = useMemo(() => {
     const groups = new Map<string, string[]>();
     for (const row of rows) {
-      const key = row.kind === 'step' ? 'root' : row.step.id;
+      const key =
+        row.kind === 'step' || row.kind === 'single' ? 'root' : row.step.id;
       const group = groups.get(key) ?? [];
       group.push(row.key);
       groups.set(key, group);
@@ -227,10 +235,11 @@ export default function WorkflowHistory({
     const result = [0];
     for (const row of rows) {
       const tall =
-        row.kind === 'step' &&
-        !!metrics.font &&
-        textWidth(row.label, metrics.font) >
-          metrics.width - STEP_CHROME - (stepStatus(row.step) ? 17 : 0);
+        !!row.stepLabel ||
+        ((row.kind === 'step' || row.kind === 'single') &&
+          !!metrics.font &&
+          textWidth(row.label, metrics.font) >
+            metrics.width - STEP_CHROME - (stepStatus(row.step) ? 17 : 0));
       result.push(result.at(-1)! + (tall ? TALL_ROW_HEIGHT : ROW_HEIGHT));
     }
     return result;
@@ -299,7 +308,7 @@ export default function WorkflowHistory({
   function showOutputs(stepId: string) {
     setOutputView({
       stepId,
-      selectionKey: selectedKey,
+      selectionKey: rawSelectedKey,
       previousScroll: container.current?.scrollTop ?? scroll,
       previousFocus: `more:${stepId}`,
     });
@@ -350,7 +359,7 @@ export default function WorkflowHistory({
   }
   /** Signals a row checks: one signal output, or a step's shown signals. */
   function rowSignals(row: WorkflowRow): string[] {
-    if (row.kind === 'output')
+    if (row.kind === 'output' || row.kind === 'single')
       return index.nodes.has(row.outputId!) ? [row.outputId!] : [];
     if (row.kind !== 'step') return [];
     return row.step.outputIds.filter(
@@ -374,7 +383,9 @@ export default function WorkflowHistory({
     const origin = from >= 0 ? from : selectedRow >= 0 ? selectedRow : position;
     const ids = rows
       .slice(Math.min(origin, position), Math.max(origin, position) + 1)
-      .flatMap((row) => (row.kind === 'output' ? rowSignals(row) : []));
+      .flatMap((row) =>
+        row.kind === 'output' || row.kind === 'single' ? rowSignals(row) : [],
+      );
     if (!ids.length) return false;
     onCheck(ids, true, true);
     return true;
@@ -382,21 +393,23 @@ export default function WorkflowHistory({
   const start = Math.max(0, rowAt(tops, scroll) - 5);
   const visible = rows.slice(start, rowAt(tops, scroll + height) + 7);
   // One control collapses or expands every step's output preview.
+  // Steps with one output are single rows, so only larger steps expand.
   const anyExpanded = steps.some(
-    (step) => step.outputIds.length > 0 && !collapsed.has(step.id),
+    (step) => step.outputIds.length > 1 && !collapsed.has(step.id),
   );
+  const anyExpandable = steps.some((step) => step.outputIds.length > 1);
   // Dots mark outputs used to make the selected item, never the item itself.
   const lineageShown =
     !!lineageOutputs &&
     rows.some(
       (row) =>
-        row.kind === 'output' &&
+        (row.kind === 'output' || row.kind === 'single') &&
         row.key !== selectedKey &&
         lineageOutputs.has(row.outputId!),
     );
   return (
     <div className="workflow-history-pane">
-      {(focusedStepId || steps.length > 0) && (
+      {(focusedStepId || anyExpandable) && (
         <div className="workflow-tree-controls">
           {focusedStepId ? (
             <button className="workflow-tree-back" onClick={returnToHistory}>
@@ -511,8 +524,10 @@ export default function WorkflowHistory({
                     : step.kind === 'import'
                       ? LockKeyhole
                       : Waves;
+            const single = row.kind === 'single';
+            const reference = `#${String(step.sequence + 1).padStart(3, '0')}`;
             const target: WorkflowSelection =
-              row.kind === 'output'
+              row.kind === 'output' || single
                 ? { kind: 'output', id: row.outputId! }
                 : { kind: 'step', id: step.id };
             const select = () => {
@@ -545,7 +560,7 @@ export default function WorkflowHistory({
               <div
                 key={row.key}
                 role="treeitem"
-                aria-level={row.kind === 'step' ? 1 : 2}
+                aria-level={row.kind === 'step' || single ? 1 : 2}
                 aria-posinset={positions.get(row.key)?.position}
                 aria-setsize={positions.get(row.key)?.size}
                 aria-expanded={
@@ -557,7 +572,8 @@ export default function WorkflowHistory({
                 aria-checked={checkState}
                 tabIndex={row.key === tabKey ? 0 : -1}
                 data-row={position}
-                data-kind={row.kind}
+                data-kind={single ? 'output' : row.kind}
+                data-merged={single || undefined}
                 data-step-kind={step.kind === 'regions' ? 'segment' : step.kind}
                 data-selected={row.key === selectedKey}
                 data-checked={
@@ -567,7 +583,7 @@ export default function WorkflowHistory({
                 data-lineage={
                   !!lineageOutputs &&
                   row.key !== selectedKey &&
-                  (row.kind === 'output'
+                  (row.kind === 'output' || single
                     ? lineageOutputs.has(row.outputId!)
                     : step.outputIds.some((id) => lineageOutputs.has(id)))
                 }
@@ -590,10 +606,13 @@ export default function WorkflowHistory({
                   row.kind === 'step'
                     ? `${row.label} · ${outputCount}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
                     : row.outputId
-                      ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}`
+                      ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}${single ? ` · step ${reference} ${stepName(step)}` : ''}`
                       : row.label
                 }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
-                data-wrap={rowHeight(position) > ROW_HEIGHT || undefined}
+                data-wrap={
+                  (!row.stepLabel && rowHeight(position) > ROW_HEIGHT) ||
+                  undefined
+                }
                 style={{
                   position: 'absolute',
                   top: tops[position],
@@ -653,7 +672,9 @@ export default function WorkflowHistory({
                     // Shift+arrow extends the checked signals row by row.
                     if (event.shiftKey && onCheck && rows[next]) {
                       const ids = [row, rows[next]].flatMap((item) =>
-                        item.kind === 'output' ? rowSignals(item) : [],
+                        item.kind === 'output' || item.kind === 'single'
+                          ? rowSignals(item)
+                          : [],
                       );
                       if (ids.length) onCheck(ids, true, true);
                     }
@@ -677,6 +698,7 @@ export default function WorkflowHistory({
                       focusRow(position + 1);
                   } else if (event.key === 'ArrowLeft') {
                     event.preventDefault();
+                    if (single) return;
                     if (row.kind === 'step' && expanded)
                       setExpanded(step.id, false);
                     else
@@ -705,6 +727,8 @@ export default function WorkflowHistory({
                       <ChevronRight size={14} />
                     )}
                   </button>
+                ) : single ? (
+                  <span className="workflow-single-spacer" aria-hidden="true" />
                 ) : (
                   <span className="workflow-branch" aria-hidden="true" />
                 )}
@@ -712,7 +736,7 @@ export default function WorkflowHistory({
                   <span className="workflow-more">{row.label} →</span>
                 ) : (
                   <>
-                    {row.kind === 'step' ? (
+                    {row.kind === 'step' || single ? (
                       <code className="workflow-step-node">
                         <Icon size={11} />#
                         {String(step.sequence + 1).padStart(3, '0')}
@@ -725,7 +749,16 @@ export default function WorkflowHistory({
                     )}
                     {flagged && <StatusIcon status={flagged} size={12} />}
                     <span className="workflow-row-copy">
-                      <strong>{row.label}</strong>
+                      {row.stepLabel ? (
+                        <span className="workflow-row-title">
+                          <strong>{row.label}</strong>
+                          <em title={`${reference} ${row.stepLabel}`}>
+                            {row.stepLabel}
+                          </em>
+                        </span>
+                      ) : (
+                        <strong>{row.label}</strong>
+                      )}
                       <small>
                         {row.kind === 'step'
                           ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${outputCount}`
@@ -881,9 +914,26 @@ export default function WorkflowHistory({
                     disabled={busy}
                     onClick={() => action('rename')}
                   >
-                    Rename {row.kind === 'output' ? 'output' : 'step'}
+                    Rename{' '}
+                    {single
+                      ? index.values.has(row.outputId!)
+                        ? 'value'
+                        : 'signal'
+                      : row.kind === 'output'
+                        ? 'output'
+                        : 'step'}
                     <ContextMenuShortcut>F2</ContextMenuShortcut>
                   </ContextMenuItem>
+                  {single && (
+                    <ContextMenuItem
+                      disabled={busy}
+                      onClick={() =>
+                        onAction({ kind: 'step', id: step.id }, 'rename')
+                      }
+                    >
+                      Rename step
+                    </ContextMenuItem>
+                  )}
                   {step.kind === 'import' && (
                     <ContextMenuItem
                       disabled={busy}

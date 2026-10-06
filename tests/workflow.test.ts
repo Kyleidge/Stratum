@@ -2288,7 +2288,18 @@ void test('5,000 deep operations stay two levels; large batches remain bounded a
   const referenceMatch = workflowRows(steps, index, new Set(), '#5002');
   assert.equal(referenceMatch.filter((row) => row.kind === 'step').length, 1);
   assert.equal(referenceMatch[0].step.sequence, 5001);
-  assert.equal(rows.length, 10007); // 5,001 pairs + batch step + 3 outputs + more.
+  // 5,001 one-output steps are single rows; the batch step keeps its preview.
+  assert.equal(rows.length, 5006); // 5,001 + batch step + 3 outputs + more.
+  assert.equal(rows.filter((row) => row.kind === 'single').length, 5001);
+  assert.ok(
+    rows
+      .filter((row) => row.kind === 'single')
+      .every((row) => row.step.outputIds[0] === row.outputId),
+  );
+  assert.equal(
+    rows.find((row) => row.outputId === 'derived-4999')?.key,
+    'output:derived-4999',
+  );
   const found = workflowRows(steps, index, new Set(), 'Window 999');
   assert.ok(found.some((row) => row.outputId === 'batch-999'));
   const reveal = workflowRows(steps, index, new Set(), '', 'batch-999');

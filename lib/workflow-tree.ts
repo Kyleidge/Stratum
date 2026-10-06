@@ -3,13 +3,19 @@ import { stepName, WorkflowIndex } from './workflow-history';
 
 export type WorkflowRow = {
   key: string;
-  kind: 'step' | 'output' | 'more';
+  /** `single` is one row for a step that made exactly one output. */
+  kind: 'step' | 'output' | 'single' | 'more';
   step: WorkflowStep;
   outputId?: string;
   label: string;
+  /** For `single` rows: the step's name, when it differs from the output's. */
+  stepLabel?: string;
 };
 
-/** Two levels with bounded previews, or every member of one focused operation. */
+/**
+ * Two levels with bounded previews, or every member of one focused operation.
+ * A step with exactly one output is a single row that stands for both.
+ */
 export function workflowRows(
   steps: WorkflowStep[],
   index: WorkflowIndex,
@@ -46,6 +52,22 @@ export function workflowRows(
           )
         : candidates;
     if (search && !matchesStep && !outputs.length) continue;
+    if (!focusedStepId && step.outputIds.length === 1 && outputs.length) {
+      const id = outputs[0];
+      const output = index.label(id);
+      rows.push({
+        key: `output:${id}`,
+        kind: 'single',
+        step,
+        outputId: id,
+        label: output,
+        stepLabel:
+          label.trim().toLowerCase() === output.trim().toLowerCase()
+            ? undefined
+            : label,
+      });
+      continue;
+    }
     rows.push({ key: step.id, kind: 'step', step, label });
     if (!search && collapsed.has(step.id)) continue;
     const shown = focusedStepId ? [...outputs] : outputs.slice(0, 3);

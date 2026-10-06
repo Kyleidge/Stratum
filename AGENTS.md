@@ -29,6 +29,9 @@ There are no server API routes or cloud signal uploads.
   `components/workflow-history.tsx` is a virtualized two-level chronological tree;
   `lib/workflow-tree.ts` bounds output previews and reveals selected members.
   Do not encode dependency depth as recursive indentation or regroup by names.
+  A step with exactly one output is one `single` row (the output's name, the
+  step number, and the step's name on a second line when it differs); it
+  selects the output, and Details reaches the step through "Produced by".
   Inspection and checked processing inputs are independent; Ctrl/Shift+click
   and row check boxes in History edit only the checked inputs. A plain check box
   starts from the explicit checks; only Ctrl/Shift+click extends from the viewed
