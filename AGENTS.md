@@ -424,9 +424,9 @@ native smoke on Linux (headless) and Windows.
   smoke in sequence (`tests/native-smokes.mjs`; add new checks to its
   `SMOKES` list) with a pass/fail summary and logs in `outputs/smoke-logs/`.
   `node tests/native-smokes.mjs ui-smoke` runs chosen checks on the current
-  build. On Linux without a display it uses headless Ozone
-  (`--ozone-platform=headless --ozone-override-screen-size=1920,1200
-  --disable-gpu`); where Chromium's SUID sandbox is unavailable, prefix
+  build. On Linux without a display it adds the headless Ozone flags
+  `--ozone-platform=headless`, `--ozone-override-screen-size=1920,1200` and
+  `--disable-gpu`. Where Chromium's SUID sandbox is unavailable, prefix
   `ELECTRON_DISABLE_SANDBOX=1` (test runs only, never the shipped app).
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin

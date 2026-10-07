@@ -106,6 +106,12 @@ async function createWindow() {
     );
   }
   if (smoke) {
+    // A small screen clamps the window and changes the layout under test.
+    const [width, height] = window.getContentSize();
+    if (width < 1540 || height < 980)
+      process.stderr.write(
+        `Smoke window is ${width}×${height}, not 1540×980: the screen is too small.\n`,
+      );
     window.webContents.on('console-message', async ({ message }) => {
       if (message.startsWith('TypeError') || message.startsWith('Error:'))
         process.stderr.write(`${message}\n`);

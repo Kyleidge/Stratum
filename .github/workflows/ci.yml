@@ -70,6 +70,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec install-electron
+      # The runner's 1024×768 desktop would clamp the 1540 px smoke windows.
+      - name: Use a 1920×1080 desktop
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
       - run: pnpm desktop:smokes
       - if: failure()
         uses: actions/upload-artifact@v7
