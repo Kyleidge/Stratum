@@ -1,0 +1,32 @@
+# Every check the repository's instructions require, on each push and PR.
+# The Electron runtime is not downloaded (it has an explicit installer), so
+# the native smoke checks stay local.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Uses the pnpm version pinned in package.json's packageManager.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm exec oxfmt --check .
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm desktop:build

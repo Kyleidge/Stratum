@@ -59,7 +59,8 @@ lineage/input disclosures are paginated. Inspection and processing selections ar
 independent. New installations start empty, with an explicit example action.
 The latest usability/recovery review is in [production-review.md](production-review.md).
 
-The retained region workspace (`region-workbench.tsx`) separates three concepts:
+The engine keeps the earlier region model so older workspaces still open and
+replay; its separate workspace UI has been removed. It separates three concepts:
 
 - Signals: raw columns and lazy derived recipes.
 - Region sets: versioned collections of time intervals on the recording clock.

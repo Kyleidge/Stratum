@@ -187,11 +187,11 @@ There are no server API routes or cloud signal uploads.
 - `components/workflow-list.tsx`: render disclosure rows only while open, with
   30-item pages. Keep large lineage and checked-input lists bounded in the DOM.
 - `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
-- `components/region-workbench.tsx`: retained region workspace. Regions
-  are reusable recording-time pointers, not automatic channel copies. The left
-  history has one item per invocation; region/results tables keep families compact.
+- Regions (engine only; the region workspace UI was removed): reusable
+  recording-time pointers, not automatic channel copies. Older workspaces that
+  contain them still open, migrate and replay.
 - `hooks/use-signal-engine.ts`: worker request client; the active UI requests
-  `init-workflow`. Region compatibility callers retain `init-regions`.
+  `init-workflow`. The engine keeps `init-regions` for compatibility tests.
 - `lib/region-types.ts` and `lib/region-model.ts`: region versions, parent links,
   function invocations, ancestry and legacy migration. Never mutate an existing
   region version or retarget its children/results. View selection must remain
@@ -199,14 +199,8 @@ There are no server API routes or cloud signal uploads.
   New intervals exclude their end unless it is an inclusive parent/recording end;
   migrated legacy intervals retain inclusive endpoints. Test with `pnpm test`,
   which includes `tests/regions.test.ts` and the earlier numerical suites.
-- `components/region-editor.tsx`, `region-function-editor.tsx`, `region-history.tsx`:
-  saved settings, explicit scopes and a virtualized chronological history.
-- `components/ui-refresh-mockup.tsx`, `mockup-chart.tsx`, `mockup-dialogs.tsx`,
-  `lib/mockup-data.ts` and `app/ui-refresh-mockup.css`: interactive prototype of
-  a refreshed layout on an in-memory workspace, opened at `/mockup` or with
-  `pnpm desktop:mockup`. It never uses the engine or workspace storage, and its
-  operations are illustrative, not the engine's. See `docs/ui-refresh-review.md`.
-- `components/workbench.tsx`: retained legacy workspace for compatibility.
+- `components/region-controls.tsx`: small select/number fields shared by the
+  dialogs (`app/regions.css` styles them).
 - `components/signal-chart.tsx`: bounded SVG min/max envelope plots.
 - `components/plot-scratchpad.tsx` and `lib/plot-scratchpad.ts`: Active plots
   the selection (a signal; a value as a labelled reference line over its input,
@@ -236,7 +230,8 @@ There are no server API routes or cloud signal uploads.
   extend outside a zoom window for drawing, but never enter its statistics.
   `lib/plot-export.ts` creates standalone SVG/PNG snapshots of displayed panels.
   See `docs/plotting-plan.md`; native checks include `desktop/plot-ui-smoke.ts`.
-- Legacy `components/signal-explorer.tsx` and `lib/signal-explorer.ts`: virtualized,
+- `lib/signal-explorer.ts` (its legacy UI was removed; `operationLabels` and
+  the explorer model remain for the dialogs and tests): virtualized,
   numbered operation chains with explicit batch collections and independent
   member branches. Keep exact batch membership; never infer batches from names.
   Files own file-segmentation operations and file segments with synchronized
@@ -335,9 +330,10 @@ There are no server API routes or cloud signal uploads.
   draws panel borders and `--line-strong` outlines fields and controls at ≥3:1.
   Light-theme primary, kind and series colours meet ≥4.5:1 as text. Controls
   keep at least 24×24 px hit areas.
-- `components/ui/`: reusable Base UI/shadcn primitives with Lucide icons.
+- `components/ui/`: the Base UI/shadcn primitives the app uses, with Lucide
+  icons. Unused ones were removed; add new ones with the shadcn CLI
+  (`components.json`) when needed.
 - `lib/utils.ts`: `cn()` combines clsx and tailwind-merge.
-- `hooks/use-mobile.ts`: shared mobile breakpoint hook (768px).
 - `vite.config.ts`: vinext, Sites, Tailwind/PostCSS, Cloudflare Workers integration.
 - `.openai/hosting.json`: portable, non-secret hosting configuration imported by
   Vite. Keep it tracked. Both D1 and R2 are currently null. Do not put credentials
@@ -362,8 +358,6 @@ Run commands from the repository root:
 - `pnpm exec install-electron`: download the pinned desktop runtime once per
   computer (Electron 44 uses an explicit installer).
 - `pnpm desktop`: build and launch the native desktop app.
-- `pnpm desktop:mockup`: build and open the UI refresh mockup in a native
-  window with a temporary profile.
 - `pnpm desktop:build`: compile the offline desktop renderer into dist-desktop/.
 - `pnpm desktop:smoke`: after the desktop build, run a hidden native worker and
   IndexedDB integration check against the demonstration recording.
@@ -396,9 +390,9 @@ package.json and pnpm-lock.yaml together. Do not introduce competing lockfiles.
 - `pnpm format`: format files; keep formatting changes scoped to the task.
 - `pnpm build`: check production compilation when application code changes.
 
-Initial Git setup validation: TypeScript passed; oxlint reported 19 pre-existing
-issues in the starter UI components and mobile hook. No app behavior was changed
-to address those issues during repository setup.
+Full-repository `pnpm lint` passes with no errors. GitHub Actions
+(`.github/workflows/ci.yml`) runs the install, typecheck, lint, format check,
+tests and both production builds on every push and pull request.
 
 - `pnpm test`: Node test runner with in-memory TypeScript transpilation and
   fake-indexeddb. Tests cover CSV boundaries and validation, numerical units,
@@ -427,8 +421,8 @@ to address those issues during repository setup.
   creation, window previews, and independent moving-average/extrema batches. Run this
   when changing worker loading or build configuration; native smoke alone cannot
   detect vinext's browser-only URL transforms.
-- Full-repository lint still includes the original 19 starter-component issues.
-  Keep new application files clean and report the baseline separately.
+- Full-repository lint must stay clean; justify any `oxlint-disable-next-line`
+  in a comment, as existing ones do.
 
 The tests require Node >=22.15 for `registerHooks`; Node 24 is recommended.
 Do not claim multi-gigabyte throughput from architectural design alone. Raw

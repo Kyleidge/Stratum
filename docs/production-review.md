@@ -71,9 +71,8 @@ Full-repository lint retains the 19 starter issues listed below.
   scopes are the viewed output, checked signals, or one complete operation.
 - Portable packages are unsigned. Signed public installers, update distribution
   and operating-system trust verification require a separate release setup.
-- Full-repository lint still reports 19 existing issues in starter UI primitives
-  and the mobile hook. Changed application code must pass scoped lint and types;
-  these baseline issues must not be represented as a passing full lint check.
+- Full-repository lint now passes (October 2026: the unused starter UI
+  primitives and mobile hook were removed, and CI runs every check).
 
 These limits are explicit boundaries of this release, not a certification that
 every production environment, dataset size or failure mode has been tested.

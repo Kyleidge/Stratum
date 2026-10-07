@@ -338,9 +338,8 @@ pnpm desktop:report-smoke
 ```
 
 The test suite exercises numerical results and storage behavior; the native smoke
-check runs the worker and IndexedDB inside a hidden Electron window. The original
-starter has 19 lint issues in its unused UI primitives and mobile hook. New
-application code is checked separately as well.
+check runs the worker and IndexedDB inside a hidden Electron window. `pnpm lint`
+passes with no errors, and CI runs every check on each push.
 `signal-functions.test.ts` checks independently calculated values and defaults
 for every single-input library function, plus all four persistent examples.
 `regions.test.ts` checks nested pointers, version pinning, state boundaries,
