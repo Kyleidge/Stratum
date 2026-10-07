@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -158,6 +158,11 @@ async function fixture(moduleUrl, styles) {
   };
   const parse = (block) =>
     new DOMParser().parseFromString(block.plotSnapshot.svg, 'image/svg+xml');
+  // Trace colours are styles (theme tokens), inlined as concrete colours.
+  const tracePath = (svg) =>
+    [...svg.querySelectorAll('path')].find(
+      (path) => path.style.stroke === 'rgb(221, 51, 85)',
+    );
   const multi = await captureReportPlot(project, sheet, request);
   expect(
     multi.length === 2,
@@ -196,7 +201,7 @@ async function fixture(moduleUrl, styles) {
     'Second clock annotation must survive',
   );
   expect(
-    a.querySelector('path[stroke="#dd3355"][stroke-width="3"]'),
+    tracePath(a)?.getAttribute('stroke-width') === '3',
     'Custom trace color and weight must survive',
   );
   expect(!a.querySelector('.chart-grid'), 'Hidden grid must remain hidden');
@@ -357,12 +362,8 @@ async function fixture(moduleUrl, styles) {
     overviewRequest,
   );
   same(
-    parse(missingHeld[0])
-      .querySelector('path[stroke="#dd3355"]')
-      .getAttribute('d'),
-    parse(explicitFallback[0])
-      .querySelector('path[stroke="#dd3355"]')
-      .getAttribute('d'),
+    tracePath(parse(missingHeld[0])).getAttribute('d'),
+    tracePath(parse(explicitFallback[0])).getAttribute('d'),
     'Overview statistics must never replace the windowed drawing points',
   );
 
@@ -538,6 +539,9 @@ async function fixture(moduleUrl, styles) {
 void app
   .whenReady()
   .then(async () => {
+    // Like the app, use no menu bar; the default one also crashes Chromium's
+    // headless Ozone platform.
+    Menu.setApplicationMenu(null);
     server = await createServer({
       configFile: resolve(root, 'desktop/vite.config.ts'),
       plugins: [

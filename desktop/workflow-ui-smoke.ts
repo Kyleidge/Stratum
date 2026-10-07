@@ -633,7 +633,7 @@ export async function workflowUiSmoke() {
       .click();
     await delay();
     assert(
-      details.textContent?.includes('Operation') &&
+      details.textContent?.includes('Import step · #001') &&
         selectedHistoryRow().dataset.kind === 'step',
       'Following the producing operation must select it.',
     );
@@ -1209,9 +1209,10 @@ export async function workflowUiSmoke() {
       )!
       .click();
     await delay();
-    assert(
-      mathModal.querySelectorAll('[role="radio"]').length === 7,
-      'Math should show seven compact operation cards.',
+    // The previous category's panel unmounts after its exit transition.
+    await until(
+      () => mathModal.querySelectorAll('[role="radio"]').length === 9,
+      'nine compact Math operation cards',
     );
     assert(
       !mathModal.textContent?.includes('Brake power') &&
@@ -1244,21 +1245,32 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close double-click editor',
     );
-    const mathStep = [
-      ...document.querySelectorAll<HTMLElement>(
-        '.workflow-tree-row[data-kind="step"]',
-      ),
-    ].at(-1)!;
-    assert(
-      mathStep.getAttribute('aria-selected') === 'false',
-      'Expected an unselected operation for context targeting.',
-    );
-    const disclosure = mathStep.querySelector('button')!;
+    const disclosure = document.querySelector<HTMLElement>(
+      '.workflow-tree-row[data-kind="step"] .workflow-disclosure',
+    )!;
     disclosure.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await delay();
     assert(
       !document.querySelector('[role="dialog"]'),
       'Double-clicking disclosure opened an editor.',
+    );
+    // A one-output step is a single History row; target it while another
+    // signal stays selected.
+    await openOutput('Motor speed');
+    setValue(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Search workflow"]',
+      )!,
+      'Motor speed × Motor speed',
+    );
+    const mathStep = await until(
+      () => outputRow('Motor speed × Motor speed'),
+      'single-output math step row',
+    );
+    assert(
+      mathStep.dataset.merged === 'true' &&
+        mathStep.getAttribute('aria-selected') === 'false',
+      'Expected an unselected operation for context targeting.',
     );
     await contextAction(mathStep, 'Edit settings');
     const mathEdit = await dialog();
@@ -1276,6 +1288,13 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Save changes and recalculate', mathEdit);
     await settled();
+    setValue(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Search workflow"]',
+      )!,
+      '',
+    );
+    await delay();
     assert(
       document.querySelector('.workflow-status-selection')?.textContent ===
         'Motor speed − Motor speed',
@@ -1640,9 +1659,12 @@ export async function workflowUiSmoke() {
     await outputsTab();
     await click('Calculate value');
     const valueModal = await dialog();
-    assert(
-      valueModal.querySelectorAll('[role="radio"]').length === 4,
-      'Value calculations should be directly selectable cards.',
+    // Values open on the last-used calculation; Level holds the averages
+    // and extremes as directly selectable cards.
+    await click('Level', valueModal);
+    await until(
+      () => valueModal.querySelectorAll('[role="radio"]').length === 7,
+      'seven Level value cards',
     );
     valueModal
       .querySelector<HTMLElement>(
@@ -1763,7 +1785,8 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Create 1 derived signal', managementModal);
     await settled();
-    await contextAction(selectedHistoryRow(), 'Rename output', true);
+    // A one-output step's single row names its signal.
+    await contextAction(selectedHistoryRow(), 'Rename signal', true);
     managementModal = await dialog();
     setValue(
       managementModal.querySelector<HTMLInputElement>(
@@ -1780,7 +1803,20 @@ export async function workflowUiSmoke() {
       'Rename lost the selected output.',
     );
     await click('Calculate value');
-    await click('Create 1 value', await dialog());
+    // Value remembers the last calculation; this check uses a time average.
+    const averageModal = await dialog();
+    await click('Level', averageModal);
+    (
+      await until(
+        () =>
+          averageModal.querySelector<HTMLElement>(
+            '[role="radio"][aria-label="Time average"]',
+          ) ?? undefined,
+        'time average card',
+      )
+    ).click();
+    await delay();
+    await click('Create 1 value', averageModal);
     await settled();
     const initialValue = Number.parseFloat(
       document
@@ -1797,7 +1833,10 @@ export async function workflowUiSmoke() {
     );
     managementModal = await dialog();
     assert(
-      managementModal.textContent?.includes('1 dependent operation'),
+      // Exactly one dependent step (the value) is named in the impact.
+      /Saving recalculates #\d+ (?:(?! and ).)+\. Original signals/.test(
+        managementModal.textContent ?? '',
+      ),
       'Edit omitted downstream impact.',
     );
     setValue(

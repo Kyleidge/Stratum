@@ -119,8 +119,17 @@ export async function plotUiSmoke() {
     document.querySelector<HTMLButtonElement>(
       '[aria-label="Hold Y-axis scales"]',
     )!;
+  // The plot can reload its overview after a project update; read limits
+  // only once both axes are drawn.
   await until(
-    () => !document.querySelector('.scratchpad-axis-footer output'),
+    () =>
+      !document.querySelector('.scratchpad-axis-footer output') &&
+      !!document.querySelector(
+        '.scratchpad-canvas .signal-chart svg [data-value-axis="unit:rpm"]',
+      ) &&
+      !!document.querySelector(
+        '.scratchpad-canvas .signal-chart svg [data-value-axis="unit:Nm"]',
+      ),
     'initial Y scales',
   );
   const heldSpeed = limits('rpm'),

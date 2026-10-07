@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { app, BrowserWindow, net, protocol } from 'electron';
+import { app, BrowserWindow, Menu, net, protocol } from 'electron';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
@@ -26,6 +26,9 @@ const pause = (ms = 80) => new Promise((done) => setTimeout(done, ms));
 void app
   .whenReady()
   .then(async () => {
+    // Like the app, use no menu bar; the default one also crashes Chromium's
+    // headless Ozone platform.
+    Menu.setApplicationMenu(null);
     mkdirSync(output, { recursive: true });
     protocol.handle('stratum-report', async (request) => {
       const url = new URL(request.url);

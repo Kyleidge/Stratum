@@ -51,7 +51,8 @@ if (smoke)
       process.stderr.write('Desktop startup or integration test timed out.\n');
       app.exit(1);
     },
-    uiSmoke ? 180000 : 60000,
+    // The UI suite takes about two minutes; CI runners can be slower.
+    uiSmoke ? 420000 : 60000,
   );
 
 async function createWindow() {
@@ -113,20 +114,16 @@ async function createWindow() {
         if (uiSmoke) {
           try {
             await Promise.all(downloads);
-            for (const name of [
-              'Stratum-values-1.csv',
-              'Stratum-values-40.csv',
-              'Stratum-samples-1.csv',
-              'Stratum-report-1.html',
-              'Motor comparison.svg',
-              'Motor comparison.png',
-            ])
+            // Exports are named after the recording, step and kind.
+            const contents = (name) =>
+              readFileSync(resolve('outputs', name), 'utf8');
+            const named = (suffix) =>
+              [...downloaded].filter((name) => name.endsWith(suffix));
+            for (const name of ['Motor comparison.svg', 'Motor comparison.png'])
               assert.ok(
                 downloaded.has(name),
                 `Missing native download: ${name}`,
               );
-            const contents = (name) =>
-              readFileSync(resolve('outputs', name), 'utf8');
             assert.ok(
               contents('Motor comparison.svg').includes(
                 'Review marker &lt;safe&gt;',
@@ -138,17 +135,17 @@ async function createWindow() {
                 .toString(),
               'PNG',
             );
-            assert.equal(
-              contents('Stratum-values-1.csv').split('\r\n').length,
-              2,
+            const values = named(' · values.csv').map(
+              (name) => contents(name).split('\r\n').length,
             );
-            assert.equal(
-              contents('Stratum-values-40.csv').split('\r\n').length,
-              41,
+            assert.deepEqual(
+              values.sort((a, b) => a - b),
+              [2, 41],
+              'Expected one-value and 40-value CSV downloads',
             );
-            const sampleLines = contents('Stratum-samples-1.csv')
-              .trim()
-              .split('\r\n');
+            const samples = named(' · samples.csv');
+            assert.equal(samples.length, 1, 'Missing samples CSV download');
+            const sampleLines = contents(samples[0]).trim().split('\r\n');
             assert.ok(sampleLines.length > 2);
             for (const line of sampleLines.slice(1)) {
               const time = Number(line.split(',').at(-2));
@@ -157,10 +154,10 @@ async function createWindow() {
                 'Nested export time outside selected signal',
               );
             }
+            const reports = named(' · summary.html');
+            assert.equal(reports.length, 1, 'Missing HTML summary download');
             assert.ok(
-              contents('Stratum-report-1.html').includes(
-                'Contributing operation history',
-              ),
+              contents(reports[0]).includes('Contributing operation history'),
             );
             const backupName = [...downloaded].find((name) =>
               name.endsWith('.stratum'),
