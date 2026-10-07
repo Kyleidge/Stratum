@@ -157,7 +157,15 @@ function ExportForm({
           title: 'Export samples CSV',
         });
         if (!file) return;
-        await streamToNativeFile(bridge, file, request, (stream) => ({
+        // Cancelling before or during the request leaves no file behind:
+        // throwing here makes the bridge discard the partial file.
+        const guarded: typeof request = async (message, transfer) => {
+          if (cancelled.current) throw new Error('Export cancelled.');
+          const response = await request(message, transfer);
+          if (cancelled.current) throw new Error('Export cancelled.');
+          return response;
+        };
+        await streamToNativeFile(bridge, file, guarded, (stream) => ({
           type: 'export-samples',
           ids,
           stream,

@@ -1,6 +1,6 @@
 # Every check the repository's instructions require, on each push and PR.
-# The Electron runtime is not downloaded (it has an explicit installer), so
-# the native smoke checks stay local.
+# The native jobs download the pinned Electron runtime (it has an explicit
+# installer) and run the desktop smoke checks in hidden windows.
 name: CI
 
 on:
@@ -30,3 +30,57 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm desktop:build
+
+  # Every native smoke (tests/native-smokes.mjs). Without a display the runner
+  # uses Chromium's headless Ozone platform.
+  native-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Test processes only: the runner cannot use Chromium's SUID sandbox.
+      # The packaged app never sets this.
+      ELECTRON_DISABLE_SANDBOX: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec install-electron
+      - run: pnpm desktop:smokes
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-smokes-linux
+          path: outputs/
+          if-no-files-found: ignore
+
+  # Windows is the release target: run the same checks on its native shell.
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec install-electron
+      # The runner's 1024×768 desktop would clamp the 1540 px smoke windows.
+      - name: Use a 1920×1080 desktop
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+      - run: pnpm desktop:smokes
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-smokes-windows
+          path: outputs/
+          if-no-files-found: ignore

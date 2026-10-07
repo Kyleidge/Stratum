@@ -384,7 +384,8 @@ export default function WorkflowStorage({
               if (chosenFile && /\.ya?ml$/i.test(chosenFile.name)) {
                 setOpen(false);
                 onOpenWorkflow(chosenFile);
-              } else setChosen(chosenFile);
+              } else if (chosenFile)
+                setChosen({ name: chosenFile.name, file: chosenFile });
             }}
           />
         </DialogContent>

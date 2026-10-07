@@ -432,7 +432,8 @@ package.json and pnpm-lock.yaml together. Do not introduce competing lockfiles.
 
 Full-repository `pnpm lint` passes with no errors. GitHub Actions
 (`.github/workflows/ci.yml`) runs the install, typecheck, lint, format check,
-tests and both production builds on every push and pull request.
+tests and both production builds on every push and pull request, and every
+native smoke on Linux (headless) and Windows.
 
 - `pnpm test`: Node test runner with in-memory TypeScript transpilation and
   fake-indexeddb. Tests cover CSV boundaries and validation, numerical units,
@@ -455,6 +456,14 @@ tests and both production builds on every push and pull request.
   saved workflow to identical values, checks across Edit/Undo, batch backups and
   item deletion.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
+- `pnpm desktop:smokes`: build the desktop renderer, then run every native
+  smoke in sequence (`tests/native-smokes.mjs`; add new checks to its
+  `SMOKES` list) with a pass/fail summary and logs in `outputs/smoke-logs/`.
+  `node tests/native-smokes.mjs ui-smoke` runs chosen checks on the current
+  build. On Linux without a display it adds the headless Ozone flags
+  `--ozone-platform=headless`, `--ozone-override-screen-size=1920,1200` and
+  `--disable-gpu`. Where Chromium's SUID sandbox is unavailable, prefix
+  `ELECTRON_DISABLE_SANDBOX=1` (test runs only, never the shipped app).
 - `pnpm test:preview`: with `pnpm dev` serving localhost:3000, exercise the HTTP
   worker factory in hidden Chromium with isolated storage. Verifies same-origin
   script loading, demo initialization, BSFC, trigger preview, offsets, crop

@@ -25,6 +25,7 @@
     "desktop:smoke": "electron desktop/main.mjs --smoke",
     "desktop:ui-smoke": "electron desktop/main.mjs --ui-smoke",
     "desktop:backup-smoke": "electron desktop/main.mjs --backup-smoke",
+    "desktop:smokes": "pnpm desktop:build && node tests/native-smokes.mjs",
     "desktop:package": "pnpm desktop:build && node desktop/package.mjs",
     "desktop:icons": "node desktop/icons.mjs"
   },

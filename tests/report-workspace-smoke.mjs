@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { app, BrowserWindow, net, protocol } from 'electron';
+import { app, BrowserWindow, Menu, net, protocol } from 'electron';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
@@ -28,6 +28,9 @@ const pause = (ms = 70) => new Promise((done) => setTimeout(done, ms));
 void app
   .whenReady()
   .then(async () => {
+    // Like the app, use no menu bar; the default one also crashes Chromium's
+    // headless Ozone platform.
+    Menu.setApplicationMenu(null);
     mkdirSync(output, { recursive: true });
     protocol.handle('stratum-report-data', async (request) => {
       const url = new URL(request.url);
@@ -254,18 +257,27 @@ void app
     });
     await pause();
     // A check box starts from the explicit checks, never the viewed signal.
+    // History rows share the label, so target the Outputs table check box.
     await evaluate(() =>
-      document.querySelector('[aria-label="Check Torque as an input"]').click(),
+      document
+        .querySelector(
+          '[role="checkbox"][aria-label="Check Torque as an input"]',
+        )
+        .click(),
     );
     await pause();
     assert.ok(
       await evaluate(
         () =>
           document
-            .querySelector('[aria-label="Check Torque as an input"]')
+            .querySelector(
+              '[role="checkbox"][aria-label="Check Torque as an input"]',
+            )
             .getAttribute('aria-checked') === 'true' &&
           document
-            .querySelector('[aria-label="Check Motor speed as an input"]')
+            .querySelector(
+              '[role="checkbox"][aria-label="Check Motor speed as an input"]',
+            )
             .getAttribute('aria-checked') === 'false',
       ),
       'The checked processing scope must differ from the inspected signal',
@@ -397,10 +409,14 @@ void app
       await evaluate(
         () =>
           document
-            .querySelector('[aria-label="Check Torque as an input"]')
+            .querySelector(
+              '[role="checkbox"][aria-label="Check Torque as an input"]',
+            )
             .getAttribute('aria-checked') === 'true' &&
           document
-            .querySelector('[aria-label="Check Motor speed as an input"]')
+            .querySelector(
+              '[role="checkbox"][aria-label="Check Motor speed as an input"]',
+            )
             .getAttribute('aria-checked') === 'false',
       ),
       'Report captures must preserve the independent checked processing scope',
