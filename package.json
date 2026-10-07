@@ -23,6 +23,7 @@
     "desktop:report-workspace-smoke": "electron tests/report-workspace-smoke.mjs",
     "desktop:smoke": "electron desktop/main.mjs --smoke",
     "desktop:ui-smoke": "electron desktop/main.mjs --ui-smoke",
+    "desktop:smokes": "pnpm desktop:build && node tests/native-smokes.mjs",
     "desktop:package": "pnpm desktop:build && node desktop/package.mjs"
   },
   "dependencies": {
