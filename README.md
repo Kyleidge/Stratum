@@ -30,6 +30,8 @@ Stratum keeps the original desktop profile, storage keys and internal origin so
 existing workspaces, Undo/Redo and saved plots remain available after the rename.
 New workspace backups use `.stratum`; existing `.stratus` backups still restore.
 The archive format and version are unchanged.
+[File format stability](docs/file-format-stability.md) states what each saved
+format promises across versions.
 
 Create a portable desktop build with `pnpm desktop:package`. On Windows, launch
 `build/releases/Stratum-win32-x64/Stratum.exe`. Keep the entire output folder

@@ -156,8 +156,19 @@ const leavesKey = (channel: number) => `plot-leaves-v2:${channel}`;
 // Rebuildable artifacts of a derived signal, owned by its recipe key rather
 // than a source: plot index (channel 0) and filter checkpoints.
 const DERIVED = 'derived-v1:';
+// Owners of every derived-cache version start with this; see pruning.
+const DERIVED_ANY = 'derived-v';
 const derivedOwner = (recipe: string) => `${DERIVED}${recipe}`;
 const CHECKPOINTS_KEY = 'checkpoints-v1';
+/**
+ * Workspace schema version: the IndexedDB database version. Raise it whenever
+ * a newer Stratum could store data an older one would misread, reject or drop
+ * when rewriting, so older versions refuse the workspace instead
+ * (docs/file-format-stability.md).
+ */
+export const WORKSPACE_SCHEMA_VERSION = 1;
+export const NEWER_WORKSPACE_MESSAGE =
+  'This workspace was saved by a newer version of Stratum. Update Stratum to open it; this version has not changed it.';
 const CHECKPOINT_BUDGET = 16 * 1024 * 1024;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
@@ -304,12 +315,25 @@ export class SignalEngine {
     private databaseName = 'stratus-workbench-v1',
   ) {}
   async open() {
-    const request = indexedDB.open(this.databaseName, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore('chunks');
-      request.result.createObjectStore('project');
+    const request = indexedDB.open(this.databaseName, WORKSPACE_SCHEMA_VERSION);
+    request.onupgradeneeded = (event) => {
+      if (event.oldVersion < 1) {
+        request.result.createObjectStore('chunks');
+        request.result.createObjectStore('project');
+      }
     };
-    this.db = await result(request);
+    try {
+      this.db = await result(request);
+    } catch (error) {
+      // The browser refuses to open a database at an older version.
+      if ((error as { name?: unknown } | null)?.name === 'VersionError')
+        throw new Error(NEWER_WORKSPACE_MESSAGE);
+      throw error;
+    }
+    // Yield to a newer Stratum upgrading the schema rather than blocking it;
+    // this window's later requests then fail and offer Reload.
+    const db = this.db;
+    db.onversionchange = () => db.close();
     const tx = this.db.transaction('project');
     const snapshot = tx.objectStore('project').get('current');
     const revision = tx.objectStore('project').get('revision');
@@ -2566,7 +2590,8 @@ export class SignalEngine {
   }
   /**
    * Remove derived indexes and checkpoints that no current, Undo or Redo
-   * signal uses. Caller must hold the shared workspace writer lock.
+   * signal uses, and every artifact of another `derived-vN` cache version.
+   * Caller must hold the shared workspace writer lock.
    */
   async pruneDerivedIndexes() {
     const live = new Set<string>();
@@ -2587,7 +2612,7 @@ export class SignalEngine {
       this.db
         .transaction('chunks')
         .objectStore('chunks')
-        .getAllKeys(IDBKeyRange.bound([DERIVED], [DERIVED.replace(/:$/, ';')])),
+        .getAllKeys(IDBKeyRange.bound([DERIVED_ANY], [`${DERIVED_ANY}\uffff`])),
     );
     const stale = keys.filter(
       (key) =>

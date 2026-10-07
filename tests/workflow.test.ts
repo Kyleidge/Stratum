@@ -2,7 +2,12 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { SignalEngine } from '../lib/signal-engine';
+import {
+  NEWER_WORKSPACE_MESSAGE,
+  SignalEngine,
+  WORKSPACE_SCHEMA_VERSION,
+} from '../lib/signal-engine';
+import { needsReload } from '../lib/engine-error';
 import {
   stepName,
   withWorkflowHistory,
@@ -2383,3 +2388,56 @@ void test('5,000 deep operations stay two levels; large batches remain bounded a
   assert.equal(focusedLineage.length, 7);
   assert.deepEqual(project.nodes, nodes);
 });
+
+void test('a workspace saved by a newer schema is refused and left unchanged', async () => {
+  const { engine, source, database } = await fixture();
+  const before = structuredClone(engine.project);
+  engine.close();
+  // A newer Stratum upgrades the database version and may change records.
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(database, WORKSPACE_SCHEMA_VERSION + 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  const older = new SignalEngine(undefined, database);
+  await assert.rejects(older.open(), {
+    message: NEWER_WORKSPACE_MESSAGE,
+  });
+  assert.equal(needsReload(NEWER_WORKSPACE_MESSAGE), false);
+  // Nothing was written: the newer database still holds the same workspace.
+  const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(database);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  assert.equal(reopened.version, WORKSPACE_SCHEMA_VERSION + 1);
+  const stored = await new Promise<unknown>((resolve, reject) => {
+    const request = reopened
+      .transaction('project')
+      .objectStore('project')
+      .get('current');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  reopened.close();
+  assert.deepEqual(stored, before);
+  assert.ok(before.sources.some((item) => item.id === source.id));
+});
+
+void test(
+  'an open workspace yields to a newer schema upgrade instead of blocking it',
+  { timeout: 10_000 },
+  async () => {
+    const { engine, source, database } = await fixture();
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(database, WORKSPACE_SCHEMA_VERSION + 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('The upgrade was blocked.'));
+    });
+    upgraded.close();
+    // The older window's next request fails and offers Reload; it writes nothing.
+    await assert.rejects(engine.derive(source.channels[0], 'scale', 2));
+  },
+);

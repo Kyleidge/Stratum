@@ -449,6 +449,10 @@ and `tests/high-rate.test.ts`.
 - Keep Cloudflare server code compatible with Workers and ESM.
 - Keep Wrangler logs and Miniflare state project-local, as configured in Vite.
 - Preserve existing app behavior and dependencies unless the task needs a change.
+- Persisted formats follow `docs/file-format-stability.md`: read every older
+  version, refuse newer ones without writing, and bump `WORKFLOW_VERSION`,
+  `WORKSPACE_SCHEMA_VERSION`, the backup or draft version, or a cache key
+  version as it describes.
 
 ## Git workflow
 

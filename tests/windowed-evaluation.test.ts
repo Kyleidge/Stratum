@@ -335,12 +335,27 @@ void test('stale derived indexes are pruned; live and Undo ones are kept', async
   await engine.plot(kept);
   const removed = (await engine.derive(x, 'low-pass', 200)).id;
   await engine.plot(removed);
-  const owners = async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+  const open = () =>
+    new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(database, 1);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
+  // Artifacts of an earlier derived-cache version are never current.
+  const legacy = await open();
+  await new Promise<void>((resolve, reject) => {
+    const tx = legacy.transaction('chunks', 'readwrite');
+    tx.objectStore('chunks').put(new Float64Array([1]), [
+      'derived-v0:old-recipe',
+      0,
+      'plot-index-v2:0',
+    ]);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  legacy.close();
+  const owners = async (prefix = 'derived-v1:') => {
+    const db = await open();
     const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
       const request = db
         .transaction('chunks')
@@ -353,15 +368,17 @@ void test('stale derived indexes are pruned; live and Undo ones are kept', async
     return new Set(
       keys
         .map((key) => String((key as unknown[])[0]))
-        .filter((owner) => owner.startsWith('derived-v1:')),
+        .filter((owner) => owner.startsWith(prefix)),
     );
   };
   assert.equal((await owners()).size, 2);
+  assert.equal((await owners('derived-v0:')).size, 1);
   // Deleting the step keeps its artifacts while Undo can restore it.
   const step = new WorkflowIndex(engine.project).owner.get(removed)!;
   await engine.deleteOperation(step.id);
   await engine.pruneDerivedIndexes();
   assert.equal((await owners()).size, 2);
+  assert.equal((await owners('derived-v0:')).size, 0);
   const archive = await (await engine.backupWorkspace()).text();
   assert.ok(
     !archive.includes('derived-v1:'),
