@@ -764,6 +764,8 @@ export async function plotUiSmoke() {
   const torqueBeforeReorder = limits('Nm');
   const original = stored()[0];
   await click('Move trace down Motor speed');
+  // Reordering re-renders the axes; wait for the torque axis to return.
+  await until(() => !!axis('Nm'), 'torque axis after reordering');
   assert(
     stored()[0].traces[1].id === original.traces[0].id,
     'Keyboard trace reordering failed.',
