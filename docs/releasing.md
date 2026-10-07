@@ -60,8 +60,8 @@ them.
    the changelog, and publish it. Installed copies only see published
    releases.
 
-Pushes to `release-packaging`, pull requests that touch packaging files and
-manual runs (**Run workflow**) build the installer without publishing and
+Pull requests that touch packaging files and manual runs (**Run workflow**)
+build the installer without publishing and
 attach it as the `stratum-windows-installer` workflow artifact.
 
 ## Build locally

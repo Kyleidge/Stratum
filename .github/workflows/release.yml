@@ -1,14 +1,13 @@
 # Builds the Windows installer. A `v*` tag (matching package.json's version)
 # also publishes the installer, its blockmap and latest.yml to the public
-# releases feed that installed copies update from. Pushes to
-# release-packaging, pull requests touching packaging and manual runs only
-# build, uploading the installer as a workflow artifact. See docs/releasing.md.
+# releases feed that installed copies update from. Pull requests touching
+# packaging and manual runs only build, uploading the installer as a workflow
+# artifact. See docs/releasing.md.
 name: Release
 
 on:
   push:
     tags: ['v*']
-    branches: [release-packaging]
   pull_request:
     paths:
       - '.github/workflows/release.yml'
