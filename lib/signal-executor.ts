@@ -5,9 +5,15 @@ import {
   isBinaryOperation,
 } from './signal-arithmetic';
 import { executeTime } from './time-executor';
+import { compileFormula } from './formula';
 import { yieldEngine } from './engine-yield';
 import { parentWindow } from './signal-range';
-import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
+import {
+  ButterworthFilter,
+  ExponentialSmoother,
+  RcFilter,
+  RollingMedian,
+} from './signal-filters';
 import type { SignalGraph } from './signal-graph';
 import type { Point, SeriesChunk, SignalNode } from './signal-types';
 
@@ -31,6 +37,8 @@ export const CHECKPOINTED = new Set([
   'exponential',
   'low-pass',
   'high-pass',
+  'butterworth-low',
+  'butterworth-high',
   'integral',
   'resample',
 ]);
@@ -161,6 +169,53 @@ export async function* executeSignal(
       if (output.length) yield { kind: 'output', chunk: arrays(output) };
       return;
     }
+    if (node.operation === 'formula') {
+      // Shared-timestamp math over every signal variable, in lockstep.
+      const formula = compileFormula(node.expression ?? '');
+      const count = node.parents.length;
+      const constants = formula.values.map((name) => node.parameters[name]);
+      const chunks: (SeriesChunk | undefined)[] = [];
+      const at: number[] = Array.from({ length: count }, () => 0);
+      for (let k = 0; k < count; k++)
+        chunks[k] = yield { kind: 'input', index: k };
+      const advance = async function* (k: number): Process {
+        if (++at[k] === chunks[k]!.time.length) {
+          chunks[k] = yield { kind: 'input', index: k };
+          at[k] = 0;
+        }
+      };
+      // Windowed inputs cover the window but may begin at different samples.
+      while (inputRange && chunks.every(Boolean)) {
+        const latest = Math.max(
+          ...chunks.map((chunk, k) => chunk!.time[at[k]]),
+        );
+        if (chunks.every((chunk, k) => chunk!.time[at[k]] === latest)) break;
+        for (let k = 0; k < count && chunks.every(Boolean); k++)
+          while (chunks[k] && chunks[k]!.time[at[k]] < latest)
+            yield* advance(k);
+      }
+      const signals = new Float64Array(count);
+      let output: Point[] = [];
+      while (chunks.every(Boolean)) {
+        check();
+        const time = chunks[0]!.time[at[0]];
+        for (let k = 0; k < count; k++) {
+          if (chunks[k]!.time[at[k]] !== time)
+            throw new Error('Inputs must share timestamps.');
+          signals[k] = chunks[k]!.values[at[k]];
+        }
+        output.push([time, formula.evaluate(signals, constants)]);
+        for (let k = 0; k < count; k++) yield* advance(k);
+        if (output.length === SIZE) {
+          yield { kind: 'output', chunk: arrays(output) };
+          output = [];
+        }
+      }
+      if (chunks.some(Boolean) && !inputRange)
+        throw new Error('Input lengths differ.');
+      if (output.length) yield { kind: 'output', chunk: arrays(output) };
+      return;
+    }
     const mean =
       node.operation === 'smooth'
         ? new RollingMean(node.parameters.value)
@@ -176,6 +231,15 @@ export async function* executeSignal(
     const rc =
       node.operation === 'low-pass' || node.operation === 'high-pass'
         ? new RcFilter(node.parameters.value, node.operation)
+        : undefined;
+    const butterworth =
+      node.operation === 'butterworth-low' ||
+      node.operation === 'butterworth-high'
+        ? new ButterworthFilter(
+            node.parameters.value,
+            node.parameters.rate,
+            node.operation === 'butterworth-low' ? 'low-pass' : 'high-pass',
+          )
         : undefined;
     const origin = graph.ranges.get(node.parents[0])![0];
     let previous: Point | undefined;
@@ -280,6 +344,11 @@ export async function* executeSignal(
             checkpoints![state + 1],
             checkpoints![state + 2],
           );
+          butterworth?.restore(
+            checkpoints![state],
+            checkpoints![state + 1],
+            checkpoints![state + 2],
+          );
           if (node.operation === 'integral') integrated = checkpoints![state];
           if (node.operation === 'resample') gridIndex = checkpoints![state];
           if (oldTimes.length) previous = [oldTimes.at(-1)!, oldValues.at(-1)!];
@@ -316,9 +385,11 @@ export async function* executeSignal(
           ? [exponential.state()]
           : rc
             ? rc.state()
-            : node.operation === 'integral'
-              ? [integrated]
-              : [gridIndex];
+            : butterworth
+              ? butterworth.state()
+              : node.operation === 'integral'
+                ? [integrated]
+                : [gridIndex];
       saved.push(time, consumed, state[0] ?? 0, state[1] ?? 0, state[2] ?? 0);
     };
     while (chunk) {
@@ -404,11 +475,18 @@ export async function* executeSignal(
             case 'high-pass':
               value = rc!.next(t, input);
               break;
+            case 'butterworth-low':
+            case 'butterworth-high':
+              value = butterworth!.next(t, input);
+              break;
             case 'scale':
               value *= node.parameters.value;
               break;
             case 'offset':
               value += node.parameters.value;
+              break;
+            case 'convert':
+              value = value * node.parameters.factor + node.parameters.offset;
               break;
             case 'absolute':
               value = Math.abs(value);

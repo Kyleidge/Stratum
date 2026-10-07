@@ -7,6 +7,7 @@ import {
   type ReportFrameStyle,
 } from './report-mockup';
 import { wrapTextLines } from './report-text';
+import { randomId } from './random-id';
 
 export interface ReportDesign {
   style: ReportFrameStyle;
@@ -389,7 +390,7 @@ export function createTemplateReport(
     ...report,
     pages: [
       {
-        id: crypto.randomUUID(),
+        id: randomId(),
         // A very long title on a landscape page can push the last blocks off.
         blocks: blocks.filter(
           (block) => block.y + block.height <= height - insets.bottom,

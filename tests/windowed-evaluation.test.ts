@@ -126,6 +126,8 @@ async function derivedSet(engine: SignalEngine, x: string, y: string) {
     exponential: await derive(x, 'exponential', 0.05),
     'low-pass': await derive(x, 'low-pass', 200),
     'high-pass': await derive(x, 'high-pass', 50),
+    'butterworth low': await derive(x, 'butterworth-low', 200),
+    'butterworth high': await derive(x, 'butterworth-high', 50),
     derivative: await derive(x, 'derivative', 0),
     integral: await derive(x, 'integral', 0),
     'resample 9 kHz': await derive(x, 'resample', 9000),
@@ -161,6 +163,29 @@ async function derivedSet(engine: SignalEngine, x: string, y: string) {
     maxGap: 0.001,
   });
   ids['uniform grid'] = grid.id;
+  const [formula] = await engine.deriveMany(
+    [ids['smooth 101']],
+    'formula',
+    0,
+    true,
+    undefined,
+    {
+      unit: 'V²',
+      formula: { expression: 'A * B + abs(A)', signals: { B: [y] } },
+    },
+  );
+  ids['formula of smooth and y'] = formula.id;
+  const [converted] = await engine.deriveMany(
+    [x],
+    'convert',
+    0,
+    true,
+    undefined,
+    {
+      unit: 'mV',
+    },
+  );
+  ids['converted to mV'] = converted.id;
   return ids;
 }
 

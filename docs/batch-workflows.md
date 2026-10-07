@@ -168,11 +168,70 @@ Each step has exactly one operation:
 | --------- | --------------------------------------------------------------------------------------------------------------- | --------------- |
 | `derive`  | `function`, `input`/`inputs`, `parameter`; two-input functions also need `with`                                 | Derive          |
 | `segment` | `input`/`inputs`, one of `ranges`, `windows` or `triggers`, `boundary`, `independently`, `scope`, `time-origin` | Segment         |
-| `value`   | `function` (`time-average`, `sample-average`, `minimum`, `maximum`), `input`/`inputs`                           | Calculate value |
+| `value`   | `function`, `input`/`inputs`, and the function's settings (see below)                                           | Calculate value |
 | `time`    | one of `align`, `resample`, `combine`, `crop`                                                                   | Compare & align |
 
 Optional step settings: `name`, `outputs` (a label with `{n}`, `{input}` and
 `{item}` tokens, or a list of labels), `checks` and `on-fail: stop`.
+
+Value functions are `time-average`, `sample-average`, `minimum`, `maximum`,
+`start-value`, `end-value`, `value-at`, `rms`, `standard-deviation`,
+`peak-to-peak`, `area`, `duration`, `time-of-minimum`, `time-of-maximum`,
+`time-above`, `time-below`, `first-crossing` and `crossing-count`. Some take
+settings, and any other setting is rejected:
+
+- `value-at`: `time`, seconds from the input's start (default 0).
+- `time-above`, `time-below`: `threshold`, in the input's unit (required).
+- `first-crossing`, `crossing-count`: `threshold` (required) and `edge`,
+  `rising` (the default) or `falling`, plus optional `hysteresis` (in the
+  input's unit) and `debounce` (seconds).
+
+Triggers also accept optional `hysteresis` and `debounce`, with the same
+meaning as in the Segment dialog's **Ignore chatter** section.
+
+```yaml
+- id: spin-up
+  value: { function: first-crossing, input: speed, threshold: 850 }
+```
+
+Formulas and conversions are derive functions with their own settings:
+
+```yaml
+- id: power
+  derive:
+    function: formula
+    input: torque
+    expression: A * B / 9549 * k
+    unit: kW
+    signals: { B: speed } # One signal, or a step matched to each input by grid
+    values: { k: calibration } # A value step, matched to each input
+- id: torque-nm
+  derive: { function: convert, input: torque, unit: N·m }
+```
+
+A derive `parameter` (for `offset`, `scale` and `time-shift`), a value's
+`threshold` or `time`, and a trigger's `threshold` or `offset` can instead take
+a value step's result: `{ value: <step>, factor: <number> }` (the factor
+defaults to 1). A step with several values matches one to each input, as in
+the app; `step[2]` picks one value for every input. The reference must be an
+earlier `value` step.
+
+```yaml
+- id: peak-speed
+  value: { function: maximum, input: speed }
+- id: runs
+  segment:
+    input: torque
+    triggers:
+      start:
+        signal: speed
+        edge: rising
+        threshold: { value: peak-speed, factor: 0.5 }
+      end:
+        signal: speed
+        edge: falling
+        threshold: { value: peak-speed, factor: 0.5 }
+```
 
 `time-origin` applies to segment `ranges` and `windows`:
 

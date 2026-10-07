@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Eye, Hash, LoaderCircle, Scan, Waves } from 'lucide-react';
 import { FUNCTIONS } from '@/lib/signal-functions';
 import { operationLabels } from '@/lib/signal-explorer';
@@ -15,19 +15,27 @@ import {
   parameterContext,
   parameterHint,
   parameterScale,
+  rangeMidpoint,
+  roundSignificant,
 } from '@/lib/parameter-scale';
-import { VALUE_TAGS } from '@/lib/plot-scratchpad';
+import { VALUE_TAGS, valueReference } from '@/lib/plot-scratchpad';
 import type { WorkflowIndex } from '@/lib/workflow-history';
 import {
+  statisticTime,
   statisticValue,
   VALUE_FUNCTIONS,
+  valueSpec as findValueSpec,
+  valueUnit,
+  type ParameterBindings,
   type ValueOperation,
+  type ValueParameters,
   type ValueStatistics,
   type WorkflowStep,
 } from '@/lib/workflow-types';
 import type {
   DerivePreview,
   EngineRequest,
+  FormulaSettings,
   EngineResponse,
   Operation,
   Plot,
@@ -35,6 +43,21 @@ import type {
   SignalNode,
 } from '@/lib/signal-types';
 import ValueOperationPalette from './value-operation-palette';
+import { gridKey } from '@/lib/sample-grid';
+import { conversionTargets } from '@/lib/units';
+import { compileFormula } from '@/lib/formula';
+import FormulaSettingsPanel, {
+  formulaRequest,
+  initialFormulaDraft,
+  type FormulaDraft,
+} from './formula-settings';
+import ValueBindingControl, {
+  NUMBER_DRAFT,
+  bindingFromDraft,
+  draftFromBinding,
+  type BindingDraft,
+} from './value-binding-control';
+import { BINDABLE_DERIVE, BINDABLE_VALUE } from '@/lib/value-bindings';
 import {
   OPERATION_FORMULAS,
   SIGNAL_FUNCTIONS,
@@ -62,7 +85,16 @@ export type FunctionDraft = {
   operation?: Operation | ValueOperation;
   parameter?: number;
   secondaryId?: string;
+  /** Saved settings of a parameterised value calculation. */
+  valueParameters?: ValueParameters;
+  /** Saved settings taken from values. */
+  bindings?: ParameterBindings;
+  /** A formula's output unit or a conversion's target unit. */
+  unit?: string;
+  formula?: FormulaSettings;
 };
+/** Settings beyond the single parameter: formulas and conversions. */
+type DeriveExtra = { unit?: string; formula?: FormulaSettings };
 type Request = (message: EngineRequest) => Promise<EngineResponse>;
 type Range = [number, number];
 /** Inputs offered by the preview chooser; every input is still processed. */
@@ -103,59 +135,6 @@ function rememberOperation(kind: 'derive' | 'value', operation: string) {
   }
 }
 
-/**
- * The sample-grid identity the engine checks before combining two signals,
- * mirrored here only to group Input B choices. The engine still validates.
- */
-function gridKey(nodes: ReadonlyMap<string, SignalNode>, id: string): string {
-  const operations: [string, Record<string, number>][] = [];
-  let node = nodes.get(id);
-  while (node && node.operation !== 'raw') {
-    if (node.timeRecipe?.kind === 'resample')
-      return JSON.stringify([
-        node.timeReference?.id,
-        node.timeRecipe.grid,
-        operations,
-      ]);
-    if (
-      node.timeRecipe?.kind === 'align' ||
-      node.timeRecipe?.kind === 'crop' ||
-      node.operation === 'min-max'
-    )
-      return JSON.stringify([node.id, operations]);
-    if (
-      ['crop', 'resample', 'time-shift', 'zero-time'].includes(node.operation)
-    ) {
-      const last = operations.at(-1);
-      if (node.operation === 'crop' && last?.[0] === 'crop') {
-        const a = last[1],
-          b = node.parameters;
-        const end = Math.min(a.end, b.end);
-        last[1] = {
-          start: Math.max(a.start, b.start),
-          end,
-          endExclusive:
-            (a.end === end && a.endExclusive === 1) ||
-            (b.end === end && b.endExclusive === 1)
-              ? 1
-              : 0,
-        };
-      } else
-        operations.push([
-          node.operation,
-          node.operation === 'crop'
-            ? {
-                ...node.parameters,
-                endExclusive: node.parameters.endExclusive ?? 0,
-              }
-            : node.parameters,
-        ]);
-    }
-    node = nodes.get(node.parents[0]);
-  }
-  return JSON.stringify([node?.sourceId, operations]);
-}
-
 export default function FunctionEditor({
   editor,
   project,
@@ -174,6 +153,9 @@ export default function FunctionEditor({
     operation: Operation | ValueOperation,
     parameter: number,
     secondaryId: string,
+    valueParameters?: ValueParameters,
+    bindings?: ParameterBindings,
+    extra?: DeriveExtra,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -195,13 +177,35 @@ export default function FunctionEditor({
   const [secondaryId, setSecondaryId] = useState(editor.secondaryId ?? '');
   const [previewId, setPreviewId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
-  const statistics = useValueStatistics(values ? editor.ids : [], request);
-  const valueSpec = VALUE_FUNCTIONS.find(
-    (spec) => spec.operation === operation,
+  // An untouched threshold follows the previewed input's range midpoint.
+  const [valueForm, setValueForm] = useState<ValueForm>(() =>
+    initialValueForm(index, editor.valueParameters, editor.bindings),
   );
-  const spec =
-    SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
-    FUNCTIONS.find((spec) => spec.operation === operation);
+  const [formulaDraft, setFormulaDraft] = useState<FormulaDraft>(() =>
+    initialFormulaDraft(
+      index,
+      index.nodes.get(editor.ids[0])?.unit ?? '',
+      editor.operation === 'formula' ? editor : undefined,
+    ),
+  );
+  const [convertUnit, setConvertUnit] = useState(
+    editor.operation === 'convert' ? (editor.unit ?? '') : '',
+  );
+  // A derive parameter typed as a number or taken from values.
+  const [deriveBinding, setDeriveBinding] = useState<BindingDraft>(() =>
+    editor.kind === 'derive'
+      ? draftFromBinding(index, editor.bindings?.value)
+      : NUMBER_DRAFT,
+  );
+  const valueSpec = values ? findValueSpec(operation) : undefined;
+  // When editing, settings can only use values calculated before the step.
+  const before = editor.editingStepId
+    ? index.steps.get(editor.editingStepId)?.sequence
+    : undefined;
+  const spec = values
+    ? undefined
+    : (SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
+      FUNCTIONS.find((spec) => spec.operation === operation));
   const binary = isBinaryOperation(operation);
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
   const inputGrids = new Set(editor.ids.map((id) => gridKey(index.nodes, id)));
@@ -241,17 +245,6 @@ export default function FunctionEditor({
       unitError = message(caught, 'Incompatible units.');
     }
   }
-  const changeOperation = (next: string) => {
-    setOperation(next);
-    setParameter(
-      String(
-        SIGNAL_FUNCTIONS.find((item) => item.operation === next)
-          ?.defaultValue ?? 0,
-      ),
-    );
-    setError('');
-  };
-
   // The previewed input's full-range plot feeds the value chart, slider
   // scales and hints.
   const [inputPlot, setInputPlot] = useState<{
@@ -282,17 +275,91 @@ export default function FunctionEditor({
   const plot = inputPlot?.id === previewId ? inputPlot.plot : undefined;
   const plotError = inputPlot?.id === previewId ? inputPlot.error : undefined;
   const context = parameterContext(plot?.summary);
+  const changeOperation = (next: string) => {
+    setOperation(next);
+    const fallback =
+      SIGNAL_FUNCTIONS.find((item) => item.operation === next)?.defaultValue ??
+      0;
+    // A Butterworth default must sit below this input's Nyquist frequency.
+    const rate = context.interval ? 1 / context.interval : undefined;
+    setParameter(
+      String(
+        next.startsWith('butterworth') && rate && fallback >= rate * 0.45
+          ? roundSignificant(rate / 10, 2)
+          : fallback,
+      ),
+    );
+    setError('');
+  };
   const previewNode = index.nodes.get(previewId);
+  const settings = valueSettings(
+    index,
+    valueSpec?.parameters ?? [],
+    valueForm,
+    rangeMidpoint(context.min, context.max),
+  );
+  const statistics = useValueStatistics(
+    values ? editor.ids : [],
+    request,
+    valueSpec?.parameters?.length && settings.parameters
+      ? {
+          operation: valueSpec.operation,
+          parameters: settings.parameters,
+          ...(settings.bindings ? { bindings: settings.bindings } : {}),
+        }
+      : undefined,
+  );
+  const bindable = !values && !!BINDABLE_DERIVE[operation as Operation];
+  const deriveBound = bindable
+    ? bindingFromDraft(index, deriveBinding)
+    : undefined;
+  // Formulas and conversions carry their own settings and value bindings.
+  const formula =
+    !values && operation === 'formula'
+      ? formulaRequest(index, formulaDraft)
+      : undefined;
+  const conversions =
+    !values && operation === 'convert'
+      ? conversionTargets(previewNode?.unit ?? '')
+      : [];
+  const extraProblem =
+    formula && 'problem' in formula
+      ? formula.problem
+      : operation === 'convert' && !values && !convertUnit
+        ? conversions.length
+          ? 'Choose the unit to convert to.'
+          : `Stratum has no conversions for ${previewNode?.unit || 'signals without a unit'}.`
+        : '';
+  const extra: DeriveExtra | undefined =
+    formula && !('problem' in formula)
+      ? { unit: formula.unit, formula: formula.formula }
+      : operation === 'convert' && !values && convertUnit
+        ? { unit: convertUnit }
+        : undefined;
+  const deriveBindings = deriveBound
+    ? { value: deriveBound }
+    : formula && !('problem' in formula)
+      ? formula.bindings
+      : undefined;
   const choices = editor.ids.slice(0, PREVIEW_CHOICES).map((id) => ({
     value: id,
     label: `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
   }));
-  const parameterValue = spec?.parameter ? Number(parameter) : 0;
-  const parameterReady =
-    !spec?.parameter || (!!parameter.trim() && Number.isFinite(parameterValue));
+  const parameterValue = deriveBound
+    ? 0
+    : spec?.parameter
+      ? Number(parameter)
+      : 0;
+  const parameterReady = deriveBound
+    ? true
+    : deriveBound === null
+      ? false
+      : !spec?.parameter ||
+        (!!parameter.trim() && Number.isFinite(parameterValue));
   const ready =
     !values &&
     parameterReady &&
+    !extraProblem &&
     (!binary || !!secondaryId) &&
     !unitError &&
     !!previewNode;
@@ -303,24 +370,29 @@ export default function FunctionEditor({
     inputId: previewId,
     operation: operation as Operation,
     parameter: parameterValue,
+    bindings: deriveBindings,
+    extra,
     secondaryId: binary ? secondaryId : undefined,
     ready,
     viewport,
   });
-  const waiting = !parameterReady
-    ? `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
-    : binary && !secondaryId
-      ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
-      : unitError || '';
+  const waiting = extraProblem
+    ? extraProblem
+    : !parameterReady
+      ? deriveBound === null
+        ? 'Choose a value and a finite factor to preview.'
+        : `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
+      : binary && !secondaryId
+        ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
+        : unitError || '';
   // Create stays disabled while the settings or their preview are invalid,
   // with the reason beside the button.
   const blocked = values
-    ? statistics.error
-      ? `The preview failed: ${statistics.error}`
-      : ''
+    ? settings.waiting ||
+      (statistics.error ? `The preview failed: ${statistics.error}` : '')
     : waiting || (derived.error ? `The preview failed: ${derived.error}` : '');
   const blockedError = values
-    ? !!statistics.error
+    ? !settings.waiting && !!statistics.error
     : !waiting && !!derived.error;
   const count = editor.ids.length;
   const create = editor.editingStepId
@@ -388,9 +460,32 @@ export default function FunctionEditor({
               </p>
               {values && (
                 <p className="value-output-hint">
-                  One result per input, in its original unit. Missing samples
-                  are excluded.
+                  One result per input,{' '}
+                  {valueSpec?.result === 'level'
+                    ? 'in its original unit'
+                    : valueSpec?.result === 'area'
+                      ? 'in its unit × seconds'
+                      : valueSpec?.result === 'time'
+                        ? 'in seconds'
+                        : 'as a count'}
+                  . Missing samples are excluded.
                 </p>
+              )}
+              {values && !!valueSpec?.parameters?.length && (
+                <ValueSettings
+                  parameters={valueSpec.parameters}
+                  form={valueForm}
+                  threshold={settings.threshold}
+                  unit={previewNode?.unit ?? ''}
+                  context={context}
+                  index={index}
+                  inputIds={editor.ids}
+                  before={before}
+                  resolved={focused?.result?.parameters}
+                  inputLabel={index.label(previewId)}
+                  disabled={busy}
+                  onChange={setValueForm}
+                />
               )}
               {binary && (
                 <div className="signal-first-input">
@@ -403,24 +498,104 @@ export default function FunctionEditor({
                 </div>
               )}
               {spec?.parameter && (
-                <ParameterControl
+                <ParameterSetting
+                  bindable={bindable}
                   label={spec.parameter}
-                  value={parameter}
-                  unit={
-                    operation === 'offset'
-                      ? previewNode?.unit || spec.unit
-                      : spec.unit
+                  index={index}
+                  inputIds={editor.ids}
+                  before={before}
+                  draft={deriveBinding}
+                  unit={BINDABLE_DERIVE[operation as Operation] ?? 'any'}
+                  inputUnit={previewNode?.unit ?? ''}
+                  resolved={
+                    derived.shown?.node.bindings?.value
+                      ? `${index.label(previewId)} uses ${formatQuantity(derived.shown.node.parameters.value, 6)}${
+                          operation === 'offset' && previewNode?.unit
+                            ? ` ${previewNode.unit}`
+                            : operation === 'time-shift'
+                              ? ' s'
+                              : ''
+                        }.`
+                      : undefined
                   }
-                  scale={parameterScale(operation, context)}
-                  hint={parameterHint(
-                    operation,
-                    parameterValue,
-                    context,
-                    previewNode?.unit,
-                  )}
                   disabled={busy}
-                  onChange={setParameter}
+                  onChange={setDeriveBinding}
+                >
+                  <ParameterControl
+                    label={spec.parameter}
+                    value={parameter}
+                    unit={
+                      operation === 'offset'
+                        ? previewNode?.unit || spec.unit
+                        : spec.unit
+                    }
+                    scale={parameterScale(operation, context)}
+                    hint={parameterHint(
+                      operation,
+                      parameterValue,
+                      context,
+                      previewNode?.unit,
+                    )}
+                    disabled={busy}
+                    onChange={setParameter}
+                  />
+                </ParameterSetting>
+              )}
+              {operation === 'formula' && (
+                <FormulaSettingsPanel
+                  index={index}
+                  inputIds={editor.ids}
+                  previewId={previewId}
+                  before={before}
+                  draft={formulaDraft}
+                  disabled={busy}
+                  onChange={setFormulaDraft}
                 />
+              )}
+              {operation === 'convert' && conversions.length > 0 && (
+                <div className="parameter-control-field">
+                  <span>Convert to</span>
+                  <Select
+                    value={convertUnit}
+                    items={[
+                      { value: '', label: 'Choose a unit…' },
+                      ...conversions.flatMap((family) =>
+                        family.units.map((unit) => ({
+                          value: unit,
+                          label: unit,
+                        })),
+                      ),
+                    ]}
+                    disabled={busy}
+                    onValueChange={(next) => {
+                      if (next !== null) setConvertUnit(String(next));
+                    }}
+                  >
+                    <SelectTrigger
+                      className="workbench-select"
+                      aria-label="Convert to"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {conversions.map((family) => (
+                        <SelectGroup key={family.family}>
+                          <SelectLabel>
+                            {family.family} · from {previewNode?.unit}
+                          </SelectLabel>
+                          {family.units.map((unit) => (
+                            <SelectItem
+                              key={`${family.family}:${unit}`}
+                              value={unit}
+                            >
+                              {unit}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
               {binary && (
                 <SecondInput
@@ -471,6 +646,7 @@ export default function FunctionEditor({
                 index={index}
                 statistics={statistics}
                 operation={operation as ValueOperation}
+                parameters={focused?.result?.parameters ?? settings.parameters}
                 previewId={previewId}
                 plot={plot}
                 plotError={plotError}
@@ -521,8 +697,15 @@ export default function FunctionEditor({
               try {
                 await onApply(
                   operation as Operation | ValueOperation,
-                  spec?.parameter ? finite(parameter) : 0,
+                  !values && spec?.parameter && !deriveBound
+                    ? finite(parameter)
+                    : 0,
                   secondaryId,
+                  values && valueSpec?.parameters?.length
+                    ? settings.parameters
+                    : undefined,
+                  values ? settings.bindings : deriveBindings,
+                  values ? undefined : extra,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
@@ -609,6 +792,8 @@ function useDerivePreview({
   inputId,
   operation,
   parameter,
+  bindings,
+  extra,
   secondaryId,
   ready,
   viewport,
@@ -617,6 +802,8 @@ function useDerivePreview({
   inputId: string;
   operation: Operation;
   parameter: number;
+  bindings?: ParameterBindings;
+  extra?: DeriveExtra;
   secondaryId?: string;
   ready: boolean;
   viewport?: Range;
@@ -628,18 +815,29 @@ function useDerivePreview({
     error?: string;
   }>();
   const key = ready
-    ? JSON.stringify([inputId, operation, parameter, secondaryId, viewport])
+    ? JSON.stringify([
+        inputId,
+        operation,
+        parameter,
+        secondaryId,
+        viewport,
+        bindings,
+        extra,
+      ])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const [id, operation, parameter, secondaryId, range] = JSON.parse(key) as [
-      string,
-      Operation,
-      number,
-      string | undefined,
-      Range | undefined,
-    ];
+    const [id, operation, parameter, secondaryId, range, bindings, extra] =
+      JSON.parse(key) as [
+        string,
+        Operation,
+        number,
+        string | undefined,
+        Range | undefined,
+        ParameterBindings | undefined,
+        DeriveExtra | undefined,
+      ];
     // Debounced so slider drags send one request per pause, not per pixel.
     const timer = setTimeout(() => {
       void request({
@@ -647,6 +845,8 @@ function useDerivePreview({
         inputId: id,
         operation,
         parameter,
+        ...(bindings ? { bindings } : {}),
+        ...extra,
         secondaryId,
         range,
         inspection: true,
@@ -686,34 +886,293 @@ function useDerivePreview({
   };
 }
 
-/** Exact value statistics for the first inputs, computed once per dialog. */
-function useValueStatistics(ids: string[], request: Request) {
+type ValueForm = {
+  /** Typed threshold; undefined follows the input's range midpoint. */
+  threshold?: string;
+  edge: 1 | -1;
+  time: string;
+  /** Optional crossing noise settings; blank means none. */
+  hysteresis: string;
+  debounce: string;
+  /** Settings taken from values instead of typed numbers. */
+  bindings: Partial<Record<'threshold' | 'time', BindingDraft>>;
+};
+function initialValueForm(
+  index: WorkflowIndex,
+  parameters?: ValueParameters,
+  bindings?: ParameterBindings,
+): ValueForm {
+  return {
+    ...(parameters?.threshold !== undefined && !bindings?.threshold
+      ? { threshold: String(parameters.threshold) }
+      : {}),
+    edge: parameters?.edge === -1 ? -1 : 1,
+    time: bindings?.time ? '0' : String(parameters?.time ?? 0),
+    hysteresis:
+      parameters?.hysteresis !== undefined ? String(parameters.hysteresis) : '',
+    debounce:
+      parameters?.debounce !== undefined ? String(parameters.debounce) : '',
+    bindings: {
+      ...(bindings?.threshold
+        ? { threshold: draftFromBinding(index, bindings.threshold) }
+        : {}),
+      ...(bindings?.time
+        ? { time: draftFromBinding(index, bindings.time) }
+        : {}),
+    },
+  };
+}
+/** The settings a value calculation needs, or why they are incomplete. */
+function valueSettings(
+  index: WorkflowIndex,
+  needed: readonly string[],
+  form: ValueForm,
+  midpoint?: number,
+): {
+  parameters?: ValueParameters;
+  bindings?: ParameterBindings;
+  threshold: string;
+  waiting: string;
+} {
+  const threshold =
+    form.threshold ?? (midpoint !== undefined ? String(midpoint) : '');
+  const parameters: ValueParameters = {};
+  const bindings: ParameterBindings = {};
+  for (const name of needed) {
+    if (name === 'edge') {
+      parameters.edge = form.edge;
+      continue;
+    }
+    if (name === 'hysteresis' || name === 'debounce') {
+      const text = form[name];
+      if (!text.trim()) continue;
+      const number = Number(text);
+      if (!Number.isFinite(number) || number < 0)
+        return {
+          threshold,
+          waiting: `Enter a ${name} of zero or more, or leave it blank.`,
+        };
+      if (number > 0) parameters[name] = number;
+      continue;
+    }
+    const draft = form.bindings[name as 'threshold' | 'time'];
+    if (draft?.source) {
+      const binding = bindingFromDraft(index, draft);
+      if (!binding)
+        return {
+          threshold,
+          waiting: `Choose a value and a finite factor for the ${name}.`,
+        };
+      bindings[name] = binding;
+      // The engine replaces this placeholder with the value's result.
+      parameters[name] = 0;
+    } else if (name === 'time') {
+      const time = Number(form.time);
+      if (!form.time.trim() || !Number.isFinite(time) || time < 0)
+        return {
+          threshold,
+          waiting: "Enter a time of 0 s or later from the input's start.",
+        };
+      parameters.time = time;
+    } else {
+      const level = Number(threshold);
+      if (!threshold.trim() || !Number.isFinite(level))
+        return { threshold, waiting: 'Enter a threshold to preview.' };
+      parameters.threshold = level;
+    }
+  }
+  return {
+    parameters,
+    ...(Object.keys(bindings).length ? { bindings } : {}),
+    threshold,
+    waiting: '',
+  };
+}
+
+/** A typed parameter that can also come from values when `bindable`. */
+function ParameterSetting({
+  bindable,
+  children,
+  ...control
+}: Omit<Parameters<typeof ValueBindingControl>[0], 'children'> & {
+  bindable: boolean;
+  children: ReactNode;
+}) {
+  return bindable ? (
+    <ValueBindingControl {...control}>{children}</ValueBindingControl>
+  ) : (
+    children
+  );
+}
+
+/** Threshold, edge and time settings of a parameterised value. */
+function ValueSettings({
+  parameters,
+  form,
+  threshold,
+  unit,
+  context,
+  index,
+  inputIds,
+  before,
+  resolved,
+  inputLabel,
+  disabled,
+  onChange,
+}: {
+  parameters: readonly string[];
+  form: ValueForm;
+  threshold: string;
+  unit: string;
+  context: ReturnType<typeof parameterContext>;
+  index: WorkflowIndex;
+  inputIds: string[];
+  before?: number;
+  /** Settings the engine used for the previewed input. */
+  resolved?: ValueParameters;
+  inputLabel: string;
+  disabled: boolean;
+  onChange: (form: ValueForm) => void;
+}) {
+  const bind = (name: 'threshold' | 'time') => ({
+    bindable: true,
+    index,
+    inputIds,
+    before,
+    draft: form.bindings[name] ?? NUMBER_DRAFT,
+    unit: BINDABLE_VALUE[name],
+    inputUnit: unit,
+    resolved:
+      form.bindings[name]?.source && resolved?.[name] !== undefined
+        ? `${inputLabel} uses ${formatQuantity(resolved[name], 6)}${
+            name === 'time' ? ' s' : unit ? ` ${unit}` : ''
+          }.`
+        : undefined,
+    disabled,
+    onChange: (draft: BindingDraft) =>
+      onChange({ ...form, bindings: { ...form.bindings, [name]: draft } }),
+  });
+  return (
+    <>
+      {parameters.includes('edge') && (
+        <fieldset className="segment-edge-toggle">
+          <legend className="field-label">Crossing</legend>
+          {([1, -1] as const).map((edge) => (
+            <button
+              key={edge}
+              type="button"
+              aria-pressed={form.edge === edge}
+              disabled={disabled}
+              onClick={() => onChange({ ...form, edge })}
+            >
+              {edge === 1 ? '↗ Rising above' : '↘ Falling below'}
+            </button>
+          ))}
+        </fieldset>
+      )}
+      {parameters.includes('threshold') && (
+        <ParameterSetting label="Threshold" {...bind('threshold')}>
+          <ParameterControl
+            label="Threshold"
+            value={threshold}
+            unit={unit}
+            scale={parameterScale('value-threshold', context)}
+            disabled={disabled}
+            onChange={(next) => onChange({ ...form, threshold: next })}
+          />
+        </ParameterSetting>
+      )}
+      {parameters.includes('hysteresis') && (
+        <ParameterControl
+          label="Hysteresis"
+          value={form.hysteresis}
+          unit={unit}
+          hint="Optional. After a crossing, the signal must return this far past the threshold before another counts."
+          disabled={disabled}
+          onChange={(hysteresis) => onChange({ ...form, hysteresis })}
+        />
+      )}
+      {parameters.includes('debounce') && (
+        <ParameterControl
+          label="Debounce"
+          value={form.debounce}
+          unit="s"
+          hint="Optional. A crossing counts only if the signal stays crossed for this long."
+          disabled={disabled}
+          onChange={(debounce) => onChange({ ...form, debounce })}
+        />
+      )}
+      {parameters.includes('time') && (
+        <ParameterSetting label="Time from start" {...bind('time')}>
+          <ParameterControl
+            label="Time from start"
+            value={form.time}
+            unit="s"
+            scale={parameterScale('value-time', context)}
+            disabled={disabled}
+            onChange={(time) => onChange({ ...form, time })}
+          />
+        </ParameterSetting>
+      )}
+    </>
+  );
+}
+
+/**
+ * Exact value statistics for the first inputs. Parameterless calculations
+ * share one request per dialog; a parameterised one is evaluated with its
+ * settings, debounced while they change.
+ */
+type ValueCalculation = {
+  operation: ValueOperation;
+  parameters: ValueParameters;
+  bindings?: ParameterBindings;
+};
+function useValueStatistics(
+  ids: string[],
+  request: Request,
+  calculation?: ValueCalculation,
+) {
   const [statistics, setStatistics] = useState<{
     key: string;
     items?: ValueStatistics[];
     error?: string;
   }>();
   const key = ids.length
-    ? JSON.stringify(ids.slice(0, VALUE_PREVIEW_LIMIT))
+    ? JSON.stringify([ids.slice(0, VALUE_PREVIEW_LIMIT), calculation ?? null])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const ids = JSON.parse(key) as string[];
-    void request({ type: 'value-preview', ids, inspection: true })
-      .then((response) => {
-        if (alive && response.type === 'value-preview')
-          setStatistics({ key, items: response.statistics });
-      })
-      .catch((caught: unknown) => {
-        if (alive)
-          setStatistics({
-            key,
-            error: message(caught, 'Values could not be previewed.'),
+    const [ids, calculation] = JSON.parse(key) as [
+      string[],
+      ValueCalculation | null,
+    ];
+    const timer = setTimeout(
+      () => {
+        void request({
+          type: 'value-preview',
+          ids,
+          ...calculation,
+          inspection: true,
+        })
+          .then((response) => {
+            if (alive && response.type === 'value-preview')
+              setStatistics({ key, items: response.statistics });
+          })
+          .catch((caught: unknown) => {
+            if (alive)
+              setStatistics({
+                key,
+                error: message(caught, 'Values could not be previewed.'),
+              });
           });
-      });
+      },
+      calculation ? 200 : 0,
+    );
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
   }, [key, request]);
   const map = new Map<string, ValueStatistics>();
@@ -731,19 +1190,22 @@ function valueText(
   unit = '',
 ) {
   const value = statisticValue(statistics, operation);
+  const shown = valueUnit(operation, unit);
   return value === null
     ? 'Unavailable'
-    : `${formatQuantity(value, 5)}${unit ? ` ${unit}` : ''}`;
+    : `${formatQuantity(value, 5)}${shown ? ` ${shown}` : ''}`;
 }
 
 function valueResults(statistics?: ValueStatistics, unit?: string) {
   if (!statistics) return undefined;
   return Object.fromEntries(
-    VALUE_FUNCTIONS.map((spec) => [
-      spec.operation,
-      valueText(statistics, spec.operation, unit),
-    ]),
-  ) as Record<ValueOperation, string>;
+    VALUE_FUNCTIONS.flatMap((spec) =>
+      // Parameterised results are shown only for the settings being edited.
+      spec.parameters?.length && statistics.result?.operation !== spec.operation
+        ? []
+        : [[spec.operation, valueText(statistics, spec.operation, unit)]],
+    ),
+  ) as Partial<Record<ValueOperation, string>>;
 }
 
 function ValuePreview({
@@ -751,6 +1213,7 @@ function ValuePreview({
   index,
   statistics,
   operation,
+  parameters,
   previewId,
   plot,
   plotError,
@@ -760,6 +1223,7 @@ function ValuePreview({
   index: WorkflowIndex;
   statistics: ReturnType<typeof useValueStatistics>;
   operation: ValueOperation;
+  parameters?: ValueParameters;
   previewId: string;
   plot?: Plot;
   plotError?: string;
@@ -768,12 +1232,8 @@ function ValuePreview({
   const node = index.nodes.get(previewId);
   const focused = statistics.get(previewId);
   const value = focused ? statisticValue(focused, operation) : null;
-  const time =
-    operation === 'minimum'
-      ? focused?.minimumTime
-      : operation === 'maximum'
-        ? focused?.maximumTime
-        : undefined;
+  const time = focused ? statisticTime(focused, operation) : undefined;
+  const spec = findValueSpec(operation);
   const traces: PreviewTrace[] = [];
   if (node && plot) {
     traces.push({
@@ -782,32 +1242,55 @@ function ValuePreview({
       label: index.label(previewId),
       color: 'var(--primary)',
     });
-    if (value !== null) {
+    const reference = focused
+      ? valueReference(
+          {
+            operation,
+            value,
+            unit: valueUnit(operation, node.unit),
+            parameters,
+            level:
+              operation === 'time-of-minimum'
+                ? (focused.minimum ?? undefined)
+                : operation === 'time-of-maximum'
+                  ? (focused.maximum ?? undefined)
+                  : undefined,
+          },
+          node.unit,
+          (number) => formatQuantity(number, 4),
+        )
+      : undefined;
+    if (reference && Number.isFinite(reference.y)) {
       const start = plot.summary.start,
-        end = plot.summary.end;
+        end = plot.summary.end,
+        y = reference.y;
       traces.push({
-        node: { ...node, id: `${node.id}:value`, operation: 'raw' },
+        node: {
+          ...node,
+          id: `${node.id}:value`,
+          operation: 'raw',
+          unit: reference.unit,
+        },
         plot: {
           id: `${node.id}:value`,
           points: [
-            [start, value],
-            [end, value],
+            [start, y],
+            [end, y],
           ],
           summary: {
             count: 1,
-            min: value,
-            max: value,
-            mean: value,
+            min: y,
+            max: y,
+            mean: y,
             integral: NaN,
             start,
             end,
           },
         },
-        label: VALUE_FUNCTIONS.find((item) => item.operation === operation)!
-          .name,
+        label: spec?.name ?? operation,
         color: 'var(--kind-value)',
         referenceLine: true,
-        referenceLabel: `${VALUE_TAGS[operation]} ${formatQuantity(value, 4)}`,
+        referenceLabel: reference.label,
         referenceTime: time,
       });
     }
@@ -815,6 +1298,16 @@ function ValuePreview({
   const range: Range | undefined = plot
     ? [plot.summary.start, plot.summary.end]
     : undefined;
+  const event =
+    time === undefined
+      ? ''
+      : operation === 'minimum' || operation === 'time-of-minimum'
+        ? ` · first minimum at ${formatValue(time, 3)} s`
+        : operation === 'maximum' || operation === 'time-of-maximum'
+          ? ` · first maximum at ${formatValue(time, 3)} s`
+          : operation === 'first-crossing'
+            ? ` · crosses at ${formatValue(time, 3)} s`
+            : ` · at ${formatValue(time, 3)} s`;
   return (
     <>
       <div className="operation-preview-heading">
@@ -839,12 +1332,10 @@ function ValuePreview({
       {focused && (
         <p className="operation-preview-summary">
           {value === null
-            ? 'No finite samples: this value will be stored as unavailable.'
-            : `${formatCount(focused.sampleCount, 'valid sample')} over ${formatDuration(focused.validDuration)}${
-                time !== undefined
-                  ? ` · first ${operation === 'minimum' ? 'minimum' : 'maximum'} at ${formatValue(time, 3)} s`
-                  : ''
-              }.`}
+            ? focused.sampleCount
+              ? `${formatCount(focused.sampleCount, 'valid sample')}, but this value is unavailable for these settings; it will be stored as unavailable.`
+              : 'No finite samples: this value will be stored as unavailable.'
+            : `${formatCount(focused.sampleCount, 'valid sample')} over ${formatDuration(focused.validDuration)}${event}.`}
         </p>
       )}
       {statistics.error && (
@@ -920,15 +1411,23 @@ function DerivedPreview({
   const { shown, error, secondaryId } = preview;
   const traces: PreviewTrace[] = [];
   if (shown) {
-    const ids = [inputId, ...(secondaryId ? [secondaryId] : [])];
+    const ids = secondaryId ? [inputId, secondaryId] : shown.node.parents;
+    // A formula names its inputs A, B, C …; two-input math names A and B.
+    const letters = shown.node.expression
+      ? compileFormula(shown.node.expression).signals
+      : secondaryId
+        ? ['A', 'B']
+        : ['Input'];
     shown.inputs.forEach((plot, position) => {
       const node = index.nodes.get(ids[position]);
       if (node)
         traces.push({
           node,
           plot,
-          label: `${position ? 'B' : secondaryId ? 'A' : 'Input'} · ${index.label(node.id)}`,
-          color: position ? 'var(--series-2)' : 'var(--ink-3)',
+          label: `${letters[position] ?? `Input ${position + 1}`} · ${index.label(node.id)}`,
+          color: position
+            ? `var(--series-${Math.min(8, position + 1)})`
+            : 'var(--ink-3)',
           width: 1.2,
         });
     });

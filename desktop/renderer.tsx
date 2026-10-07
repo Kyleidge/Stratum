@@ -5,8 +5,12 @@ import ReportBuilderMockup from '@/components/report-builder-mockup';
 import '@/app/globals.css';
 import '@/app/regions.css';
 import '@/app/workflow.css';
+import '@/app/workflow-layout.css';
+import '@/app/workflow-plot.css';
+import '@/app/workflow-topbar.css';
+import '@/app/workflow-dialogs.css';
+import '@/app/workflow-onboarding.css';
 import '@/app/workflow-batch.css';
-import '@/app/ui-refresh-mockup.css';
 import '@/app/report-builder-mockup.css';
 import { smokeTest } from './smoke-test';
 import { applyTheme, storedTheme } from '@/lib/theme';
@@ -18,11 +22,6 @@ if (params.has('smoke')) void smokeTest();
 // The Reports workspace bundles the report editor, so the preview reuses it.
 else if (params.has('report-mockup'))
   createRoot(document.getElementById('root')!).render(<ReportBuilderMockup />);
-else if (params.has('mockup'))
-  void import('@/components/ui-refresh-mockup').then(
-    ({ default: UiRefreshMockup }) =>
-      createRoot(document.getElementById('root')!).render(<UiRefreshMockup />),
-  );
 else {
   createRoot(document.getElementById('root')!).render(
     <WorkflowErrorBoundary>

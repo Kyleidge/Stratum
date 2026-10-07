@@ -59,7 +59,8 @@ lineage/input disclosures are paginated. Inspection and processing selections ar
 independent. New installations start empty, with an explicit example action.
 The latest usability/recovery review is in [production-review.md](production-review.md).
 
-The retained region workspace (`region-workbench.tsx`) separates three concepts:
+The engine keeps the earlier region model so older workspaces still open and
+replay; its separate workspace UI has been removed. It separates three concepts:
 
 - Signals: raw columns and lazy derived recipes.
 - Region sets: versioned collections of time intervals on the recording clock.
@@ -152,7 +153,17 @@ adjacency and cancel an open pair. The first start opens an interval; repeated
 starts are ignored until the first strictly later end closes it. Unmatched starts
 are omitted and counted. Different start and end signals are allowed within one
 recording; both must have valid coverage. Apply a filter as an explicit derived
-node if a trigger needs smoothing. Hysteresis and debounce are not implemented.
+node if a trigger needs smoothing.
+
+Two optional settings reject chatter without smoothing the signal. With
+**hysteresis** h, a rising detector re-arms only at or below threshold − h
+(falling: at or above threshold + h), so dips that stay within h of the
+threshold cannot start another crossing. With **debounce** d, a crossing counts
+only if the signal does not return to the re-arm level for d seconds; it is
+still reported at its interpolated crossing time. A gap, or the end of the
+data, before d elapses cancels it. With both at zero the detector is exactly
+the adjacent-sample rule above. Crossing values (first crossing, crossing
+count) use the same detector and settings.
 
 Triggers are paired before applying independent signed time offsets. Offsets may
 create overlapping output intervals. Trigger times and all stored segment ranges

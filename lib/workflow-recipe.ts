@@ -1,7 +1,15 @@
 import { FUNCTIONS } from './signal-functions';
 import { isBinaryOperation } from './signal-arithmetic';
-import { VALUE_FUNCTIONS } from './workflow-types';
-import type { CheckDefinition, ValueOperation } from './workflow-types';
+import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
+import { BINDABLE_DERIVE, BINDABLE_VALUE } from './value-bindings';
+import { compileFormula, MAX_FORMULA_LENGTH } from './formula';
+import type {
+  CheckDefinition,
+  ParameterBindings,
+  ValueBinding,
+  ValueOperation,
+  ValueParameters,
+} from './workflow-types';
 import type {
   EdgeTrigger,
   Operation,
@@ -41,8 +49,14 @@ export type RecipeOperation =
       kind: 'derive';
       operation: Operation;
       inputs: RecipeRef[];
+      /** Ignored (0) while `bindings.value` sets it from values. */
       parameter: number;
       with?: RecipeRef;
+      bindings?: ParameterBindings;
+      /** A formula's output unit, or a conversion's target unit. */
+      unit?: string;
+      /** A formula; `signals` holds each letter's references. */
+      formula?: { expression: string; signals?: Record<string, RecipeRef[]> };
     }
   | {
       kind: 'segment';
@@ -52,7 +66,14 @@ export type RecipeOperation =
       scope?: SegmentationScope;
       timeOrigin: TimeOrigin;
     }
-  | { kind: 'value'; operation: ValueOperation; inputs: RecipeRef[] }
+  | {
+      kind: 'value';
+      operation: ValueOperation;
+      inputs: RecipeRef[];
+      /** Bound settings hold 0 until a run resolves `bindings`. */
+      parameters?: ValueParameters;
+      bindings?: ParameterBindings;
+    }
   | { kind: 'time'; settings: TimeSettings };
 export type RecipeStep = {
   id: string;
@@ -107,6 +128,17 @@ export const slug = (text: string) =>
     .slice(0, 48)
     .replace(/-+$/, '') || 'step';
 
+/** References to value steps whose results set this step's settings. */
+export function bindingRefs(operation: RecipeOperation): RecipeRef[] {
+  const bindings =
+    operation.kind === 'segment'
+      ? operation.definition.bindings
+      : operation.kind === 'time'
+        ? undefined
+        : operation.bindings;
+  return Object.values(bindings ?? {}).flatMap((binding) => binding.valueIds);
+}
+
 function refsOf(operation: RecipeOperation): RecipeRef[] {
   const triggers = (definition: SegmentationDefinition) =>
     definition.method === 'triggers'
@@ -114,11 +146,20 @@ function refsOf(operation: RecipeOperation): RecipeRef[] {
       : [];
   switch (operation.kind) {
     case 'derive':
-      return [...operation.inputs, ...(operation.with ? [operation.with] : [])];
+      return [
+        ...operation.inputs,
+        ...(operation.with ? [operation.with] : []),
+        ...Object.values(operation.formula?.signals ?? {}).flat(),
+        ...bindingRefs(operation),
+      ];
     case 'segment':
-      return [...operation.inputs, ...triggers(operation.definition)];
+      return [
+        ...operation.inputs,
+        ...triggers(operation.definition),
+        ...bindingRefs(operation),
+      ];
     case 'value':
-      return operation.inputs;
+      return [...operation.inputs, ...bindingRefs(operation)];
     case 'time': {
       const settings = operation.settings;
       if (settings.kind === 'align')
@@ -237,6 +278,25 @@ class Reader {
       );
     return value;
   }
+  /**
+   * A number, or `{ value: step, factor: k }` taking it from values (the
+   * value step's references, held until a run binds them).
+   */
+  setting(
+    value: YamlValue | undefined,
+    context: string,
+    at?: object,
+  ): number | ValueBinding {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const map = this.map(value, context);
+      this.keys(map, ['value', 'factor'], context);
+      return {
+        valueIds: this.refs(map.value, `${context} value`, map),
+        factor: this.optionalNumber(map.factor, `${context} factor`, map) ?? 1,
+      };
+    }
+    return this.number(value, context, at);
+  }
   refs(
     value: YamlValue | undefined,
     context: string,
@@ -264,9 +324,39 @@ function readTrigger(
   reader: Reader,
   value: YamlValue | undefined,
   context: string,
+  /** Receives settings taken from values; without it they are rejected. */
+  bind?: (setting: 'threshold' | 'offset', binding: ValueBinding) => void,
 ): EdgeTrigger {
   const map = reader.map(value, context);
-  reader.keys(map, ['signal', 'edge', 'threshold', 'offset'], context);
+  reader.keys(
+    map,
+    ['signal', 'edge', 'threshold', 'offset', 'hysteresis', 'debounce'],
+    context,
+  );
+  const noise = (setting: 'hysteresis' | 'debounce') => {
+    const read = reader.optionalNumber(
+      map[setting],
+      `${context} ${setting}`,
+      map,
+    );
+    if (read !== undefined && read < 0)
+      reader.fail(`${context} ${setting} cannot be negative.`, map);
+    return read ? { [setting]: read } : {};
+  };
+  const number = (setting: 'threshold' | 'offset', fallback?: number) => {
+    const raw = map[setting];
+    if (raw === undefined || raw === null) {
+      if (fallback === undefined)
+        reader.fail(`${context} ${setting} must be a finite number.`, map);
+      return fallback;
+    }
+    const read = bind
+      ? reader.setting(raw, `${context} ${setting}`, map)
+      : reader.number(raw, `${context} ${setting}`, map);
+    if (typeof read === 'number') return read;
+    bind!(setting, read);
+    return 0;
+  };
   return {
     signalId: reader.ref(map.signal, `${context} signal`, map),
     edge: reader.choice(
@@ -276,8 +366,10 @@ function readTrigger(
       undefined,
       map,
     ),
-    threshold: reader.number(map.threshold, `${context} threshold`, map),
-    offset: reader.optionalNumber(map.offset, `${context} offset`, map) ?? 0,
+    threshold: number('threshold'),
+    offset: number('offset', 0),
+    ...noise('hysteresis'),
+    ...noise('debounce'),
   };
 }
 
@@ -393,12 +485,24 @@ function readSegment(
       ) ?? 0;
     if (minimum < 0)
       reader.fail(`${context}: minimum-duration cannot be negative.`, triggers);
+    const bindings: ParameterBindings = {};
     definition = {
       method: 'triggers',
       boundary,
-      start: readTrigger(reader, triggers.start, `${context} start trigger`),
-      end: readTrigger(reader, triggers.end, `${context} end trigger`),
+      start: readTrigger(
+        reader,
+        triggers.start,
+        `${context} start trigger`,
+        (setting, binding) => (bindings[`start.${setting}`] = binding),
+      ),
+      end: readTrigger(
+        reader,
+        triggers.end,
+        `${context} end trigger`,
+        (setting, binding) => (bindings[`end.${setting}`] = binding),
+      ),
       minimumDuration: minimum,
+      ...(Object.keys(bindings).length ? { bindings } : {}),
     };
   }
   const timeOrigin = reader.choice(
@@ -756,6 +860,77 @@ export function checkAllowed(
   return kind === 'count' || kind === 'limits' || outputs === 'signals';
 }
 
+/** A formula derive: expression, unit, other signals and values by name. */
+function readFormula(
+  reader: Reader,
+  body: YamlMap,
+  context: string,
+): RecipeOperation {
+  reader.keys(
+    body,
+    ['function', 'input', 'inputs', 'expression', 'unit', 'signals', 'values'],
+    context,
+  );
+  const expression = reader.text(
+    body.expression,
+    `${context} expression`,
+    MAX_FORMULA_LENGTH,
+    body,
+  );
+  let formula;
+  try {
+    formula = compileFormula(expression);
+  } catch (error) {
+    reader.fail(
+      `${context} expression: ${error instanceof Error ? error.message : 'invalid formula'}.`,
+      body,
+    );
+  }
+  const named = (key: 'signals' | 'values', expected: string[]) => {
+    const raw = body[key];
+    const map =
+      raw === undefined || raw === null
+        ? {}
+        : reader.map(raw, `${context} ${key}`);
+    reader.keys(map, expected, `${context} ${key}`);
+    for (const name of expected)
+      if (map[name] === undefined || map[name] === null)
+        reader.fail(
+          `${context}: the formula uses ${name}; list it under ${key}.`,
+          body,
+        );
+    return Object.fromEntries(
+      expected.map((name) => [
+        name,
+        reader.refs(map[name], `${context} ${key} ${name}`, map),
+      ]),
+    );
+  };
+  const signals = named('signals', formula.signals.slice(1));
+  const values = named('values', formula.values);
+  return {
+    kind: 'derive',
+    operation: 'formula',
+    inputs: readInputs(reader, body, context),
+    parameter: 0,
+    unit: reader.optionalText(body.unit, `${context} unit`, 40, body) ?? '',
+    formula: {
+      expression,
+      ...(Object.keys(signals).length ? { signals } : {}),
+    },
+    ...(formula.values.length
+      ? {
+          bindings: Object.fromEntries(
+            Object.entries(values).map(([name, refs]) => [
+              name,
+              { valueIds: refs, factor: 1 },
+            ]),
+          ),
+        }
+      : {}),
+  };
+}
+
 function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   const map = reader.map(raw, `Step ${index + 1}`);
   const id = map.id;
@@ -779,7 +954,18 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   );
   const body = reader.map(map[present[0]], `${context} ${present[0]}`);
   let operation: RecipeOperation;
-  if (present[0] === 'derive') {
+  if (present[0] === 'derive' && body.function === 'formula')
+    operation = readFormula(reader, body, context);
+  else if (present[0] === 'derive' && body.function === 'convert') {
+    reader.keys(body, ['function', 'input', 'inputs', 'unit'], context);
+    operation = {
+      kind: 'derive',
+      operation: 'convert',
+      inputs: readInputs(reader, body, context),
+      parameter: 0,
+      unit: reader.text(body.unit, `${context} unit`, 40, body),
+    };
+  } else if (present[0] === 'derive') {
     reader.keys(
       body,
       ['function', 'input', 'inputs', 'parameter', 'with'],
@@ -806,12 +992,17 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
           : `${context}: ${spec.operation} takes one input; remove "with".`,
         body,
       );
-    const parameter =
-      reader.optionalNumber(body.parameter, `${context} parameter`, body) ??
-      spec.defaultValue;
+    const setting =
+      body.parameter === undefined || body.parameter === null
+        ? spec.defaultValue
+        : BINDABLE_DERIVE[spec.operation as Operation]
+          ? reader.setting(body.parameter, `${context} parameter`, body)
+          : reader.number(body.parameter, `${context} parameter`, body);
+    const parameter = typeof setting === 'number' ? setting : 0;
     if (
-      (spec.min !== undefined && parameter < spec.min) ||
-      (spec.max !== undefined && parameter > spec.max)
+      typeof setting === 'number' &&
+      ((spec.min !== undefined && parameter < spec.min) ||
+        (spec.max !== undefined && parameter > spec.max))
     )
       reader.fail(
         `${context}: ${spec.parameter || 'parameter'} must be ${spec.min ?? '-∞'}–${spec.max ?? '∞'}.`,
@@ -825,21 +1016,59 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
       ...(binary
         ? { with: reader.ref(body.with, `${context} with`, body) }
         : {}),
+      ...(typeof setting === 'number' ? {} : { bindings: { value: setting } }),
     };
   } else if (present[0] === 'segment') {
     operation = readSegment(reader, body, context);
   } else if (present[0] === 'value') {
-    reader.keys(body, ['function', 'input', 'inputs'], context);
+    const function_ = reader.choice(
+      body.function,
+      VALUE_FUNCTIONS.map((item) => item.operation),
+      `${context} function`,
+      undefined,
+      body,
+    );
+    const settings = valueSpec(function_)?.parameters ?? [];
+    reader.keys(body, ['function', 'input', 'inputs', ...settings], context);
+    const raw: ValueParameters = {};
+    const bindings: ParameterBindings = {};
+    for (const name of settings) {
+      if (body[name] === undefined || body[name] === null) continue;
+      if (name === 'edge') {
+        raw.edge =
+          reader.choice(
+            body.edge,
+            ['rising', 'falling'] as const,
+            `${context} edge`,
+            undefined,
+            body,
+          ) === 'falling'
+            ? -1
+            : 1;
+        continue;
+      }
+      const setting = BINDABLE_VALUE[name]
+        ? reader.setting(body[name], `${context} ${name}`, body)
+        : reader.number(body[name], `${context} ${name}`, body);
+      // A bound setting holds 0 until a run resolves its value.
+      raw[name] = typeof setting === 'number' ? setting : 0;
+      if (typeof setting !== 'number') bindings[name] = setting;
+    }
+    let parameters: ValueParameters;
+    try {
+      parameters = valueParameters(function_, raw);
+    } catch (error) {
+      reader.fail(
+        `${context}: ${error instanceof Error ? error.message : 'invalid settings.'}`,
+        body,
+      );
+    }
     operation = {
       kind: 'value',
-      operation: reader.choice(
-        body.function,
-        VALUE_FUNCTIONS.map((item) => item.operation),
-        `${context} function`,
-        undefined,
-        body,
-      ),
+      operation: function_,
       inputs: readInputs(reader, body, context),
+      ...(settings.length ? { parameters } : {}),
+      ...(Object.keys(bindings).length ? { bindings } : {}),
     };
   } else operation = readTime(reader, body, context);
   let outputs: RecipeStep['outputs'];
@@ -1002,6 +1231,7 @@ export function parseWorkflow(text: string): WorkflowRecipe {
   for (const [index, step] of steps.entries()) {
     if (known.has(step.id))
       reader.fail(`The id "${step.id}" is used more than once.`, stepAt(index));
+    const bound = new Set(bindingRefs(step.operation));
     for (const ref of stepRefs(step)) {
       const { name, position } = parseRef(ref);
       const target = known.get(name);
@@ -1015,10 +1245,14 @@ export function parseWorkflow(text: string): WorkflowRecipe {
           `Step "${step.id}": channel "${name}" has one signal; remove [${position}].`,
           stepAt(index),
         );
-      if (
-        typeof target === 'number' &&
-        steps[target].operation.kind === 'value'
-      )
+      const isValue =
+        typeof target === 'number' && steps[target].operation.kind === 'value';
+      if (bound.has(ref) && !isValue)
+        reader.fail(
+          `Step "${step.id}" takes a setting from "${name}", which is not a value step.`,
+          stepAt(index),
+        );
+      if (!bound.has(ref) && isValue)
         reader.fail(
           `Step "${step.id}" cannot process values from "${name}"; use signals.`,
           stepAt(index),
@@ -1074,12 +1308,31 @@ export function parseWorkflow(text: string): WorkflowRecipe {
 const inputYaml = (refs: RecipeRef[]): YamlMap =>
   refs.length === 1 ? { input: refs[0] } : { inputs: refs };
 
-function triggerYaml(trigger: EdgeTrigger): YamlMap {
+/** A value-bound setting: `{ value: step, factor: k }`. */
+function bindingYaml(binding: ValueBinding): YamlMap {
+  return {
+    value:
+      binding.valueIds.length === 1 ? binding.valueIds[0] : binding.valueIds,
+    ...(binding.factor !== 1 ? { factor: binding.factor } : {}),
+  };
+}
+function triggerYaml(
+  trigger: EdgeTrigger,
+  bindings: Partial<Record<'threshold' | 'offset', ValueBinding>> = {},
+): YamlMap {
   return {
     signal: trigger.signalId,
     edge: trigger.edge,
-    threshold: trigger.threshold,
-    ...(trigger.offset ? { offset: trigger.offset } : {}),
+    threshold: bindings.threshold
+      ? bindingYaml(bindings.threshold)
+      : trigger.threshold,
+    ...(bindings.offset
+      ? { offset: bindingYaml(bindings.offset) }
+      : trigger.offset
+        ? { offset: trigger.offset }
+        : {}),
+    ...(trigger.hysteresis ? { hysteresis: trigger.hysteresis } : {}),
+    ...(trigger.debounce ? { debounce: trigger.debounce } : {}),
   };
 }
 
@@ -1098,6 +1351,44 @@ function anchorYaml(anchor: TimeAnchor): YamlMap {
 function operationYaml(operation: RecipeOperation): [string, YamlMap] {
   switch (operation.kind) {
     case 'derive': {
+      const refs = (list: RecipeRef[]) => (list.length === 1 ? list[0] : list);
+      if (operation.operation === 'formula' && operation.formula)
+        return [
+          'derive',
+          {
+            function: 'formula',
+            ...inputYaml(operation.inputs),
+            expression: operation.formula.expression,
+            ...(operation.unit ? { unit: operation.unit } : {}),
+            ...(operation.formula.signals
+              ? {
+                  signals: Object.fromEntries(
+                    Object.entries(operation.formula.signals).map(
+                      ([letter, list]) => [letter, refs(list)],
+                    ),
+                  ),
+                }
+              : {}),
+            ...(operation.bindings
+              ? {
+                  values: Object.fromEntries(
+                    Object.entries(operation.bindings).map(
+                      ([name, binding]) => [name, refs(binding.valueIds)],
+                    ),
+                  ),
+                }
+              : {}),
+          },
+        ];
+      if (operation.operation === 'convert')
+        return [
+          'derive',
+          {
+            function: 'convert',
+            ...inputYaml(operation.inputs),
+            unit: operation.unit ?? '',
+          },
+        ];
       const spec = FUNCTIONS.find(
         (item) => item.operation === operation.operation,
       );
@@ -1107,17 +1398,38 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
           function: operation.operation,
           ...inputYaml(operation.inputs),
           ...(operation.with ? { with: operation.with } : {}),
-          ...(spec?.parameter && !operation.with
-            ? { parameter: operation.parameter }
-            : {}),
+          ...(operation.bindings?.value
+            ? { parameter: bindingYaml(operation.bindings.value) }
+            : spec?.parameter && !operation.with
+              ? { parameter: operation.parameter }
+              : {}),
         },
       ];
     }
-    case 'value':
+    case 'value': {
+      const parameters = operation.parameters ?? {};
+      const bound = operation.bindings ?? {};
+      const setting = (name: string) =>
+        bound[name]
+          ? { [name]: bindingYaml(bound[name]) }
+          : parameters[name] !== undefined
+            ? { [name]: parameters[name] }
+            : {};
       return [
         'value',
-        { function: operation.operation, ...inputYaml(operation.inputs) },
+        {
+          function: operation.operation,
+          ...inputYaml(operation.inputs),
+          ...setting('threshold'),
+          ...(parameters.edge !== undefined
+            ? { edge: parameters.edge === -1 ? 'falling' : 'rising' }
+            : {}),
+          ...setting('time'),
+          ...setting('hysteresis'),
+          ...setting('debounce'),
+        },
       ];
+    }
     case 'segment': {
       const definition = operation.definition;
       const method: YamlMap =
@@ -1135,8 +1447,14 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
               }
             : {
                 triggers: {
-                  start: triggerYaml(definition.start),
-                  end: triggerYaml(definition.end),
+                  start: triggerYaml(definition.start, {
+                    threshold: definition.bindings?.['start.threshold'],
+                    offset: definition.bindings?.['start.offset'],
+                  }),
+                  end: triggerYaml(definition.end, {
+                    threshold: definition.bindings?.['end.threshold'],
+                    offset: definition.bindings?.['end.offset'],
+                  }),
                   ...(definition.minimumDuration
                     ? { 'minimum-duration': definition.minimumDuration }
                     : {}),
@@ -1450,6 +1768,22 @@ export function stepCommand(
     ...item,
     signalId: one(item.signalId),
   });
+  const bound = (bindings?: ParameterBindings) =>
+    bindings
+      ? {
+          bindings: Object.fromEntries(
+            Object.entries(bindings).map(([name, binding]) => [
+              name,
+              {
+                valueIds: binding.valueIds.flatMap((ref) =>
+                  context.resolve(ref),
+                ),
+                factor: binding.factor,
+              },
+            ]),
+          ),
+        }
+      : {};
   const operation = step.operation;
   switch (operation.kind) {
     case 'derive': {
@@ -1470,6 +1804,27 @@ export function stepCommand(
         parentIds: inputIds,
         operation: operation.operation,
         parameter: operation.parameter,
+        ...bound(operation.bindings),
+        ...(operation.unit !== undefined ? { unit: operation.unit } : {}),
+        ...(operation.formula
+          ? {
+              formula: {
+                expression: operation.formula.expression,
+                ...(operation.formula.signals
+                  ? {
+                      signals: Object.fromEntries(
+                        Object.entries(operation.formula.signals).map(
+                          ([letter, refs]) => [
+                            letter,
+                            refs.flatMap((ref) => context.resolve(ref)),
+                          ],
+                        ),
+                      ),
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       };
     }
     case 'value':
@@ -1477,6 +1832,10 @@ export function stepCommand(
         type: 'calculate-values',
         inputIds: many(operation.inputs),
         operation: operation.operation,
+        ...(operation.parameters
+          ? { parameters: { ...operation.parameters } }
+          : {}),
+        ...bound(operation.bindings),
       };
     case 'segment': {
       const targetIds = many(operation.inputs);
@@ -1497,6 +1856,7 @@ export function stepCommand(
               ...source,
               start: trigger(source.start),
               end: trigger(source.end),
+              ...bound(source.bindings),
             }
           : source.method === 'ranges'
             ? {

@@ -1,5 +1,10 @@
 # UI review and refresh mockup — September 2026
 
+> **Removed in October 2026.** The refreshed layout was ported into the
+> workbench, so the `/mockup` prototype, its in-memory data and
+> `pnpm desktop:mockup` were deleted. This review is kept as a record; the
+> prototype is in Git history before the cleanup commit.
+
 Branch: `claude/ui-refresh-mockup`, from `main` at `e6fe85d`. The branch adds an
 interactive prototype of a refreshed workbench beside the active UI; it does
 not change the workbench, engine, storage or any workflow behavior.

@@ -164,11 +164,15 @@ export function parameterScale(
         })),
       };
     case 'low-pass':
-    case 'high-pass': {
+    case 'high-pass':
+    case 'butterworth-low':
+    case 'butterworth-high': {
+      // Butterworth cutoffs must stay below Nyquist; RC cutoffs may not.
+      const top = operation.startsWith('butterworth') ? 0.45 : 0.5;
       const scale = rate
         ? {
             min: roundSignificant(rate / 10000, 2),
-            max: roundSignificant(rate / 2, 3),
+            max: roundSignificant(rate * top, 3),
           }
         : { min: 0.001, max: 1000 };
       return {
@@ -283,6 +287,40 @@ export function parameterScale(
             : [],
       };
     }
+    // Value settings: a level within the input's range, or a time from its start.
+    case 'value-threshold': {
+      if (min === undefined || max === undefined) return undefined;
+      const pad = niceCeil(Math.max((max - min) * 0.05, 1e-9));
+      const percent = (fraction: number) => ({
+        label: `${fraction * 100} %`,
+        value: roundSignificant(min + (max - min) * fraction, 6),
+        title: `${fraction * 100} % of the input's range`,
+      });
+      return {
+        min: Number((min - pad).toPrecision(12)),
+        max: Number((max + pad).toPrecision(12)),
+        log: false,
+        integer: false,
+        presets: max > min ? [0.1, 0.5, 0.9].map(percent) : [],
+      };
+    }
+    case 'value-time': {
+      if (span === undefined || span <= 0) return undefined;
+      return {
+        min: 0,
+        max: niceCeil(span),
+        log: false,
+        integer: false,
+        presets: [
+          { label: 'Start', value: 0 },
+          {
+            label: 'Middle',
+            value: roundSignificant(span / 2, 6),
+            title: formatDuration(span / 2),
+          },
+        ],
+      };
+    }
   }
   return undefined;
 }
@@ -333,6 +371,12 @@ export function parameterHint(
       return value === 1
         ? 'α = 1 leaves the signal unchanged.'
         : `Time constant ≈ ${formatDuration(-interval / Math.log(1 - value))}.`;
+    case 'butterworth-low':
+    case 'butterworth-high':
+      if (value <= 0) return undefined;
+      return rate && value >= rate / 2
+        ? `Must be below Nyquist (${formatQuantity(rate / 2)} Hz) for this input.`
+        : `−3 dB at ${formatQuantity(value)} Hz, −40 dB a decade ${operation === 'butterworth-low' ? 'above' : 'below'}.${rate ? ` Nyquist ${formatQuantity(rate / 2)} Hz.` : ''}`;
     case 'low-pass':
     case 'high-pass': {
       if (value <= 0) return undefined;

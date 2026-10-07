@@ -114,24 +114,79 @@ The header's **Undo** and **Redo** retain the last 20 changes across restarts.
 Recordings, operations and individual output display names can be renamed.
 Original samples are never edited.
 
-Minimum, maximum, time average, and sample average create stored scalar values.
+**Calculate value** creates stored scalar values, one per input, grouped in
+four tabs:
+
+- **Level**: time average, sample average, minimum, maximum, start value, end
+  value and the value at a time from the input's start.
+- **Spread**: RMS, standard deviation (n − 1), peak to peak and the area
+  under the signal (unit × s).
+- **Time**: duration, time of the minimum or maximum, and time above or below
+  a threshold.
+- **Events**: the time of the first rising or falling crossing of a threshold,
+  and the number of crossings.
+
 Time average weights by valid elapsed time and excludes missing intervals.
+Every value excludes missing samples, and no interval spans a gap. Times are
+seconds measured from the input's start, so they stay meaningful for
+segments. Crossings use the same detection as segmentation triggers, including
+optional hysteresis and debounce.
+Thresholds start at the middle of the input's range. Plots draw a time or
+count at the level it refers to, such as the threshold, labelled with the
+result.
+
+### Use values as settings
+
+Some settings can come from a calculated value instead of a typed number:
+**Offset**, **Scale** and **Shift time** in Derive, the threshold and time of
+a value calculation, and the threshold and offset of segment triggers. Choose
+**A value**, pick the value and a factor; the setting is factor × value. For
+example, offset each run by −1 × its own average, or start segments when speed
+rises above 0.5 × its maximum.
+
+- Choosing a value step with several values matches one to each input: the
+  value calculated from that input, or from the nearest signal it came from
+  or that came from it. A single value is shared by every input.
+- Units must match exactly (a time shift needs seconds; a scale factor
+  multiplies the units). Nothing is converted. An unavailable value, or one
+  that matches no input or two, blocks Create with an explanation.
+- The step lists the values it uses as inputs, in Details, lineage and
+  **Used by**. Editing a value recalculates every step that uses it; deleting
+  it deletes them, after the usual impact confirmation.
 
 **Derive signal** opens a compact palette grouped into Math, Filters, Time and
 Calculus. Math includes add, subtract, multiply and divide between signals, plus
-constant scaling, offsets and absolute value. Each checked input is A; choose
-one B to use across the batch. Both inputs must have matching sample grids and
-time transformations in the same recording. Add/subtract require identical unit
-labels; multiply/divide compose labels without automatic conversion. Missing
-inputs, division by zero and non-finite results stay missing. Saved brake-power
-and fuel-consumption recipes remain readable and editable for compatibility;
-they are no longer offered for new operations.
+constant scaling, offsets, absolute value, **Formula** and **Convert units**.
+
+- **Formula** evaluates an expression such as `A * B / 9549` for each sample:
+  A is each input, B–Z are other signals on the same sample grid (a step's
+  outputs are matched to each input by grid, so segments pair with their own
+  sibling segments), and lowercase names are calculated values (matched per
+  input like other value settings). Operators `+ − * / % ^`, comparisons
+  (1 or 0) and functions such as `abs`, `sqrt`, `min`, `max`, `if`, `clamp`
+  are available. You set the output unit; it is never inferred. Missing
+  samples and non-finite results stay missing. Expressions are parsed, never
+  run as code.
+- **Filters** add second-order **Butterworth** low- and high-pass filters,
+  twice as steep as the RC filters (see [filters](docs/filters.md)).
+- **Convert units** converts between units of one quantity (torque, speed,
+  temperature, pressure, power, flow and more) with exact factors, such as
+  lbf·ft to N·m or °F to °C. The input's unit must be one Stratum knows. Each checked input is A; choose
+  one B to use across the batch. Both inputs must have matching sample grids and
+  time transformations in the same recording. Add/subtract require identical unit
+  labels; multiply/divide compose labels without automatic conversion. Missing
+  inputs, division by zero and non-finite results stay missing. Saved brake-power
+  and fuel-consumption recipes remain readable and editable for compatibility;
+  they are no longer offered for new operations.
 
 **Segment** uses method cards for time ranges, regular windows and signal
 triggers, with separate settings and scope panels. Switching methods retains
-the entered settings and clears any outdated interval preview. **Calculate
-value** offers four cards for time average, sample average, minimum and maximum,
-with a short explanation of how each result is calculated.
+the entered settings and clears any outdated interval preview. Each trigger's
+**Ignore chatter** section sets hysteresis (how far the signal must return
+past the threshold before another crossing counts) and debounce (how long it
+must stay crossed). **Calculate
+value** offers cards in Level, Spread, Time and Events tabs, each with a short
+explanation of how its result is calculated.
 
 ### Compose a report
 
@@ -283,9 +338,8 @@ pnpm desktop:report-smoke
 ```
 
 The test suite exercises numerical results and storage behavior; the native smoke
-check runs the worker and IndexedDB inside a hidden Electron window. The original
-starter has 19 lint issues in its unused UI primitives and mobile hook. New
-application code is checked separately as well.
+check runs the worker and IndexedDB inside a hidden Electron window. `pnpm lint`
+passes with no errors, and CI runs every check on each push.
 `signal-functions.test.ts` checks independently calculated values and defaults
 for every single-input library function, plus all four persistent examples.
 `regions.test.ts` checks nested pointers, version pinning, state boundaries,

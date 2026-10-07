@@ -54,6 +54,26 @@ export const FUNCTIONS: FunctionSpec[] = [
     unit: '',
   },
   {
+    operation: 'formula',
+    name: 'Formula',
+    category: 'Math',
+    description:
+      'Combine signals and values in an expression, such as A * B / 9549. A is each input; B, C … are signals on the same sample grid; lowercase names are values. You set the output unit.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
+    operation: 'convert',
+    name: 'Convert units',
+    category: 'Math',
+    description:
+      "Convert to another unit of the same quantity, such as lbf·ft to N·m or °F to °C, using exact factors. The input's unit must be one Stratum knows.",
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
     operation: 'min-max',
     name: 'Min / Max',
     category: 'Calculation',
@@ -129,6 +149,28 @@ export const FUNCTIONS: FunctionSpec[] = [
     category: 'Filtering',
     description:
       'Remove slow changes and DC offset with a first-order RC filter using actual sample intervals. Starts at zero and restarts after missing samples. Cutoff must be positive.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 1,
+    unit: 'Hz',
+    min: 0,
+  },
+  {
+    operation: 'butterworth-low',
+    name: 'Butterworth low-pass',
+    category: 'Filtering',
+    description:
+      'A second-order Butterworth low-pass: flat below the cutoff and falling 40 dB per decade above it, twice as steep as the RC filter. Needs a regular sample interval; gaps and irregular intervals restart it. Starts at the input value.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 5,
+    unit: 'Hz',
+    min: 0,
+  },
+  {
+    operation: 'butterworth-high',
+    name: 'Butterworth high-pass',
+    category: 'Filtering',
+    description:
+      'A second-order Butterworth high-pass: removes slow changes and DC offset, falling 40 dB per decade below the cutoff. Needs a regular sample interval; gaps and irregular intervals restart it. Starts at zero.',
     parameter: 'Cutoff frequency',
     defaultValue: 1,
     unit: 'Hz',

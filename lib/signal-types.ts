@@ -34,7 +34,11 @@ export type Operation =
   | 'zero-time'
   | 'resample'
   | 'power'
-  | 'bsfc';
+  | 'bsfc'
+  | 'formula'
+  | 'convert'
+  | 'butterworth-low'
+  | 'butterworth-high';
 export type SignalNode = {
   timeReference?: import('./time-types').TimeReference;
   timeRecipe?: import('./time-types').TimeRecipe;
@@ -47,6 +51,13 @@ export type SignalNode = {
   operation: Operation;
   parameters: Record<string, number>;
   channel?: number;
+  /** Settings taken from values; `parameters` holds their results. */
+  bindings?: Record<string, import('./workflow-types').BoundValue>;
+  /**
+   * Formula nodes: the expression. Parents are its signal variables in
+   * alphabetical order (A first); `parameters` holds its value variables.
+   */
+  expression?: string;
   color: string;
   createdAt: string;
   version: 1;
@@ -92,11 +103,26 @@ export type SegmentationOperation = {
   scope: SegmentationScope;
   segmentIds: string[];
 };
+/**
+ * A formula's expression and its other signal variables: each letter's
+ * candidates, of which the one on each input's sample grid is used.
+ */
+export type FormulaSettings = {
+  expression: string;
+  signals?: Record<string, string[]>;
+};
 export type EdgeTrigger = {
   signalId: string;
   edge: 'rising' | 'falling';
   threshold: number;
   offset: number;
+  /**
+   * Re-arm distance in the signal's unit: after a crossing, the signal must
+   * return past threshold ∓ hysteresis before the next one counts.
+   */
+  hysteresis?: number;
+  /** Seconds the signal must stay crossed before a crossing counts. */
+  debounce?: number;
 };
 export type SegmentationDefinition = (
   | {
@@ -114,7 +140,14 @@ export type SegmentationDefinition = (
       step: number;
       includePartial: boolean;
     }
-) & { boundary: 'clip' | 'discard' };
+) & {
+  boundary: 'clip' | 'discard';
+  /**
+   * Trigger settings taken from values: `start.threshold`, `end.threshold`,
+   * `start.offset` and `end.offset`. The saved numbers are their results.
+   */
+  bindings?: import('./workflow-types').ParameterBindings;
+};
 export type SegmentBoundary = {
   inputId?: string;
   start: number;
@@ -213,7 +246,14 @@ export type EngineRequest =
   | { type: 'restore-workspace'; file: File }
   | RegionRequest
   | { type: 'init-workflow'; refreshExample?: boolean }
-  | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
+  | {
+      type: 'calculate-values';
+      inputIds: string[];
+      operation: ValueOperation;
+      parameters?: import('./workflow-types').ValueParameters;
+      /** Settings taken from other values; they replace `parameters`. */
+      bindings?: import('./workflow-types').ParameterBindings;
+    }
   | { type: 'init' }
   | { type: 'import'; file: File; tables?: number[] }
   | { type: 'demo' }
@@ -229,6 +269,14 @@ export type EngineRequest =
       parentIds: string[];
       operation: Operation;
       parameter: number;
+      /**
+       * `value`: the parameter taken from values for each input; for a
+       * formula, its value variables by name.
+       */
+      bindings?: import('./workflow-types').ParameterBindings;
+      /** The output unit of a formula, or the target unit of a conversion. */
+      unit?: string;
+      formula?: FormulaSettings;
     }
   | {
       type: 'segment' | 'segment-preview';
@@ -244,11 +292,22 @@ export type EngineRequest =
       inputId: string;
       operation: Operation;
       parameter: number;
+      bindings?: import('./workflow-types').ParameterBindings;
+      unit?: string;
+      formula?: FormulaSettings;
       secondaryId?: string;
       range?: [number, number];
       inspection?: boolean;
     }
-  | { type: 'value-preview'; ids: string[]; inspection?: boolean }
+  | {
+      type: 'value-preview';
+      ids: string[];
+      /** A parameterised calculation to evaluate with the statistics. */
+      operation?: ValueOperation;
+      parameters?: import('./workflow-types').ValueParameters;
+      bindings?: import('./workflow-types').ParameterBindings;
+      inspection?: boolean;
+    }
   | { type: 'segment-metrics'; ids: string[] }
   | {
       type: 'view';

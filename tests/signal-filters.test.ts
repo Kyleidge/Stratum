@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import {
+  ButterworthFilter,
+  belowNyquist,
+  butterworth,
   ExponentialSmoother,
   RcFilter,
   RollingMedian,
@@ -289,5 +292,108 @@ void test('cropping a filtered parent retains history while filtering a crop res
       (await samples(engine, restarted.id))[0][1],
       operation === 'high-pass' ? 0 : 10,
     );
+  }
+});
+
+/** |H(e^jw)| of a biquad at `frequency` for sample `rate`. */
+function gain(
+  { b, a }: ReturnType<typeof butterworth>,
+  frequency: number,
+  rate: number,
+) {
+  const w = (2 * Math.PI * frequency) / rate;
+  const re = (k: number[]) =>
+    k.reduce((sum, c, n) => sum + c * Math.cos(-w * n), 0);
+  const im = (k: number[]) =>
+    k.reduce((sum, c, n) => sum + c * Math.sin(-w * n), 0);
+  const num = [re(b), im(b)];
+  const den = [re([1, ...a]), im([1, ...a])];
+  return Math.hypot(...num) / Math.hypot(...den);
+}
+
+void test('Butterworth filters are flat, −3 dB at the cutoff and 40 dB per decade', () => {
+  const rate = 1000;
+  const low = butterworth(10, rate, 'low-pass');
+  const high = butterworth(10, rate, 'high-pass');
+  assert.ok(Math.abs(gain(low, 0, rate) - 1) < 1e-12);
+  assert.ok(gain(high, 0, rate) < 1e-12);
+  assert.ok(Math.abs(gain(low, 10, rate) - Math.SQRT1_2) < 1e-12);
+  assert.ok(Math.abs(gain(high, 10, rate) - Math.SQRT1_2) < 1e-12);
+  // A decade above the cutoff: close to −40 dB (bilinear warping adds a bit).
+  const decade = 20 * Math.log10(gain(low, 100, rate));
+  assert.ok(decade < -39 && decade > -41.5, `${decade} dB`);
+  assert.ok(gain(low, 1, rate) > 0.9999);
+  assert.throws(
+    () => butterworth(500, rate, 'low-pass'),
+    /half the sample rate/,
+  );
+  assert.throws(() => butterworth(0, rate, 'low-pass'), /above 0 Hz/);
+  // A rounded rate estimate (10.000001 Hz) must not admit a 5 Hz cutoff.
+  assert.equal(belowNyquist(5, 10.000001), false);
+  assert.equal(belowNyquist(4.99, 10), true);
+});
+
+void test('Butterworth filters settle on constants and restart at gaps', () => {
+  const low = new ButterworthFilter(5, 100, 'low-pass');
+  const high = new ButterworthFilter(5, 100, 'high-pass');
+  for (let i = 0; i < 50; i++) {
+    assert.ok(Math.abs(low.next(i / 100, 3) - 3) < 1e-12);
+    assert.ok(Math.abs(high.next(i / 100, 3)) < 1e-12);
+  }
+  // A missing sample breaks the recurrence; the next sample restarts it.
+  assert.ok(Number.isNaN(low.next(0.5, NaN)));
+  assert.equal(low.next(0.51, 7), 7);
+  assert.notEqual(low.next(0.52, 0), 0);
+  // An irregular interval (here 1 s instead of 10 ms) also restarts it.
+  assert.equal(low.next(1.52, -4), -4);
+  assert.equal(high.next(2, 9), 0);
+  // A sine well above the cutoff is strongly attenuated once settled.
+  const filter = new ButterworthFilter(5, 1000, 'low-pass');
+  let peak = 0;
+  for (let i = 0; i < 4000; i++) {
+    const y = filter.next(i / 1000, Math.sin(2 * Math.PI * 100 * (i / 1000)));
+    if (i > 2000) peak = Math.max(peak, Math.abs(y));
+  }
+  assert.ok(peak < 0.003 && peak > 0.002, `${peak}`);
+});
+
+void test('Butterworth derives record their rate and reject cutoffs at Nyquist', async () => {
+  const csv = `t,x [V]\n${Array.from({ length: 200 }, (_, i) => `${i / 100},${Math.sin(i / 5)}`).join('\n')}`;
+  const { engine, source } = await fixture(csv);
+  try {
+    const node = await engine.derive(source.channels[0], 'butterworth-low', 5);
+    assert.equal(node.parameters.value, 5);
+    assert.ok(Math.abs(node.parameters.rate - 100) < 1e-6);
+    assert.equal(node.unit, 'V');
+    await assert.rejects(
+      engine.derive(source.channels[0], 'butterworth-high', 50),
+      /below half the sample rate \(50 Hz\)/,
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('Butterworth reads its rate across chunks, even from a one-sample first chunk', async () => {
+  // 1 kHz; storage chunks hold 16,384 samples, so 16.383 s ends the first.
+  const rows = Array.from(
+    { length: 16484 },
+    (_, i) => `${i / 1000},${Math.sin(i / 50)}`,
+  );
+  const { engine, source } = await fixture(`t,x [V]\n${rows.join('\n')}`);
+  try {
+    const [segment] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[16.383, 16.45]] },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const first = await engine.evaluate(segment.nodes[0]).next();
+    assert.equal(first.value?.time.length, 1);
+    const node = await engine.derive(segment.nodes[0], 'butterworth-low', 5);
+    assert.ok(Math.abs(node.parameters.rate - 1000) < 1e-6);
+  } finally {
+    engine.close();
   }
 });

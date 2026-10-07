@@ -32,6 +32,7 @@ import OperationCards from './operation-cards';
 import OperationInputs from './operation-inputs';
 import PreviewLanes, { type PreviewTrace } from './preview-lanes';
 import WorkflowList from './workflow-list';
+import { randomId } from '@/lib/random-id';
 
 type Mode = 'overlay' | TimeSettings['kind'];
 type AnchorForm = {
@@ -185,7 +186,7 @@ export default function TimeWorkbench({
   const [referenceId, setReferenceId] = useState(
     saved?.kind === 'align' ? saved.reference.id : 'new',
   );
-  const [newReferenceId] = useState(() => crypto.randomUUID());
+  const [newReferenceId] = useState(() => randomId());
   const [name, setName] = useState(
     saved?.kind === 'align' ? saved.reference.name : 'Comparison time',
   );

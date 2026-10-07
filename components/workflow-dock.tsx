@@ -6,7 +6,13 @@ import { formatCount } from '@/lib/format-count';
 import { operationLabels } from '@/lib/signal-explorer';
 import type { Operation, SegmentationDefinition } from '@/lib/signal-types';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
-import { VALUE_FUNCTIONS, type WorkflowStep } from '@/lib/workflow-types';
+import {
+  VALUE_FUNCTIONS,
+  type ParameterBindings,
+  type ValueBinding,
+  type WorkflowStep,
+} from '@/lib/workflow-types';
+import { savedBindings } from '@/lib/value-bindings';
 import { formatValue } from './signal-chart';
 import { SIGNAL_FUNCTIONS } from './signal-operation-palette';
 
@@ -99,7 +105,9 @@ const humanize = (key: string) => {
 /** The step's function as named in the Derive and Value catalogs. */
 export function stepFunctionName(step: WorkflowStep): string {
   return (
-    VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
+    (step.kind === 'value'
+      ? VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name
+      : undefined) ??
     SIGNAL_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     operationLabels[step.operation as Operation] ??
     step.operation
@@ -115,7 +123,13 @@ function segmentationRows(
   const rows: Row[] = [];
   if (definition.method === 'triggers') {
     const trigger = (item: typeof definition.start): Row[1] => {
-      const text = `${signal(item.signalId)} ${item.edge === 'rising' ? 'rises through' : 'falls through'} ${formatValue(item.threshold, 4)}${item.offset ? `, then ${signedSeconds(item.offset)}` : ''}`;
+      const noise = [
+        ...(item.hysteresis
+          ? [`hysteresis ${formatValue(item.hysteresis, 4)}`]
+          : []),
+        ...(item.debounce ? [`held ${seconds(item.debounce)}`] : []),
+      ];
+      const text = `${signal(item.signalId)} ${item.edge === 'rising' ? 'rises through' : 'falls through'} ${formatValue(item.threshold, 4)}${noise.length ? ` (${noise.join(', ')})` : ''}${item.offset ? `, then ${signedSeconds(item.offset)}` : ''}`;
       return <span title={text}>{text}</span>;
     };
     rows.push(['Method', 'Start and end triggers']);
@@ -173,6 +187,19 @@ function SettingsTable({ title, rows }: { title?: string; rows: Row[] }) {
   );
 }
 
+/** A step's settings taken from values, as one command's bindings. */
+function stepBindings(
+  step: WorkflowStep,
+  index: WorkflowIndex,
+): ParameterBindings | undefined {
+  if (step.kind === 'segment') return step.definition?.bindings;
+  return savedBindings(
+    step.outputIds.flatMap(
+      (id) => index.nodes.get(id) ?? index.values.get(id) ?? [],
+    ),
+  );
+}
+
 /**
  * The Settings tab: a step's saved settings as a readable table, with the
  * exact stored record behind a "Show raw" disclosure.
@@ -207,16 +234,59 @@ export function WorkflowStepSettings({
       methods[step.timeSettings.kind] ?? humanize(step.timeSettings.kind),
     ]);
   }
+  const output = index.nodes.get(step.outputIds[0]);
+  if (step.kind === 'derive' && output?.operation === 'formula') {
+    general.push([
+      'Formula',
+      <code key="formula">{output.expression}</code>,
+      output.expression,
+    ]);
+    general.push(['Output unit', output.unit || 'None']);
+  }
+  if (step.kind === 'derive' && output?.operation === 'convert')
+    general.push(['Converts to', output.unit]);
   general.push(['Inputs', formatCount(step.inputIds.length, 'input')]);
+  if (step.valueInputIds?.length)
+    general.push([
+      'Values used',
+      formatCount(step.valueInputIds.length, 'value'),
+    ]);
   general.push(['Revision', (step.revision ?? 1).toLocaleString()]);
   const parameterLabel = (key: string) =>
     key === 'value'
       ? SIGNAL_FUNCTIONS.find((spec) => spec.operation === step.operation)
           ?.parameter || 'Parameter'
       : humanize(key);
+  const bindings = stepBindings(step, index);
+  const describe = (binding: ValueBinding) => {
+    const owner = index.owner.get(binding.valueIds[0]);
+    const source =
+      binding.valueIds.length === 1
+        ? signal(binding.valueIds[0])
+        : `each input's own value from ${reference(owner)} ${owner ? stepName(owner) : ''}`.trim();
+    return binding.factor === 1
+      ? source
+      : `${formatValue(binding.factor, 6)} × ${source}`;
+  };
   const parameters: Row[] = Object.entries(step.parameters ?? {}).map(
-    ([key, value]) => [parameterLabel(key), formatValue(value, 6)],
+    ([key, value]) =>
+      bindings?.[key]
+        ? [
+            parameterLabel(key),
+            describe(bindings[key]),
+            step.outputIds.length > 1
+              ? `First output: ${formatValue(value, 6)}`
+              : formatValue(value, 6),
+          ]
+        : [parameterLabel(key), formatValue(value, 6)],
   );
+  const triggerBindings: Row[] =
+    step.kind === 'segment'
+      ? Object.entries(bindings ?? {}).map(([key, binding]) => [
+          humanize(key.replace('.', ' ')),
+          describe(binding),
+        ])
+      : [];
   const raw = {
     ...(step.parameters && { parameters: step.parameters }),
     ...(step.definition && { definition: step.definition }),
@@ -233,6 +303,9 @@ export function WorkflowStepSettings({
           title="Segmentation"
           rows={segmentationRows(step.definition, signal)}
         />
+      )}
+      {!!triggerBindings.length && (
+        <SettingsTable title="Taken from values" rows={triggerBindings} />
       )}
       {!!Object.keys(raw).length && (
         <details className="workflow-settings-raw">

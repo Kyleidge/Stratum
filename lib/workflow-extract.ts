@@ -17,7 +17,7 @@ import type {
   SegmentationDefinition,
 } from './signal-types';
 import type { TimeAnchor } from './time-types';
-import type { WorkflowStep } from './workflow-types';
+import type { ParameterBindings, WorkflowStep } from './workflow-types';
 
 export type ExtractOptions = {
   name: string;
@@ -167,6 +167,16 @@ export function extractWorkflow(
     ...item,
     signalId: one(item.signalId),
   });
+  // Bound settings reference value steps; their numbers are resolved per run.
+  const bound = (bindings?: ParameterBindings) =>
+    bindings
+      ? Object.fromEntries(
+          Object.entries(bindings).map(([name, binding]) => [
+            name,
+            { valueIds: many(binding.valueIds), factor: binding.factor },
+          ]),
+        )
+      : undefined;
   const anchor = (item: TimeAnchor): TimeAnchor =>
     item.kind === 'event' ? { ...item, trigger: trigger(item.trigger) } : item;
 
@@ -207,7 +217,31 @@ export function extractWorkflow(
             kind: 'derive',
             operation: command.operation,
             inputs: many(command.parentIds),
-            parameter: command.parameter,
+            // Bound, formula and conversion parameters are not numbers.
+            parameter:
+              command.bindings?.value ||
+              command.formula ||
+              command.operation === 'convert'
+                ? 0
+                : command.parameter,
+            ...(command.bindings ? { bindings: bound(command.bindings) } : {}),
+            ...(command.unit !== undefined ? { unit: command.unit } : {}),
+            ...(command.formula
+              ? {
+                  formula: {
+                    expression: command.formula.expression,
+                    ...(command.formula.signals
+                      ? {
+                          signals: Object.fromEntries(
+                            Object.entries(command.formula.signals).map(
+                              ([letter, ids]) => [letter, many(ids)],
+                            ),
+                          ),
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
           };
           break;
         case 'region-function': {
@@ -233,19 +267,37 @@ export function extractWorkflow(
             kind: 'value',
             operation: command.operation,
             inputs: many(command.inputIds),
+            ...(command.parameters
+              ? {
+                  parameters: Object.fromEntries(
+                    Object.entries(command.parameters).map(([name, value]) => [
+                      name,
+                      command.bindings?.[name] ? 0 : value,
+                    ]),
+                  ),
+                }
+              : {}),
+            ...(command.bindings ? { bindings: bound(command.bindings) } : {}),
           };
           break;
         case 'segment': {
           let definition: SegmentationDefinition = structuredClone(
             command.definition,
           );
-          if (definition.method === 'triggers')
+          if (definition.method === 'triggers') {
+            const bindings = definition.bindings;
+            const placeholder = (side: 'start' | 'end', item: EdgeTrigger) => ({
+              ...trigger(item),
+              ...(bindings?.[`${side}.threshold`] ? { threshold: 0 } : {}),
+              ...(bindings?.[`${side}.offset`] ? { offset: 0 } : {}),
+            });
             definition = {
               ...definition,
-              start: trigger(definition.start),
-              end: trigger(definition.end),
+              start: placeholder('start', definition.start),
+              end: placeholder('end', definition.end),
+              ...(bindings ? { bindings: bound(bindings) } : {}),
             };
-          else {
+          } else {
             // Nested segments default to times measured from their own input.
             const nested =
               command.targetIds.length === 1 &&

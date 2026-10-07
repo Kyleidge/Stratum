@@ -42,12 +42,26 @@ import type {
 import type { ExplorerEntry } from '@/lib/signal-explorer';
 import { formatCount } from '@/lib/format-count';
 import { rangeMidpoint } from '@/lib/parameter-scale';
+import type { WorkflowIndex } from '@/lib/workflow-history';
+import type { ParameterBindings } from '@/lib/workflow-types';
+import { BINDABLE_TRIGGER, matchValue } from '@/lib/value-bindings';
+import ValueBindingControl, {
+  NUMBER_DRAFT,
+  bindingFromDraft,
+  draftFromBinding,
+  type BindingDraft,
+} from './value-binding-control';
 
 type TriggerForm = {
   signalId: string;
   edge: 'rising' | 'falling';
   threshold: string;
   offset: string;
+  /** Optional noise rejection; blank means none. */
+  hysteresis?: string;
+  debounce?: string;
+  /** Threshold and offset taken from values instead of typed numbers. */
+  bound?: Partial<Record<'threshold' | 'offset', BindingDraft>>;
 };
 type Props = {
   source: Source;
@@ -66,6 +80,10 @@ type Props = {
   };
   /** Workflow label for a signal; History and dialogs must name it alike. */
   signalLabel?: (id: string) => string;
+  /** Offers trigger settings taken from calculated values. */
+  valueIndex?: WorkflowIndex;
+  /** The sequence of the step being edited; later values are not offered. */
+  valueBefore?: number;
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -182,6 +200,8 @@ export default function SegmentationEditor({
   defaultRange,
   rangePlot,
   signalLabel,
+  valueIndex,
+  valueBefore,
   onPreview,
   onCreate,
 }: Props) {
@@ -191,18 +211,34 @@ export default function SegmentationEditor({
   const savedWindows = saved?.method === 'windows' ? saved : undefined;
   const formTrigger = (
     trigger: NonNullable<typeof savedTriggers>['start'],
-  ): TriggerForm => ({
-    signalId: trigger.signalId,
-    edge: trigger.edge,
-    threshold: String(trigger.threshold),
-    offset: String(trigger.offset),
-  });
+    side: 'start' | 'end',
+  ): TriggerForm => {
+    const binding = (setting: 'threshold' | 'offset') =>
+      valueIndex && savedTriggers?.bindings?.[`${side}.${setting}`]
+        ? {
+            [setting]: draftFromBinding(
+              valueIndex,
+              savedTriggers.bindings[`${side}.${setting}`],
+            ),
+          }
+        : {};
+    const bound = { ...binding('threshold'), ...binding('offset') };
+    return {
+      signalId: trigger.signalId,
+      edge: trigger.edge,
+      threshold: String(trigger.threshold),
+      offset: String(trigger.offset),
+      ...(trigger.hysteresis ? { hysteresis: String(trigger.hysteresis) } : {}),
+      ...(trigger.debounce ? { debounce: String(trigger.debounce) } : {}),
+      ...(Object.keys(bound).length ? { bound } : {}),
+    };
+  };
   const [method, setMethod] = useState<SegmentationDefinition['method']>(
     saved?.method ?? (workflowMode ? 'ranges' : 'triggers'),
   );
   const [start, setStart] = useState<TriggerForm>(
     savedTriggers
-      ? formTrigger(savedTriggers.start)
+      ? formTrigger(savedTriggers.start, 'start')
       : {
           signalId:
             workflowMode || selectionKind === 'collection'
@@ -215,7 +251,7 @@ export default function SegmentationEditor({
   );
   const [end, setEnd] = useState<TriggerForm>(
     savedTriggers
-      ? formTrigger(savedTriggers.end)
+      ? formTrigger(savedTriggers.end, 'end')
       : {
           signalId:
             workflowMode || selectionKind === 'collection'
@@ -367,22 +403,49 @@ export default function SegmentationEditor({
       label: `${signalLabel ? signalLabel(node.id) : `${node.name} · ${segments.find((segment) => segment.nodes.includes(node.id))?.name ?? node.operation}`} [${node.unit}]`,
     }));
   function definition(): SegmentationDefinition {
-    if (method === 'triggers')
+    if (method === 'triggers') {
+      const bindings: ParameterBindings = {};
+      // A bound setting is saved as its result; the engine resolves it.
+      const trigger = (side: 'start' | 'end', form: TriggerForm) => {
+        const setting = (name: 'threshold' | 'offset') => {
+          const draft = form.bound?.[name];
+          if (!draft?.source || !valueIndex) return number(form[name]);
+          const binding = bindingFromDraft(valueIndex, draft);
+          if (!binding)
+            throw new Error(
+              `Choose a value and a finite factor for the ${side} ${name}.`,
+            );
+          bindings[`${side}.${name}`] = binding;
+          return 0;
+        };
+        const noise = (name: 'hysteresis' | 'debounce') => {
+          const text = form[name]?.trim();
+          if (!text) return {};
+          const value = number(text);
+          if (value < 0)
+            throw new Error(
+              `The ${side} ${name} must be zero or more, or blank.`,
+            );
+          return value > 0 ? { [name]: value } : {};
+        };
+        return {
+          signalId: form.signalId,
+          edge: form.edge,
+          threshold: setting('threshold'),
+          offset: setting('offset'),
+          ...noise('hysteresis'),
+          ...noise('debounce'),
+        };
+      };
       return {
         method,
         boundary,
-        start: {
-          ...startForm,
-          threshold: number(startForm.threshold),
-          offset: number(startForm.offset),
-        },
-        end: {
-          ...endForm,
-          threshold: number(endForm.threshold),
-          offset: number(endForm.offset),
-        },
+        start: trigger('start', startForm),
+        end: trigger('end', endForm),
         minimumDuration: number(minimum),
+        ...(Object.keys(bindings).length ? { bindings } : {}),
       };
+    }
     if (method === 'windows')
       return {
         method,
@@ -463,16 +526,41 @@ export default function SegmentationEditor({
   }, [autoPreview, invalidRanges, pendingThreshold, key]);
   const bandPlan =
     plan ?? (lastPlan?.method === method ? lastPlan.plan : undefined);
+  /** What a bound trigger setting gives its trigger signal, if known. */
+  const boundNumber = (
+    trigger: TriggerForm,
+    name: 'threshold' | 'offset',
+  ): number | undefined => {
+    const draft = trigger.bound?.[name];
+    if (!draft?.source || !valueIndex) return undefined;
+    const binding = bindingFromDraft(valueIndex, draft);
+    if (!binding) return undefined;
+    try {
+      const value = matchValue(valueIndex, binding, trigger.signalId).value;
+      return value === null ? undefined : binding.factor * value;
+    } catch {
+      return undefined;
+    }
+  };
   const thresholdLine = (
     boundary: 'start' | 'end',
     trigger: TriggerForm,
   ): PlotThreshold => ({
     boundary,
     signalId: trigger.signalId,
-    value: trigger.threshold.trim() ? Number(trigger.threshold) : NaN,
+    value: trigger.bound?.threshold?.source
+      ? (boundNumber(trigger, 'threshold') ?? NaN)
+      : trigger.threshold.trim()
+        ? Number(trigger.threshold)
+        : NaN,
     edge: trigger.edge,
+    // Dragging the line types the new threshold, replacing a bound value.
     onChange: (value) =>
-      editTrigger(boundary)({ ...trigger, threshold: String(value) }),
+      editTrigger(boundary)({
+        ...trigger,
+        threshold: String(value),
+        bound: { ...trigger.bound, threshold: NUMBER_DRAFT },
+      }),
   });
   const windowSpan: [number, number] | undefined =
     windowStart.trim() &&
@@ -480,6 +568,12 @@ export default function SegmentationEditor({
     Number(windowEnd) > Number(windowStart)
       ? [Number(windowStart), Number(windowEnd)]
       : undefined;
+  const savedNoise = !!(
+    savedTriggers &&
+    [savedTriggers.start, savedTriggers.end].some(
+      (trigger) => trigger.hysteresis || trigger.debounce,
+    )
+  );
   function triggerEditor(
     label: string,
     trigger: TriggerForm,
@@ -530,19 +624,86 @@ export default function SegmentationEditor({
             />
           </>
         )}
-        <div className="segment-field-pair">
-          <Numeric
-            label={`${label} threshold`}
-            value={trigger.threshold}
-            unit={unit}
-            onChange={(threshold) => update({ ...trigger, threshold })}
-          />
-          <Numeric
-            label={`${label} offset`}
-            value={trigger.offset}
-            onChange={(offset) => update({ ...trigger, offset })}
-          />
-        </div>
+        {valueIndex ? (
+          (['threshold', 'offset'] as const).map((name) => {
+            const resolved = boundNumber(trigger, name);
+            return (
+              <ValueBindingControl
+                key={name}
+                label={`${label} ${name}`}
+                index={valueIndex}
+                inputIds={[trigger.signalId]}
+                before={valueBefore}
+                draft={trigger.bound?.[name] ?? NUMBER_DRAFT}
+                unit={BINDABLE_TRIGGER[`start.${name}`]}
+                inputUnit={unit}
+                resolved={
+                  resolved === undefined
+                    ? undefined
+                    : `Uses ${Number(resolved.toPrecision(6))} ${name === 'offset' ? 's' : unit}.`.replace(
+                        / \.$/,
+                        '.',
+                      )
+                }
+                disabled={busy}
+                onChange={(draft) =>
+                  update({
+                    ...trigger,
+                    bound: { ...trigger.bound, [name]: draft },
+                  })
+                }
+              >
+                <Numeric
+                  label={`${label} ${name}`}
+                  value={trigger[name]}
+                  unit={name === 'offset' ? 's' : unit}
+                  onChange={(value) => update({ ...trigger, [name]: value })}
+                />
+              </ValueBindingControl>
+            );
+          })
+        ) : (
+          <div className="segment-field-pair">
+            <Numeric
+              label={`${label} threshold`}
+              value={trigger.threshold}
+              unit={unit}
+              onChange={(threshold) => update({ ...trigger, threshold })}
+            />
+            <Numeric
+              label={`${label} offset`}
+              value={trigger.offset}
+              onChange={(offset) => update({ ...trigger, offset })}
+            />
+          </div>
+        )}
+        {workflowMode && (
+          <details
+            className="segment-noise"
+            // Constant per dialog: open when the saved trigger used it.
+            open={savedNoise}
+          >
+            <summary>Ignore chatter</summary>
+            <div className="segment-field-pair">
+              <Numeric
+                label={`${label} hysteresis`}
+                value={trigger.hysteresis ?? ''}
+                unit={unit}
+                onChange={(hysteresis) => update({ ...trigger, hysteresis })}
+              />
+              <Numeric
+                label={`${label} debounce`}
+                value={trigger.debounce ?? ''}
+                onChange={(debounce) => update({ ...trigger, debounce })}
+              />
+            </div>
+            <p className="input-hint">
+              Hysteresis: after a crossing, the signal must return this far past
+              the threshold before the next one counts. Debounce: a crossing
+              counts only if the signal stays crossed this long.
+            </p>
+          </details>
+        )}
       </fieldset>
     );
   }

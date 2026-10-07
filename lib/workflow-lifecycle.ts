@@ -3,6 +3,12 @@ import type { WorkflowStep } from './workflow-types';
 import { segmentationOperation } from './segmentation-operation';
 import { formatCount } from './format-count';
 import { stepName } from './workflow-history';
+import { savedBindings } from './value-bindings';
+import { compileFormula } from './formula';
+
+const withBindings = (
+  bindings: import('./workflow-types').ParameterBindings | undefined,
+) => (bindings ? { bindings } : {});
 
 export type WorkflowCommand =
   | Extract<
@@ -70,6 +76,7 @@ export function affectedOperations(
         !removed.has(step.id) &&
         ((first.kind === 'import' && step.sourceId === first.sourceId) ||
           step.inputIds.some((id) => outputs.has(id)) ||
+          step.valueInputIds?.some((id) => outputs.has(id)) ||
           // Saved invocations also depend on inputs that yielded no outputs.
           segmentation?.targetIds.some((id) => outputs.has(id)) ||
           (!!step.regionSetId && sets.has(step.regionSetId)) ||
@@ -224,6 +231,14 @@ export function savedCommand(
       type: 'calculate-values',
       inputIds: step.inputIds,
       operation: step.operation as import('./workflow-types').ValueOperation,
+      ...(step.parameters ? { parameters: { ...step.parameters } } : {}),
+      ...withBindings(
+        savedBindings(
+          step.outputIds.flatMap(
+            (id) => project.values?.find((value) => value.id === id) ?? [],
+          ),
+        ),
+      ),
     };
   if (step.kind === 'derive') {
     const run = project.functionRuns?.find((item) =>
@@ -231,7 +246,40 @@ export function savedCommand(
     );
     if (run) return { type: 'region-function', settings: { ...run } };
     const first = project.nodes.find((node) => node.id === step.outputIds[0]);
-    if (first && first.operation !== 'raw' && first.operation !== 'crop')
+    if (first && first.operation !== 'raw' && first.operation !== 'crop') {
+      const outputs = step.outputIds.flatMap(
+        (id) => project.nodes.find((node) => node.id === id) ?? [],
+      );
+      // A formula's other signals: each letter's inputs across the batch.
+      const letters =
+        first.operation === 'formula'
+          ? compileFormula(first.expression ?? '').signals.slice(1)
+          : [];
+      const formula =
+        first.operation === 'formula'
+          ? {
+              unit: first.unit,
+              formula: {
+                expression: first.expression ?? '',
+                ...(letters.length
+                  ? {
+                      signals: Object.fromEntries(
+                        letters.map((letter, k) => [
+                          letter,
+                          [
+                            ...new Set(
+                              outputs.map((node) => node.parents[k + 1]),
+                            ),
+                          ],
+                        ]),
+                      ),
+                    }
+                  : {}),
+              },
+            }
+          : first.operation === 'convert'
+            ? { unit: first.unit }
+            : {};
       return {
         type: 'derive-many',
         parentIds: step.outputIds.map(
@@ -239,7 +287,10 @@ export function savedCommand(
         ),
         operation: first.operation,
         parameter: step.parameters?.value ?? first.parameters.value ?? 0,
+        ...withBindings(savedBindings(outputs)),
+        ...formula,
       };
+    }
   }
   throw new Error(
     `Operation #${step.sequence + 1} uses a legacy recipe that cannot be rebuilt safely. Remove or recreate that dependent operation first.`,

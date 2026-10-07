@@ -63,13 +63,19 @@ import { SignalGraph } from '@/lib/signal-graph';
 import TimeWorkbench from './time-workbench';
 import type { TimeSettings } from '@/lib/time-types';
 import { workspaceTimeScope } from '@/lib/time-model';
-import { stepName, WorkflowIndex } from '@/lib/workflow-history';
+import { stepInputs, stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { isBinaryOperation } from '@/lib/signal-arithmetic';
-import { VALUE_FUNCTIONS } from '@/lib/workflow-types';
+import { VALUE_FUNCTIONS, valueTitle } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
-import type { ValueOperation, WorkflowStep } from '@/lib/workflow-types';
+import type {
+  ParameterBindings,
+  ValueOperation,
+  ValueParameters,
+  WorkflowStep,
+} from '@/lib/workflow-types';
 import type {
   EngineRequest,
+  FormulaSettings,
   Operation,
   Project,
   SegmentationOperation,
@@ -114,7 +120,7 @@ import {
 } from './workflow-management';
 import WorkflowStorage from './workflow-storage';
 import WorkflowList from './workflow-list';
-import { describeChange } from '@/lib/workflow-lifecycle';
+import { describeChange, savedCommand } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
 import ReportBuilderMockup from './report-builder-mockup';
 import {
@@ -193,6 +199,7 @@ import type {
   WorkflowBatch,
   WorkflowRun,
 } from '@/lib/workflow-types';
+import { randomId } from '@/lib/random-id';
 
 const PAGE_SIZE = 30;
 /** Outputs of one operation drawn together on the Active plot. */
@@ -248,8 +255,36 @@ type Editor = {
   operation?: Operation | ValueOperation;
   parameter?: number;
   secondaryId?: string;
+  valueParameters?: ValueParameters;
+  bindings?: ParameterBindings;
+  unit?: string;
+  formula?: FormulaSettings;
   savedSegment?: SegmentationOperation;
 };
+
+/**
+ * A step's settings beyond its parameter (values, formula, unit), for
+ * reopening its editor.
+ */
+function savedBindingsOf(
+  project: Project,
+  step: WorkflowStep,
+): Pick<Editor, 'bindings' | 'unit' | 'formula'> {
+  try {
+    const command = savedCommand(project, step);
+    if (command.type === 'calculate-values')
+      return command.bindings ? { bindings: command.bindings } : {};
+    if (command.type !== 'derive-many') return {};
+    return {
+      ...(command.bindings ? { bindings: command.bindings } : {}),
+      ...(command.unit !== undefined ? { unit: command.unit } : {}),
+      ...(command.formula ? { formula: command.formula } : {}),
+    };
+  } catch {
+    // Legacy recipes have no further settings to restore.
+    return {};
+  }
+}
 
 export default function WorkflowWorkbench() {
   const engine = useSignalEngine('init-workflow');
@@ -909,7 +944,7 @@ export default function WorkflowWorkbench() {
   async function runBatch(plan: BatchPlan) {
     setRunDialog(null);
     if (engine.busy) return;
-    const batchId = crypto.randomUUID();
+    const batchId = randomId();
     const failures: { name: string; message: string }[] = [];
     let cancelled = false;
     batchStop.current = false;
@@ -1376,10 +1411,18 @@ export default function WorkflowWorkbench() {
       ];
       open({
         kind: step.kind,
-        ids: binary ? [...new Set(parents)] : nodeIds,
+        // A formula's B, C … are settings; only A is a processing input.
+        ids:
+          binary || step.operation === 'formula'
+            ? [...new Set(parents)]
+            : nodeIds,
         operation: step.operation as Operation | ValueOperation,
         parameter: step.parameters?.value,
         secondaryId: second.length === 1 ? second[0] : '',
+        ...(step.kind === 'value' && step.parameters
+          ? { valueParameters: step.parameters }
+          : {}),
+        ...savedBindingsOf(project, step),
       });
     }
   }
@@ -1455,7 +1498,10 @@ export default function WorkflowWorkbench() {
       setLineageRoot(
         target.kind === 'output'
           ? [target.id]
-          : [...(targetStep?.inputIds ?? []), ...(targetStep?.outputIds ?? [])],
+          : [
+              ...(targetStep ? stepInputs(targetStep) : []),
+              ...(targetStep?.outputIds ?? []),
+            ],
       );
       setQuery('');
     } else if (action === 'owner') {
@@ -1553,11 +1599,11 @@ export default function WorkflowWorkbench() {
     <section className="workflow-value-card" aria-label="Calculated value">
       <div>
         <span>
-          {
-            VALUE_FUNCTIONS.find(
-              (spec) => spec.operation === activeValue.operation,
-            )?.name
-          }
+          {valueTitle(
+            activeValue.operation,
+            activeValue.parameters,
+            index.nodes.get(activeValue.inputId)?.unit,
+          )}
         </span>
         <strong>
           {activeValue.value === null
@@ -1568,8 +1614,10 @@ export default function WorkflowWorkbench() {
       </div>
       <p>
         {activeValue.value === null
-          ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
-          : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · first occurs at ${number(activeValue.timestamp)} s` : ''}`}
+          ? activeValue.operation === 'time-average'
+            ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
+            : 'No finite result for this input and these settings.'
+          : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · at ${number(activeValue.timestamp)} s` : ''}`}
       </p>
       <p>
         {
@@ -1601,8 +1649,11 @@ export default function WorkflowWorkbench() {
             <small>{value.unit}</small>
           </strong>
           <em>
-            {VALUE_FUNCTIONS.find((spec) => spec.operation === value.operation)
-              ?.name ?? 'Value'}
+            {valueTitle(
+              value.operation,
+              value.parameters,
+              index.nodes.get(value.inputId)?.unit,
+            )}
             {value.timestamp !== undefined
               ? ` · at ${number(value.timestamp)} s`
               : ` · ${value.sampleCount.toLocaleString()} samples`}
@@ -1784,12 +1835,14 @@ export default function WorkflowWorkbench() {
       })),
     ]);
   const selectedLineage = index.lineage(
-    selection.kind === 'output' ? [selection.id] : (step?.inputIds ?? []),
+    selection.kind === 'output' ? [selection.id] : step ? stepInputs(step) : [],
   );
   const immediateInputs =
     selection.kind === 'output'
       ? index.inputs(selection.id)
-      : (step?.inputIds ?? []);
+      : step
+        ? stepInputs(step)
+        : [];
   const usedBy = [
     ...new Map(
       targetOutputs(index, selection).flatMap((id) =>
@@ -3149,7 +3202,7 @@ export default function WorkflowWorkbench() {
                         selection.kind === 'output'
                           ? [selection.id]
                           : [
-                              ...(step?.inputIds ?? []),
+                              ...(step ? stepInputs(step) : []),
                               ...(step?.outputIds ?? []),
                             ],
                       );
@@ -3369,6 +3422,12 @@ export default function WorkflowWorkbench() {
                   workflowMode
                   rangePlot={{ graph, request }}
                   signalLabel={(id) => index.label(id)}
+                  valueIndex={index}
+                  valueBefore={
+                    editor.editingStepId
+                      ? index.steps.get(editor.editingStepId)?.sequence
+                      : undefined
+                  }
                   applyLabel={
                     editor.editingStepId
                       ? 'Save changes and recalculate'
@@ -3445,13 +3504,24 @@ export default function WorkflowWorkbench() {
                           setTimeEditor({ ids, mode: 'combine' });
                         }
                   }
-                  onApply={(operation, parameter, secondaryId) => {
+                  onApply={(
+                    operation,
+                    parameter,
+                    secondaryId,
+                    valueParameters,
+                    bindings,
+                    extra,
+                  ) => {
                     if (editor.kind === 'value')
                       return perform(
                         {
                           type: 'calculate-values',
                           inputIds: editor.ids,
                           operation: operation as ValueOperation,
+                          ...(valueParameters
+                            ? { parameters: valueParameters }
+                            : {}),
+                          ...(bindings ? { bindings } : {}),
                         },
                         'Calculating values…',
                       );
@@ -3475,6 +3545,8 @@ export default function WorkflowWorkbench() {
                         parentIds: editor.ids,
                         operation: operation as Operation,
                         parameter,
+                        ...(bindings ? { bindings } : {}),
+                        ...extra,
                       },
                       'Creating derived signals…',
                     );

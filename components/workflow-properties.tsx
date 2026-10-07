@@ -14,7 +14,11 @@ import {
   Waves,
   X,
 } from 'lucide-react';
-import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
+import {
+  stepInputs,
+  stepName,
+  type WorkflowIndex,
+} from '@/lib/workflow-history';
 import type { WorkflowStep } from '@/lib/workflow-types';
 import type { SignalGraph } from '@/lib/signal-graph';
 import type {
@@ -269,7 +273,9 @@ function SelectionDetails({
   const inputs =
     selection.kind === 'output'
       ? index.inputs(selection.id)
-      : (step?.inputIds ?? []);
+      : step
+        ? stepInputs(step)
+        : [];
   const sourceIds = new Set(lineage.originals.map((item) => item.sourceId));
   if (step?.kind === 'import' && step.sourceId) sourceIds.add(step.sourceId);
   const sources = project.sources.filter((source) => sourceIds.has(source.id));

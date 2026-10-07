@@ -163,7 +163,10 @@ Your own recordings will produce different values and coverage._
 
 **Time average** weights by elapsed time and excludes missing intervals.
 **Sample average** gives each finite sample equal weight. **Minimum** and
-**Maximum** find the lowest and highest finite samples.
+**Maximum** find the lowest and highest finite samples. The **Spread**, **Time**
+and **Events** tabs add RMS, standard deviation, peak to peak, area, durations,
+time above or below a threshold and threshold crossings. Times are measured
+in seconds from the input's start.
 
 ### Trace and revise your work
 

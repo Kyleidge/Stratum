@@ -9,6 +9,37 @@ import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
 import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
+import { validTriggerNoise } from './segmentation';
+import { compileFormula } from './formula';
+import { unitConversion } from './units';
+import { belowNyquist } from './signal-filters';
+import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
+import {
+  BINDABLE_DERIVE,
+  BINDABLE_TRIGGER,
+  BINDABLE_VALUE,
+  bindingValueIds,
+  validBindings,
+} from './value-bindings';
+
+/** A known calculation whose saved settings are exactly its valid settings. */
+function validValueSettings(value: ScalarValue): boolean {
+  const spec = valueSpec(value.operation);
+  if (!spec) return false;
+  if (!spec.parameters?.length) return value.parameters === undefined;
+  if (!value.parameters || typeof value.parameters !== 'object') return false;
+  try {
+    const valid = valueParameters(value.operation, value.parameters);
+    return (
+      Object.keys(valid).length === Object.keys(value.parameters).length &&
+      Object.entries(valid).every(
+        ([name, number]) => value.parameters![name] === number,
+      )
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
 export const EXPORT_LIMIT = 64 * 1024 * 1024;
@@ -229,6 +260,38 @@ export function validateWorkspace(value: unknown): Project {
           : !/^kg\/h$/i.test(units[0]) || units[1].toLowerCase() !== 'kw'
       )
         throw new Error('Invalid binary input units.');
+    } else if (node.operation === 'formula') {
+      let formula;
+      try {
+        formula = compileFormula(
+          typeof node.expression === 'string' ? node.expression : '',
+        );
+      } catch {
+        throw new Error('Invalid formula.');
+      }
+      const names = Object.keys(node.parameters);
+      if (
+        node.parents.length !== formula.signals.length ||
+        names.length !== formula.values.length ||
+        formula.values.some(
+          (name) => !names.includes(name) || !node.bindings?.[name],
+        ) ||
+        typeof node.unit !== 'string' ||
+        node.unit.length > 40
+      )
+        throw new Error('Invalid formula inputs.');
+    } else if (node.operation === 'convert') {
+      const conversion = unitConversion(
+        nodes.get(node.parents[0])?.unit ?? '',
+        node.unit,
+      );
+      if (
+        node.parents.length !== 1 ||
+        !conversion ||
+        node.parameters.factor !== conversion.factor ||
+        node.parameters.offset !== conversion.offset
+      )
+        throw new Error('Invalid unit conversion.');
     } else if (node.operation !== 'raw') {
       const spec = FUNCTIONS.find((item) => item.operation === node.operation);
       const parameter = node.parameters.value;
@@ -246,7 +309,13 @@ export function validateWorkspace(value: unknown): Project {
         (['smooth', 'median'].includes(node.operation) &&
           !Number.isInteger(parameter)) ||
         (['exponential', 'low-pass', 'high-pass'].includes(node.operation) &&
-          parameter <= 0)
+          parameter <= 0) ||
+        (['butterworth-low', 'butterworth-high'].includes(node.operation) &&
+          !(
+            parameter > 0 &&
+            Number.isFinite(node.parameters.rate) &&
+            belowNyquist(parameter, node.parameters.rate)
+          ))
       )
         throw new Error('Invalid filter parameters.');
       if (
@@ -305,12 +374,70 @@ export function validateWorkspace(value: unknown): Project {
       !Number.isFinite(value.start) ||
       !Number.isFinite(value.end) ||
       (value.timestamp !== undefined && !Number.isFinite(value.timestamp)) ||
-      !['minimum', 'maximum', 'time-average', 'sample-average'].includes(
-        value.operation,
-      ) ||
+      (value.level !== undefined && !Number.isFinite(value.level)) ||
+      !validValueSettings(value) ||
       (value.value !== null && !Number.isFinite(value.value))
     )
       throw new Error('Invalid calculated value.');
+  // A bound setting names an existing value and holds exactly its result.
+  const boundSettings = (
+    bindings: unknown,
+    allowed: Record<string, unknown>,
+    parameters: Record<string, number> | undefined,
+    self: string,
+  ): string[] => {
+    if (bindings === undefined) return [];
+    if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings))
+      throw new Error('Invalid settings taken from values.');
+    const entries = Object.entries(bindings as Record<string, unknown>);
+    if (!entries.length) throw new Error('Invalid settings taken from values.');
+    return entries.map(([name, item]) => {
+      const bound = item as { valueId?: unknown; factor?: unknown };
+      const value = values.get(
+        typeof bound?.valueId === 'string' ? bound.valueId : '',
+      );
+      if (
+        !Object.hasOwn(allowed, name) ||
+        !value ||
+        value.id === self ||
+        typeof bound.factor !== 'number' ||
+        !Number.isFinite(bound.factor) ||
+        value.value === null ||
+        parameters?.[name] !== bound.factor * value.value
+      )
+        throw new Error('Invalid settings taken from values.');
+      return value.id;
+    });
+  };
+  const usedValues = new Map<string, string[]>();
+  for (const node of project.nodes)
+    usedValues.set(
+      node.id,
+      boundSettings(
+        node.bindings,
+        node.operation === 'formula'
+          ? node.parameters
+          : BINDABLE_DERIVE[node.operation]
+            ? { value: true }
+            : {},
+        node.parameters,
+        node.id,
+      ),
+    );
+  for (const value of project.values ?? [])
+    usedValues.set(
+      value.id,
+      boundSettings(
+        value.bindings,
+        Object.fromEntries(
+          (valueSpec(value.operation)?.parameters ?? [])
+            .filter((name) => BINDABLE_VALUE[name])
+            .map((name) => [name, true]),
+        ),
+        value.parameters,
+        value.id,
+      ),
+    );
   const owners = new Map<
     string,
     NonNullable<Project['workflowSteps']>[number]
@@ -331,6 +458,10 @@ export function validateWorkspace(value: unknown): Project {
         (!Number.isSafeInteger(step.revision) || step.revision < 1)) ||
       !stringList(step.outputIds) ||
       !stringList(step.inputIds) ||
+      (step.valueInputIds !== undefined &&
+        (!stringList(step.valueInputIds) ||
+          !step.valueInputIds.length ||
+          step.valueInputIds.some((id) => !values.has(id)))) ||
       !Number.isSafeInteger(step.sequence) ||
       step.sequence < 0 ||
       sequences.has(step.sequence) ||
@@ -410,12 +541,27 @@ export function validateWorkspace(value: unknown): Project {
       step.inputIds.some((id) => !dependencies.has(id))
     )
       throw new Error('Operation history does not match signal dependencies.');
+    const segmentation = project.segmentationOperations?.find(
+      (item) => item.id === step.segmentationId,
+    );
+    const used = new Set(
+      step.kind === 'segment'
+        ? Object.values(segmentation?.definition?.bindings ?? {}).flatMap(
+            (binding) => binding.valueIds,
+          )
+        : step.outputIds.flatMap((id) => usedValues.get(id) ?? []),
+    );
+    if (
+      used.size !== (step.valueInputIds?.length ?? 0) ||
+      step.valueInputIds?.some((id) => !used.has(id))
+    )
+      throw new Error('Operation history does not match value dependencies.');
   }
   if (owners.size !== outputs.size)
     throw new Error('Some outputs have no operation history.');
   for (const step of project.workflowSteps ?? [])
     if (
-      step.inputIds.some(
+      [...step.inputIds, ...(step.valueInputIds ?? [])].some(
         (id) => (owners.get(id)?.sequence ?? Infinity) >= step.sequence,
       )
     )
@@ -438,6 +584,13 @@ export function validateWorkspace(value: unknown): Project {
   ) {
     if (!def || !['clip', 'discard'].includes(def.boundary))
       throw new Error('Invalid segmentation settings.');
+    if (
+      def.bindings !== undefined &&
+      (def.method !== 'triggers' ||
+        !validBindings(def.bindings, BINDABLE_TRIGGER) ||
+        bindingValueIds(def.bindings).some((id) => !values.has(id)))
+    )
+      throw new Error('Invalid trigger settings taken from values.');
     if (def.method === 'ranges') {
       if (
         !Array.isArray(def.ranges) ||
@@ -460,7 +613,8 @@ export function validateWorkspace(value: unknown): Project {
             nodes.get(trigger.signalId)?.sourceId !== sourceId ||
             !['rising', 'falling'].includes(trigger.edge) ||
             !Number.isFinite(trigger.threshold) ||
-            !Number.isFinite(trigger.offset),
+            !Number.isFinite(trigger.offset) ||
+            !validTriggerNoise(trigger),
         )
       )
         throw new Error('Invalid saved triggers.');

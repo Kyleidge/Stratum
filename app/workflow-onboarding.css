@@ -1,0 +1,430 @@
+/* First run: welcome, example tour, next steps, alerts and guide. Imported after workflow.css, in order. */
+
+/* --- First run: welcome, example tour, next steps, alerts, guide --- */
+.workflow-welcome {
+  width: min(880px, 100%);
+  margin: auto;
+  padding: 6vh 24px 32px;
+  display: grid;
+  gap: 20px;
+  color: var(--ink-1);
+}
+.workflow-welcome-header {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.workflow-welcome-header > svg {
+  color: var(--primary);
+}
+.workflow-main .workflow-welcome-header h1 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.workflow-welcome-header p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+.workflow-welcome-flow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.workflow-welcome-flow li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+}
+.workflow-welcome-flow li > svg {
+  color: var(--primary);
+}
+.workflow-welcome-flow strong {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.workflow-welcome-flow .workflow-welcome-arrow {
+  color: var(--ink-3);
+}
+.workflow-welcome-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.workflow-welcome-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  transition: border-color 120ms ease;
+}
+.workflow-welcome-card > svg,
+.workflow-welcome-card[data-kind='batch'] > svg {
+  color: var(--primary);
+}
+.workflow-welcome-card:hover:not(:has(button:disabled)),
+.workflow-welcome-card[data-dragging] {
+  border-color: var(--primary);
+}
+.workflow-welcome-card:has(button:disabled) {
+  opacity: 0.6;
+}
+.workflow-welcome-card h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.workflow-welcome-card h2 button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The whole card activates its button; focus is drawn around the card. */
+.workflow-welcome-card h2 button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+.workflow-welcome-card h2 button:focus-visible {
+  outline: none;
+}
+.workflow-welcome-card h2 button:focus-visible::after {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.workflow-welcome-card h2 button:disabled {
+  cursor: default;
+}
+.workflow-welcome-card p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.workflow-welcome-card [id='workflow-welcome-import'] {
+  display: grid;
+  gap: 8px;
+}
+/* Above the card's click area, so the format can be selected and copied. */
+.workflow-welcome-card code {
+  position: relative;
+  z-index: 1;
+  justify-self: start;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink-1);
+  font-family: var(--font-code);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.workflow-welcome-card p.workflow-welcome-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--ink-2);
+}
+.workflow-welcome-card[data-dragging] p.workflow-welcome-drop {
+  border-color: var(--primary);
+  background: var(--primary-wash);
+  color: var(--ink-1);
+}
+.workflow-welcome-card[data-kind='batch'] {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 18px;
+}
+.workflow-welcome-card[data-kind='batch'] > div {
+  display: grid;
+  gap: 4px;
+}
+.workflow-welcome-card[data-kind='batch'] h2 {
+  font-size: var(--text-md);
+}
+.workflow-welcome-alert {
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .workflow-welcome-flow .workflow-welcome-arrow {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .workflow-welcome {
+    padding-top: 24px;
+  }
+  .workflow-welcome-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.workflow-error > svg {
+  flex: none;
+}
+.workflow-error-message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-error .workflow-error-dismiss {
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: 0;
+  color: inherit;
+}
+.workflow-error .workflow-link {
+  flex: none;
+  margin-left: 0;
+}
+.workflow-main-alert {
+  flex: none;
+  margin: 8px 10px 0;
+}
+.example-tour {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--primary-wash);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.example-tour-icon {
+  color: var(--primary);
+}
+.example-tour-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.example-tour-count {
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.example-tour-body strong {
+  color: var(--ink-1);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.example-tour-body p {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.example-tour-actions {
+  display: flex;
+  gap: 6px;
+}
+.example-tour-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  align-self: start;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+}
+.example-tour-close:hover {
+  background: var(--hover);
+  color: var(--ink-1);
+}
+@media (max-width: 720px) {
+  .example-tour {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .example-tour-icon {
+    display: none;
+  }
+  .example-tour-actions {
+    grid-row: 2;
+  }
+}
+.workflow-next-steps {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+  font-size: var(--text-sm);
+}
+.workflow-next-steps > strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.workflow-next-step {
+  flex: 1 1 0;
+  min-width: 150px;
+  max-width: 260px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  justify-items: start;
+  align-items: center;
+  column-gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink-1);
+  text-align: left;
+}
+.workflow-next-step > svg {
+  color: var(--primary);
+}
+.workflow-next-step small {
+  grid-column: 1 / -1;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-next-step:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--hover);
+}
+.workflow-next-step:disabled {
+  opacity: 0.6;
+}
+.workflow-guide-dialog {
+  width: min(720px, calc(100vw - 24px));
+}
+/* A fixed height, so switching tabs never resizes the dialog. */
+.workflow-guide-panel {
+  flex: none;
+  height: min(420px, calc(100dvh - 220px));
+  overflow: auto;
+  padding: 8px 4px 0 0;
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.workflow-guide-panel > .primary-button {
+  width: auto;
+}
+.workflow-guide-steps {
+  margin: 0 0 14px;
+  padding-left: 18px;
+}
+.workflow-guide-steps li {
+  margin: 8px 0;
+}
+.workflow-guide-panel code {
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  font-family: var(--font-code);
+}
+.workflow-guide-terms {
+  margin: 0;
+}
+.workflow-guide-terms dt {
+  margin-top: 10px;
+  font-weight: 600;
+}
+.workflow-guide-terms dd {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+}
+.workflow-guide-note {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+}
+.workflow-guide-keys-group h3 {
+  margin: 12px 0 4px;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.workflow-guide-keys-group dl {
+  margin: 0;
+}
+.workflow-guide-keys-group dl > div {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workflow-guide-keys-group dd {
+  margin: 0;
+}
+.workflow-guide-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+.workflow-guide-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ink-3);
+}
+.workflow-guide-keys kbd {
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--ink-1);
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+.workflow-welcome-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-welcome-tags li {
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-guide-or {
+  margin: 0 3px;
+  font-size: var(--text-xs);
+}

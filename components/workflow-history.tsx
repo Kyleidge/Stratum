@@ -26,7 +26,11 @@ import {
 } from 'lucide-react';
 import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
 import { formatCount } from '@/lib/format-count';
-import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
+import {
+  stepInputs,
+  stepName,
+  type WorkflowIndex,
+} from '@/lib/workflow-history';
 import type { WorkflowStep } from '@/lib/workflow-types';
 import {
   ContextMenu,
@@ -485,7 +489,7 @@ export default function WorkflowHistory({
               row.kind === 'step'
                 ? [
                     ...new Set(
-                      step.inputIds.flatMap((id) => {
+                      stepInputs(step).flatMap((id) => {
                         const owner = index.owner.get(id);
                         return owner
                           ? [`#${String(owner.sequence + 1).padStart(3, '0')}`]
