@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Stratum: layered signal strata on a dark tile. Source of the app icon;
+       run `pnpm desktop:icons` after editing. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22303c"/>
+      <stop offset="1" stop-color="#131b22"/>
+    </linearGradient>
+    <clipPath id="inner">
+      <rect x="48" y="48" width="928" height="928" rx="208"/>
+    </clipPath>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#tile)"/>
+  <g clip-path="url(#inner)" stroke="#131b22" stroke-width="40">
+    <path d="M0 400 C 200 260 380 260 540 350 S 820 450 1024 300 V 1024 H 0 Z" fill="#86b6ef"/>
+    <path d="M0 580 C 200 460 400 470 560 540 S 830 620 1024 480 V 1024 H 0 Z" fill="#3987e5"/>
+    <path d="M0 760 C 200 650 420 670 590 720 S 840 790 1024 660 V 1024 H 0 Z" fill="#199e70"/>
+  </g>
+</svg>

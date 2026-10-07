@@ -1,0 +1,85 @@
+# Builds the Windows installer. A `v*` tag (matching package.json's version)
+# also publishes the installer, its blockmap and latest.yml to the public
+# releases feed that installed copies update from. Pushes to
+# release-packaging, pull requests touching packaging and manual runs only
+# build, uploading the installer as a workflow artifact. See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [release-packaging]
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'desktop/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a publishing run part-way through an upload.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v7
+      # Uses the pnpm version pinned in package.json's packageManager.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check the tag matches package.json
+        if: env.PUBLISH == 'true'
+        shell: bash
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($version)."
+            exit 1
+          fi
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm desktop:build
+      - name: Package${{ startsWith(github.ref, 'refs/tags/v') && ' and publish' || '' }}
+        shell: bash
+        run: node desktop/package.mjs $([ "$PUBLISH" = true ] && echo --publish)
+        env:
+          # Publishing token for the releases repository (contents: write).
+          GH_TOKEN: ${{ env.PUBLISH == 'true' && secrets.RELEASES_TOKEN || '' }}
+          # Optional feed overrides (repository variables).
+          STRATUM_UPDATE_OWNER: ${{ vars.STRATUM_UPDATE_OWNER }}
+          STRATUM_UPDATE_REPO: ${{ vars.STRATUM_UPDATE_REPO }}
+          STRATUM_UPDATE_URL: ${{ vars.STRATUM_UPDATE_URL }}
+          # Signing happens only when these secrets exist; otherwise unsigned.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stratum-windows-installer
+          path: |
+            build/releases/Stratum-Setup-*.exe
+            build/releases/Stratum-Setup-*.exe.blockmap
+            build/releases/latest.yml
+          if-no-files-found: error
+          retention-days: 14

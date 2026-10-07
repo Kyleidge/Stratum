@@ -31,10 +31,15 @@ existing workspaces, Undo/Redo and saved plots remain available after the rename
 New workspace backups use `.stratum`; existing `.stratus` backups still restore.
 The archive format and version are unchanged.
 
-Create a portable desktop build with `pnpm desktop:package`. On Windows, launch
-`build/releases/Stratum-win32-x64/Stratum.exe`. Keep the entire output folder
-alongside the executable. Packaging on macOS/Linux produces the corresponding
-native bundle. Packages are unsigned development builds.
+Stratum 1.0 is released for Windows as a per-user installer that updates
+itself (see [releasing](docs/releasing.md) and the [changelog](CHANGELOG.md)).
+`pnpm desktop:package` builds it locally: on Windows,
+`build/releases/Stratum-Setup-<version>.exe` and an unpacked
+`build/releases/win-unpacked/Stratum.exe`; on macOS/Linux, an unpacked folder
+for that platform. Local builds are unsigned unless signing credentials are set.
+
+Stratum is released under the [MIT licence](LICENSE); **Help → Third-party
+notices** lists the bundled open-source packages.
 
 ## Explore
 
