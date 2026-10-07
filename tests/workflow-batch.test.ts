@@ -136,7 +136,18 @@ void test('workflow files validate references, functions and checks with line nu
       broken('limits: { min: 78', 'limit: { min: 78'),
       /unknown setting "limit"/,
     ],
-    [broken('version: 1', 'version: 2'), /newer Stratum/],
+    [broken('version: 1', 'version: 2'), /newer Stratum \(version 2\)/],
+    // A newer file this YAML subset cannot parse is still named as newer.
+    [
+      broken('version: 1', 'version: 3\nshared: &defaults { a: 1 }'),
+      /^This workflow was made by a newer Stratum \(version 3\)/,
+    ],
+    [
+      broken('version: 1', 'version: 1\nshared: &defaults { a: 1 }'),
+      /Anchors, aliases and tags/,
+    ],
+    [broken('version: 1', 'version: 2\nfuture-setting: 1'), /newer Stratum/],
+    [broken('version: 1', 'version: 1\nfuture-setting: 1'), /future-setting/],
     [
       broken('format: stratum-workflow', 'format: something-else'),
       /not a Stratum workflow/,

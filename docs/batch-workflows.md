@@ -284,7 +284,7 @@ beyond its own size. Other limits:
 - 500 recordings per batch run.
 
 Errors name the line. A file from a newer Stratum version is refused rather than
-partly read. Saving from Stratum writes a canonical layout, so comments in a
+partly read, even when it uses syntax this version cannot parse. Saving from Stratum writes a canonical layout, so comments in a
 file you opened are not kept when you save a new copy.
 
 Each batch stores the exact workflow text it used, identified by a SHA-256 of

@@ -81,6 +81,7 @@ import type {
 } from '@/lib/report-integration';
 import type { ReportSnapshotState } from '@/lib/report-data';
 import {
+  NewerReportDraftError,
   openReportDraftStore,
   type ReportDraftStore,
 } from '@/lib/report-draft-store';
@@ -140,8 +141,11 @@ type Gesture = {
 };
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
-/** `saved` on this device, a write `pending`, or a `failed` write or read. */
-type SaveState = 'off' | 'loading' | 'pending' | 'saved' | 'failed';
+/**
+ * `saved` on this device, a write `pending`, a `failed` write or read, or a
+ * `newer` stored draft, which is kept and never overwritten.
+ */
+type SaveState = 'off' | 'loading' | 'pending' | 'saved' | 'failed' | 'newer';
 type Notice = { text: string; action?: { label: string; run: () => void } };
 const blockCount = (report: ReportDocument) =>
   report.pages.reduce((total, item) => total + item.blocks.length, 0);
@@ -400,8 +404,11 @@ export default function ReportBuilderMockup({
         });
         setSaveState('saved');
       })
-      .catch(() => {
-        if (live) setSaveState('failed');
+      .catch((error: unknown) => {
+        if (live)
+          setSaveState(
+            error instanceof NewerReportDraftError ? 'newer' : 'failed',
+          );
       });
     return () => {
       live = false;
@@ -412,7 +419,8 @@ export default function ReportBuilderMockup({
   }, [persist]);
 
   // Save edits shortly after they stop; Undo/Redo stay session-only.
-  const loaded = saveState !== 'off' && saveState !== 'loading';
+  const loaded =
+    saveState !== 'off' && saveState !== 'loading' && saveState !== 'newer';
   useEffect(() => {
     const store = draftStore.current;
     if (!loaded || !store || report === savedReport.current) return;
@@ -1196,7 +1204,9 @@ export default function ReportBuilderMockup({
           ? 'Saving on this device…'
           : saveState === 'failed'
             ? 'Not saved: this device’s storage is unavailable'
-            : 'Saved on this device';
+            : saveState === 'newer'
+              ? 'Not saved: the saved draft is from a newer Stratum'
+              : 'Saved on this device';
 
   return (
     // Keyboard shortcuts are delegated from the editor's focusable controls.
@@ -1323,9 +1333,11 @@ export default function ReportBuilderMockup({
               title={
                 saveState === 'failed'
                   ? 'Report drafts are kept in this browser’s storage, which could not be written. Keep this window open, or export a PDF.'
-                  : saveState === 'off'
-                    ? undefined
-                    : 'The draft is kept in this browser’s storage on this device. It is not part of workspace backups.'
+                  : saveState === 'newer'
+                    ? 'A newer version of Stratum saved the report draft on this device. It is kept unchanged, so edits here are not saved; export a PDF to keep them.'
+                    : saveState === 'off'
+                      ? undefined
+                      : 'The draft is kept in this browser’s storage on this device. It is not part of workspace backups.'
               }
             >
               <span className="rb-dot" /> {saveLabel}

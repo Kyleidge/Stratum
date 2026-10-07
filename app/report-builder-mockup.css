@@ -1478,10 +1478,12 @@
 }
 
 /* Save status: an honest note of where the draft is kept. */
-.rb-document-name > output[data-state='failed'] {
+.rb-document-name > output[data-state='failed'],
+.rb-document-name > output[data-state='newer'] {
   color: var(--danger);
 }
-.rb-document-name > output[data-state='failed'] .rb-dot {
+.rb-document-name > output[data-state='failed'] .rb-dot,
+.rb-document-name > output[data-state='newer'] .rb-dot {
   background: var(--danger);
 }
 .rb-document-name > output[data-state='pending'] .rb-dot,
