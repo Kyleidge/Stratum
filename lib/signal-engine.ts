@@ -755,6 +755,23 @@ export class SignalEngine {
         };
         this.invalidate();
       }
+      // A step may only use values calculated before it: History, backups
+      // and workflow files are chronological.
+      const sequences = new Map(
+        this.project.workflowSteps!.flatMap((step) =>
+          step.outputIds.map((id) => [id, step.sequence] as const),
+        ),
+      );
+      for (const step of this.project.workflowSteps ?? [])
+        if (
+          affected.some((item) => item.id === step.id) &&
+          step.valueInputIds?.some(
+            (id) => (sequences.get(id) ?? Infinity) >= step.sequence,
+          )
+        )
+          throw new Error(
+            'A step can only use values calculated before it. Choose an earlier value, or create a new step instead. Existing work is unchanged.',
+          );
       // Build every affected signal before commit so bad recipes never publish.
       const affectedIds = new Set(affected.map((step) => step.id));
       const signalIds = new Set(this.project.nodes.map((node) => node.id));
@@ -2790,12 +2807,22 @@ export class SignalEngine {
           value: { valueId: bound.valueId, factor: bound.factor },
         };
       if (operation === 'butterworth-low' || operation === 'butterworth-high') {
-        // The nominal rate is the median interval of the first samples.
-        const first = await this.evaluate(parentId).next();
-        const t = first.value?.time;
+        // The nominal rate is the median of the first 1,000 intervals, read
+        // across chunks (a crop's first chunk can hold a single sample).
         const steps: number[] = [];
-        for (let i = 1; i < (t?.length ?? 0); i++)
-          steps.push(t![i] - t![i - 1]);
+        let previous: number | undefined;
+        const stream = this.evaluate(parentId);
+        try {
+          for await (const chunk of stream) {
+            for (let i = 0; i < chunk.time.length && steps.length < 1000; i++) {
+              if (previous !== undefined) steps.push(chunk.time[i] - previous);
+              previous = chunk.time[i];
+            }
+            if (steps.length >= 1000) break;
+          }
+        } finally {
+          await stream.return(undefined);
+        }
         steps.sort((a, b) => a - b);
         const interval = steps[Math.floor(steps.length / 2)];
         if (!(interval > 0))

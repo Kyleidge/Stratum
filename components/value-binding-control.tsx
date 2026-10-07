@@ -78,9 +78,11 @@ export function valueSourceOptions(
   index: WorkflowIndex,
   usable: (unit: string) => boolean,
   current = '',
+  /** When editing a step, only values from earlier steps can be used. */
+  before = Infinity,
 ): { groups: SourceGroup[]; items: SourceOption[] } {
   const steps = [...index.steps.values()]
-    .filter((step) => step.kind === 'value')
+    .filter((step) => step.kind === 'value' && step.sequence < before)
     .sort((a, b) => b.sequence - a.sequence);
   const items: { value: string; label: string; disabled: boolean }[] = [];
   const groups = steps.map((step) => {
@@ -175,6 +177,7 @@ export default function ValueBindingControl({
   label,
   index,
   inputIds,
+  before,
   draft,
   unit,
   inputUnit,
@@ -187,6 +190,8 @@ export default function ValueBindingControl({
   index: WorkflowIndex;
   /** The inputs being processed; a step with a value for each is preferred. */
   inputIds: string[];
+  /** The sequence of the step being edited; later values are not offered. */
+  before?: number;
   draft: BindingDraft;
   unit: BindingUnit;
   /** The unit of the previewed input, for `unit: 'input'`. */
@@ -200,7 +205,12 @@ export default function ValueBindingControl({
   const expected = unit === 'seconds' ? 's' : unit === 'input' ? inputUnit : '';
   const usable = (valueUnit: string) =>
     unit === 'any' || valueUnit === expected;
-  const { groups, items } = valueSourceOptions(index, usable, draft.source);
+  const { groups, items } = valueSourceOptions(
+    index,
+    usable,
+    draft.source,
+    before,
+  );
   const name = label.toLowerCase();
   return (
     <div className="value-binding-control">

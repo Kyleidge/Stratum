@@ -1410,7 +1410,11 @@ export default function WorkflowWorkbench() {
       ];
       open({
         kind: step.kind,
-        ids: binary ? [...new Set(parents)] : nodeIds,
+        // A formula's B, C … are settings; only A is a processing input.
+        ids:
+          binary || step.operation === 'formula'
+            ? [...new Set(parents)]
+            : nodeIds,
         operation: step.operation as Operation | ValueOperation,
         parameter: step.parameters?.value,
         secondaryId: second.length === 1 ? second[0] : '',
@@ -3418,6 +3422,11 @@ export default function WorkflowWorkbench() {
                   rangePlot={{ graph, request }}
                   signalLabel={(id) => index.label(id)}
                   valueIndex={index}
+                  valueBefore={
+                    editor.editingStepId
+                      ? index.steps.get(editor.editingStepId)?.sequence
+                      : undefined
+                  }
                   applyLabel={
                     editor.editingStepId
                       ? 'Save changes and recalculate'

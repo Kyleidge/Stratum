@@ -198,6 +198,10 @@ export default function FunctionEditor({
       : NUMBER_DRAFT,
   );
   const valueSpec = values ? findValueSpec(operation) : undefined;
+  // When editing, settings can only use values calculated before the step.
+  const before = editor.editingStepId
+    ? index.steps.get(editor.editingStepId)?.sequence
+    : undefined;
   const spec = values
     ? undefined
     : (SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
@@ -476,6 +480,7 @@ export default function FunctionEditor({
                   context={context}
                   index={index}
                   inputIds={editor.ids}
+                  before={before}
                   resolved={focused?.result?.parameters}
                   inputLabel={index.label(previewId)}
                   disabled={busy}
@@ -498,6 +503,7 @@ export default function FunctionEditor({
                   label={spec.parameter}
                   index={index}
                   inputIds={editor.ids}
+                  before={before}
                   draft={deriveBinding}
                   unit={BINDABLE_DERIVE[operation as Operation] ?? 'any'}
                   inputUnit={previewNode?.unit ?? ''}
@@ -540,6 +546,7 @@ export default function FunctionEditor({
                   index={index}
                   inputIds={editor.ids}
                   previewId={previewId}
+                  before={before}
                   draft={formulaDraft}
                   disabled={busy}
                   onChange={setFormulaDraft}
@@ -1007,6 +1014,7 @@ function ValueSettings({
   context,
   index,
   inputIds,
+  before,
   resolved,
   inputLabel,
   disabled,
@@ -1019,6 +1027,7 @@ function ValueSettings({
   context: ReturnType<typeof parameterContext>;
   index: WorkflowIndex;
   inputIds: string[];
+  before?: number;
   /** Settings the engine used for the previewed input. */
   resolved?: ValueParameters;
   inputLabel: string;
@@ -1029,6 +1038,7 @@ function ValueSettings({
     bindable: true,
     index,
     inputIds,
+    before,
     draft: form.bindings[name] ?? NUMBER_DRAFT,
     unit: BINDABLE_VALUE[name],
     inputUnit: unit,

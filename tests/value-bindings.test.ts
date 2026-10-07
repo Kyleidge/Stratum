@@ -419,3 +419,27 @@ void test('workflow files reference value steps for bound settings and replay th
     engine.close();
   }
 });
+
+void test('an edited step cannot use a value calculated after it', async () => {
+  const { engine, torque } = await fixture();
+  try {
+    const [offset] = await engine.deriveMany([torque], 'offset', 1);
+    const [mean] = await engine.calculateValues([torque], 'sample-average');
+    const step = stepOf(engine.project, offset.id);
+    const before = engine.project;
+    await assert.rejects(
+      engine.editOperation(step.id, {
+        type: 'derive-many',
+        parentIds: [torque],
+        operation: 'offset',
+        parameter: 0,
+        bindings: { value: { valueIds: [mean.id], factor: -1 } },
+      }),
+      /only use values calculated before it/,
+    );
+    assert.equal(engine.project, before);
+    assert.doesNotThrow(() => validateWorkspace(structuredClone(before)));
+  } finally {
+    engine.close();
+  }
+});

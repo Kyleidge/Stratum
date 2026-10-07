@@ -135,6 +135,7 @@ export default function FormulaSettingsPanel({
   index,
   inputIds,
   previewId,
+  before,
   draft,
   disabled,
   onChange,
@@ -142,6 +143,8 @@ export default function FormulaSettingsPanel({
   index: WorkflowIndex;
   inputIds: string[];
   previewId: string;
+  /** The sequence of the step being edited; later values are not offered. */
+  before?: number;
   draft: FormulaDraft;
   disabled: boolean;
   onChange: (draft: FormulaDraft) => void;
@@ -183,7 +186,7 @@ export default function FormulaSettingsPanel({
       label: label(node.id),
     })),
   ];
-  const values = valueSourceOptions(index, () => true);
+  const values = valueSourceOptions(index, () => true, '', before);
   return (
     <div className="formula-settings">
       <label className="parameter-control-field formula-expression">

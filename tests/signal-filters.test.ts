@@ -373,3 +373,27 @@ void test('Butterworth derives record their rate and reject cutoffs at Nyquist',
     engine.close();
   }
 });
+
+void test('Butterworth reads its rate across chunks, even from a one-sample first chunk', async () => {
+  // 1 kHz; storage chunks hold 16,384 samples, so 16.383 s ends the first.
+  const rows = Array.from(
+    { length: 16484 },
+    (_, i) => `${i / 1000},${Math.sin(i / 50)}`,
+  );
+  const { engine, source } = await fixture(`t,x [V]\n${rows.join('\n')}`);
+  try {
+    const [segment] = await engine.segment(
+      source.id,
+      { method: 'ranges', boundary: 'clip', ranges: [[16.383, 16.45]] },
+      [source.channels[0]],
+      false,
+      'signals',
+    );
+    const first = await engine.evaluate(segment.nodes[0]).next();
+    assert.equal(first.value?.time.length, 1);
+    const node = await engine.derive(segment.nodes[0], 'butterworth-low', 5);
+    assert.ok(Math.abs(node.parameters.rate - 1000) < 1e-6);
+  } finally {
+    engine.close();
+  }
+});

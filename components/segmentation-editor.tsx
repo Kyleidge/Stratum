@@ -82,6 +82,8 @@ type Props = {
   signalLabel?: (id: string) => string;
   /** Offers trigger settings taken from calculated values. */
   valueIndex?: WorkflowIndex;
+  /** The sequence of the step being edited; later values are not offered. */
+  valueBefore?: number;
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
@@ -199,6 +201,7 @@ export default function SegmentationEditor({
   rangePlot,
   signalLabel,
   valueIndex,
+  valueBefore,
   onPreview,
   onCreate,
 }: Props) {
@@ -630,6 +633,7 @@ export default function SegmentationEditor({
                 label={`${label} ${name}`}
                 index={valueIndex}
                 inputIds={[trigger.signalId]}
+                before={valueBefore}
                 draft={trigger.bound?.[name] ?? NUMBER_DRAFT}
                 unit={BINDABLE_TRIGGER[`start.${name}`]}
                 inputUnit={unit}
