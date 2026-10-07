@@ -194,6 +194,21 @@ meaning as in the Segment dialog's **Ignore chatter** section.
   value: { function: first-crossing, input: speed, threshold: 850 }
 ```
 
+Formulas and conversions are derive functions with their own settings:
+
+```yaml
+- id: power
+  derive:
+    function: formula
+    input: torque
+    expression: A * B / 9549 * k
+    unit: kW
+    signals: { B: speed } # One signal, or a step matched to each input by grid
+    values: { k: calibration } # A value step, matched to each input
+- id: torque-nm
+  derive: { function: convert, input: torque, unit: N·m }
+```
+
 A derive `parameter` (for `offset`, `scale` and `time-shift`), a value's
 `threshold` or `time`, and a trigger's `threshold` or `offset` can instead take
 a value step's result: `{ value: <step>, factor: <number> }` (the factor

@@ -281,9 +281,14 @@ void test('every exposed single-input function produces independently calculated
     const source = await engine.importCsv(
       new File(['t,a [V]\n10,-2\n11,4\n12,10\n13,-6'], 'functions.csv'),
     );
+    // Formulas and conversions take settings beyond one number; they are
+    // covered with those settings in tests/formula.test.ts.
     const specs = FUNCTIONS.filter(
       (spec) =>
-        spec.operation !== 'segment' && !isBinaryOperation(spec.operation),
+        spec.operation !== 'segment' &&
+        spec.operation !== 'formula' &&
+        spec.operation !== 'convert' &&
+        !isBinaryOperation(spec.operation),
     );
     assert.equal(
       new Set(specs.map((spec) => spec.operation)).size,

@@ -80,6 +80,8 @@ import {
   valueUnit,
 } from './workflow-types';
 import { ValueAccumulator } from './value-statistics';
+import { compileFormula } from './formula';
+import { unitConversion } from './units';
 import {
   BINDABLE_DERIVE,
   BINDABLE_VALUE,
@@ -127,6 +129,7 @@ import type {
   Chunk,
   DerivePreview,
   EdgeTrigger,
+  FormulaSettings,
   Operation,
   Plot,
   Point,
@@ -654,6 +657,10 @@ export class SignalEngine {
           command.parameter,
           true,
           command.bindings,
+          {
+            ...(command.unit !== undefined ? { unit: command.unit } : {}),
+            ...(command.formula ? { formula: command.formula } : {}),
+          },
         );
         break;
       case 'calculate-values':
@@ -2641,6 +2648,7 @@ export class SignalEngine {
     constant: number,
     persist = true,
     bindings?: ParameterBindings,
+    extra: { unit?: string; formula?: FormulaSettings } = {},
   ) {
     if (
       !FUNCTIONS.some(
@@ -2655,6 +2663,20 @@ export class SignalEngine {
       );
     if (!parentIds.length || new Set(parentIds).size !== parentIds.length)
       throw new Error('Choose unique inputs for this operation.');
+    if (operation === 'formula' || operation === 'convert') {
+      const nodes =
+        operation === 'formula'
+          ? this.formulaNodes(parentIds, extra, bindings)
+          : this.convertNodes(parentIds, extra.unit, bindings);
+      if (persist)
+        await this.save({
+          ...this.project,
+          nodes: [...this.project.nodes, ...nodes],
+        });
+      return nodes;
+    }
+    if (extra.unit !== undefined || extra.formula)
+      throw new Error('Only formulas and conversions take a unit.');
     for (const key of Object.keys(bindings ?? {}))
       if (key !== 'value' || !BINDABLE_DERIVE[operation])
         throw new Error(
@@ -2779,6 +2801,118 @@ export class SignalEngine {
     return nodes;
   }
   /**
+   * Formula outputs, one per input A. Other signal variables use the
+   * candidate on A's sample grid; value variables are resolved per input.
+   */
+  private formulaNodes(
+    parentIds: string[],
+    extra: { unit?: string; formula?: FormulaSettings },
+    bindings?: ParameterBindings,
+  ): SignalNode[] {
+    if (!extra.formula) throw new Error('Enter a formula.');
+    const formula = compileFormula(extra.formula.expression);
+    const unit = (extra.unit ?? '').trim();
+    if (unit.length > 40)
+      throw new Error('Keep the output unit to 40 characters.');
+    const letters = formula.signals.slice(1);
+    for (const key of Object.keys(extra.formula.signals ?? {}))
+      if (!letters.includes(key))
+        throw new Error(`The formula does not use ${key}.`);
+    for (const key of Object.keys(bindings ?? {}))
+      if (!formula.values.includes(key))
+        throw new Error(`The formula does not use "${key}".`);
+    for (const name of formula.values)
+      if (!bindings?.[name]) throw new Error(`Choose a value for "${name}".`);
+    const context = formula.values.length ? this.bindingContext() : undefined;
+    const batchId = uid();
+    const mixedSources =
+      new Set(parentIds.map((id) => this.find(id).sourceId)).size > 1;
+    return parentIds.map((parentId) => {
+      this.check();
+      const parent = this.find(parentId);
+      const grid = this.gridRecipe(parentId);
+      const others = letters.map((letter) => {
+        const candidates = extra.formula!.signals?.[letter] ?? [];
+        if (!candidates.length)
+          throw new Error(`Choose a signal for ${letter}.`);
+        const matched =
+          candidates.length === 1
+            ? candidates
+            : candidates.filter((id) => this.gridRecipe(id) === grid);
+        if (matched.length !== 1)
+          throw new Error(
+            matched.length
+              ? `Several ${letter} signals share the sample grid of ${parent.name}. Choose one.`
+              : `No ${letter} signal shares the sample grid of ${parent.name}.`,
+          );
+        if (this.gridRecipe(matched[0]) !== grid)
+          throw new Error(
+            `${letter} needs the same sample grid and time transformations as ${parent.name}. Use Compare & align first.`,
+          );
+        return matched[0];
+      });
+      const parameters: Record<string, number> = {};
+      const bound: Record<string, BoundValue> = {};
+      for (const name of formula.values) {
+        const result = resolveBinding(
+          context!,
+          bindings![name],
+          parentId,
+          'any',
+          `"${name}"`,
+        );
+        parameters[name] = result.number;
+        bound[name] = { valueId: result.valueId, factor: result.factor };
+      }
+      const node = this.node(
+        mixedSources ? '' : parent.sourceId,
+        `${parent.name.split(' · ')[0]} · Formula`,
+        unit,
+        'formula',
+        [parentId, ...others],
+        parameters,
+      );
+      node.expression = formula.expression;
+      node.color = parent.color;
+      node.batchId = batchId;
+      if (formula.values.length) node.bindings = bound;
+      return node;
+    });
+  }
+  /** Unit conversions, one per input, with exact linear factors. */
+  private convertNodes(
+    parentIds: string[],
+    unit: string | undefined,
+    bindings?: ParameterBindings,
+  ): SignalNode[] {
+    if (bindings && Object.keys(bindings).length)
+      throw new Error('Unit conversions take no values.');
+    const target = (unit ?? '').trim();
+    if (!target) throw new Error('Choose the unit to convert to.');
+    const batchId = uid();
+    const mixedSources =
+      new Set(parentIds.map((id) => this.find(id).sourceId)).size > 1;
+    return parentIds.map((parentId) => {
+      const parent = this.find(parentId);
+      const conversion = unitConversion(parent.unit, target);
+      if (!conversion)
+        throw new Error(
+          `Stratum has no conversion from ${parent.unit || 'no unit'} to ${target}.`,
+        );
+      const node = this.node(
+        mixedSources ? '' : parent.sourceId,
+        `${parent.name.split(' · ')[0]} · in ${target}`,
+        target,
+        'convert',
+        [parentId],
+        conversion,
+      );
+      node.color = parent.color;
+      node.batchId = batchId;
+      return node;
+    });
+  }
+  /**
    * Evaluate a candidate derive operation without saving it. The candidate is
    * validated and built exactly as creation builds it; only bounded envelopes
    * of it and its inputs, each on its own time axis, are returned.
@@ -2788,6 +2922,8 @@ export class SignalEngine {
     operation: Operation;
     parameter: number;
     bindings?: ParameterBindings;
+    unit?: string;
+    formula?: FormulaSettings;
     secondaryId?: string;
     range?: [number, number];
   }): Promise<DerivePreview> {
@@ -2813,12 +2949,19 @@ export class SignalEngine {
         request.parameter,
         false,
         request.bindings,
+        {
+          ...(request.unit !== undefined ? { unit: request.unit } : {}),
+          ...(request.formula ? { formula: request.formula } : {}),
+        },
       );
     const graph = new SignalGraph({
       ...this.project,
       nodes: [...this.project.nodes, node],
     });
-    const inputIds = [input.id, ...(binary ? [request.secondaryId!] : [])];
+    // Every signal input in operation order: A, then B (or the formula's B, C …).
+    const inputIds = binary
+      ? [input.id, request.secondaryId!]
+      : node.parents.slice(0, 8);
     const full = [node.id, ...inputIds].map((id) => graph.ranges.get(id)!);
     const domain: [number, number] = [
       Math.min(...full.map((range) => range[0])),

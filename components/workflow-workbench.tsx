@@ -75,6 +75,7 @@ import type {
 } from '@/lib/workflow-types';
 import type {
   EngineRequest,
+  FormulaSettings,
   Operation,
   Project,
   SegmentationOperation,
@@ -255,23 +256,31 @@ type Editor = {
   secondaryId?: string;
   valueParameters?: ValueParameters;
   bindings?: ParameterBindings;
+  unit?: string;
+  formula?: FormulaSettings;
   savedSegment?: SegmentationOperation;
 };
 
-/** A step's settings taken from values, for reopening its editor. */
+/**
+ * A step's settings beyond its parameter (values, formula, unit), for
+ * reopening its editor.
+ */
 function savedBindingsOf(
   project: Project,
   step: WorkflowStep,
-): { bindings?: ParameterBindings } {
+): Pick<Editor, 'bindings' | 'unit' | 'formula'> {
   try {
     const command = savedCommand(project, step);
-    return (command.type === 'derive-many' ||
-      command.type === 'calculate-values') &&
-      command.bindings
-      ? { bindings: command.bindings }
-      : {};
+    if (command.type === 'calculate-values')
+      return command.bindings ? { bindings: command.bindings } : {};
+    if (command.type !== 'derive-many') return {};
+    return {
+      ...(command.bindings ? { bindings: command.bindings } : {}),
+      ...(command.unit !== undefined ? { unit: command.unit } : {}),
+      ...(command.formula ? { formula: command.formula } : {}),
+    };
   } catch {
-    // Legacy recipes have no bound settings to restore.
+    // Legacy recipes have no further settings to restore.
     return {};
   }
 }
@@ -3491,6 +3500,7 @@ export default function WorkflowWorkbench() {
                     secondaryId,
                     valueParameters,
                     bindings,
+                    extra,
                   ) => {
                     if (editor.kind === 'value')
                       return perform(
@@ -3526,6 +3536,7 @@ export default function WorkflowWorkbench() {
                         operation: operation as Operation,
                         parameter,
                         ...(bindings ? { bindings } : {}),
+                        ...extra,
                       },
                       'Creating derived signals…',
                     );

@@ -34,7 +34,9 @@ export type Operation =
   | 'zero-time'
   | 'resample'
   | 'power'
-  | 'bsfc';
+  | 'bsfc'
+  | 'formula'
+  | 'convert';
 export type SignalNode = {
   timeReference?: import('./time-types').TimeReference;
   timeRecipe?: import('./time-types').TimeRecipe;
@@ -49,6 +51,11 @@ export type SignalNode = {
   channel?: number;
   /** Settings taken from values; `parameters` holds their results. */
   bindings?: Record<string, import('./workflow-types').BoundValue>;
+  /**
+   * Formula nodes: the expression. Parents are its signal variables in
+   * alphabetical order (A first); `parameters` holds its value variables.
+   */
+  expression?: string;
   color: string;
   createdAt: string;
   version: 1;
@@ -93,6 +100,14 @@ export type SegmentationOperation = {
   independently: boolean;
   scope: SegmentationScope;
   segmentIds: string[];
+};
+/**
+ * A formula's expression and its other signal variables: each letter's
+ * candidates, of which the one on each input's sample grid is used.
+ */
+export type FormulaSettings = {
+  expression: string;
+  signals?: Record<string, string[]>;
 };
 export type EdgeTrigger = {
   signalId: string;
@@ -252,8 +267,14 @@ export type EngineRequest =
       parentIds: string[];
       operation: Operation;
       parameter: number;
-      /** `value`: the parameter taken from values for each input. */
+      /**
+       * `value`: the parameter taken from values for each input; for a
+       * formula, its value variables by name.
+       */
       bindings?: import('./workflow-types').ParameterBindings;
+      /** The output unit of a formula, or the target unit of a conversion. */
+      unit?: string;
+      formula?: FormulaSettings;
     }
   | {
       type: 'segment' | 'segment-preview';
@@ -270,6 +291,8 @@ export type EngineRequest =
       operation: Operation;
       parameter: number;
       bindings?: import('./workflow-types').ParameterBindings;
+      unit?: string;
+      formula?: FormulaSettings;
       secondaryId?: string;
       range?: [number, number];
       inspection?: boolean;

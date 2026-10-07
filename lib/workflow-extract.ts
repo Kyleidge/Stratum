@@ -217,8 +217,31 @@ export function extractWorkflow(
             kind: 'derive',
             operation: command.operation,
             inputs: many(command.parentIds),
-            parameter: command.bindings?.value ? 0 : command.parameter,
+            // Bound, formula and conversion parameters are not numbers.
+            parameter:
+              command.bindings?.value ||
+              command.formula ||
+              command.operation === 'convert'
+                ? 0
+                : command.parameter,
             ...(command.bindings ? { bindings: bound(command.bindings) } : {}),
+            ...(command.unit !== undefined ? { unit: command.unit } : {}),
+            ...(command.formula
+              ? {
+                  formula: {
+                    expression: command.formula.expression,
+                    ...(command.formula.signals
+                      ? {
+                          signals: Object.fromEntries(
+                            Object.entries(command.formula.signals).map(
+                              ([letter, ids]) => [letter, many(ids)],
+                            ),
+                          ),
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
           };
           break;
         case 'region-function': {

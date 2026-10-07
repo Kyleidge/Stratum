@@ -54,6 +54,26 @@ export const FUNCTIONS: FunctionSpec[] = [
     unit: '',
   },
   {
+    operation: 'formula',
+    name: 'Formula',
+    category: 'Math',
+    description:
+      'Combine signals and values in an expression, such as A * B / 9549. A is each input; B, C … are signals on the same sample grid; lowercase names are values. You set the output unit.',
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
+    operation: 'convert',
+    name: 'Convert units',
+    category: 'Math',
+    description:
+      "Convert to another unit of the same quantity, such as lbf·ft to N·m or °F to °C, using exact factors. The input's unit must be one Stratum knows.",
+    parameter: '',
+    defaultValue: 0,
+    unit: '',
+  },
+  {
     operation: 'min-max',
     name: 'Min / Max',
     category: 'Calculation',

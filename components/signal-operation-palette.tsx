@@ -36,6 +36,8 @@ const groups = [
       'scale',
       'offset',
       'absolute',
+      'formula',
+      'convert',
     ],
   },
   {
@@ -59,6 +61,8 @@ export const OPERATION_FORMULAS: Partial<Record<string, string>> = {
   scale: 'A × k',
   offset: 'A + k',
   absolute: '|A|',
+  formula: 'f(A, B…)',
+  convert: 'A → unit',
   derivative: 'dA / dt',
   integral: '∫ A dt',
 };

@@ -55,7 +55,9 @@ export function parentWindow(
     return [range[0] + origin, range[1] + origin];
   }
   if (
-    ['scale', 'offset', 'absolute'].includes(node.operation) ||
+    ['scale', 'offset', 'absolute', 'convert', 'formula'].includes(
+      node.operation,
+    ) ||
     isBinaryOperation(node.operation)
   )
     return range;

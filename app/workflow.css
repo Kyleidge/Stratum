@@ -4739,6 +4739,21 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   flex-direction: column;
   gap: 6px;
 }
+/* Formula derive: expression, unit and variable sources. */
+.formula-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.formula-settings .number-field input {
+  min-width: 0;
+  padding: 4px 8px;
+}
+.formula-help summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
 /* A setting typed as a number or taken from calculated values. */
 .value-binding-control {
   display: flex;

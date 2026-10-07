@@ -2,6 +2,7 @@ import { FUNCTIONS } from './signal-functions';
 import { isBinaryOperation } from './signal-arithmetic';
 import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
 import { BINDABLE_DERIVE, BINDABLE_VALUE } from './value-bindings';
+import { compileFormula, MAX_FORMULA_LENGTH } from './formula';
 import type {
   CheckDefinition,
   ParameterBindings,
@@ -52,6 +53,10 @@ export type RecipeOperation =
       parameter: number;
       with?: RecipeRef;
       bindings?: ParameterBindings;
+      /** A formula's output unit, or a conversion's target unit. */
+      unit?: string;
+      /** A formula; `signals` holds each letter's references. */
+      formula?: { expression: string; signals?: Record<string, RecipeRef[]> };
     }
   | {
       kind: 'segment';
@@ -144,6 +149,7 @@ function refsOf(operation: RecipeOperation): RecipeRef[] {
       return [
         ...operation.inputs,
         ...(operation.with ? [operation.with] : []),
+        ...Object.values(operation.formula?.signals ?? {}).flat(),
         ...bindingRefs(operation),
       ];
     case 'segment':
@@ -854,6 +860,77 @@ export function checkAllowed(
   return kind === 'count' || kind === 'limits' || outputs === 'signals';
 }
 
+/** A formula derive: expression, unit, other signals and values by name. */
+function readFormula(
+  reader: Reader,
+  body: YamlMap,
+  context: string,
+): RecipeOperation {
+  reader.keys(
+    body,
+    ['function', 'input', 'inputs', 'expression', 'unit', 'signals', 'values'],
+    context,
+  );
+  const expression = reader.text(
+    body.expression,
+    `${context} expression`,
+    MAX_FORMULA_LENGTH,
+    body,
+  );
+  let formula;
+  try {
+    formula = compileFormula(expression);
+  } catch (error) {
+    reader.fail(
+      `${context} expression: ${error instanceof Error ? error.message : 'invalid formula'}.`,
+      body,
+    );
+  }
+  const named = (key: 'signals' | 'values', expected: string[]) => {
+    const raw = body[key];
+    const map =
+      raw === undefined || raw === null
+        ? {}
+        : reader.map(raw, `${context} ${key}`);
+    reader.keys(map, expected, `${context} ${key}`);
+    for (const name of expected)
+      if (map[name] === undefined || map[name] === null)
+        reader.fail(
+          `${context}: the formula uses ${name}; list it under ${key}.`,
+          body,
+        );
+    return Object.fromEntries(
+      expected.map((name) => [
+        name,
+        reader.refs(map[name], `${context} ${key} ${name}`, map),
+      ]),
+    );
+  };
+  const signals = named('signals', formula.signals.slice(1));
+  const values = named('values', formula.values);
+  return {
+    kind: 'derive',
+    operation: 'formula',
+    inputs: readInputs(reader, body, context),
+    parameter: 0,
+    unit: reader.optionalText(body.unit, `${context} unit`, 40, body) ?? '',
+    formula: {
+      expression,
+      ...(Object.keys(signals).length ? { signals } : {}),
+    },
+    ...(formula.values.length
+      ? {
+          bindings: Object.fromEntries(
+            Object.entries(values).map(([name, refs]) => [
+              name,
+              { valueIds: refs, factor: 1 },
+            ]),
+          ),
+        }
+      : {}),
+  };
+}
+
 function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   const map = reader.map(raw, `Step ${index + 1}`);
   const id = map.id;
@@ -877,7 +954,18 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   );
   const body = reader.map(map[present[0]], `${context} ${present[0]}`);
   let operation: RecipeOperation;
-  if (present[0] === 'derive') {
+  if (present[0] === 'derive' && body.function === 'formula')
+    operation = readFormula(reader, body, context);
+  else if (present[0] === 'derive' && body.function === 'convert') {
+    reader.keys(body, ['function', 'input', 'inputs', 'unit'], context);
+    operation = {
+      kind: 'derive',
+      operation: 'convert',
+      inputs: readInputs(reader, body, context),
+      parameter: 0,
+      unit: reader.text(body.unit, `${context} unit`, 40, body),
+    };
+  } else if (present[0] === 'derive') {
     reader.keys(
       body,
       ['function', 'input', 'inputs', 'parameter', 'with'],
@@ -1263,6 +1351,44 @@ function anchorYaml(anchor: TimeAnchor): YamlMap {
 function operationYaml(operation: RecipeOperation): [string, YamlMap] {
   switch (operation.kind) {
     case 'derive': {
+      const refs = (list: RecipeRef[]) => (list.length === 1 ? list[0] : list);
+      if (operation.operation === 'formula' && operation.formula)
+        return [
+          'derive',
+          {
+            function: 'formula',
+            ...inputYaml(operation.inputs),
+            expression: operation.formula.expression,
+            ...(operation.unit ? { unit: operation.unit } : {}),
+            ...(operation.formula.signals
+              ? {
+                  signals: Object.fromEntries(
+                    Object.entries(operation.formula.signals).map(
+                      ([letter, list]) => [letter, refs(list)],
+                    ),
+                  ),
+                }
+              : {}),
+            ...(operation.bindings
+              ? {
+                  values: Object.fromEntries(
+                    Object.entries(operation.bindings).map(
+                      ([name, binding]) => [name, refs(binding.valueIds)],
+                    ),
+                  ),
+                }
+              : {}),
+          },
+        ];
+      if (operation.operation === 'convert')
+        return [
+          'derive',
+          {
+            function: 'convert',
+            ...inputYaml(operation.inputs),
+            unit: operation.unit ?? '',
+          },
+        ];
       const spec = FUNCTIONS.find(
         (item) => item.operation === operation.operation,
       );
@@ -1679,6 +1805,26 @@ export function stepCommand(
         operation: operation.operation,
         parameter: operation.parameter,
         ...bound(operation.bindings),
+        ...(operation.unit !== undefined ? { unit: operation.unit } : {}),
+        ...(operation.formula
+          ? {
+              formula: {
+                expression: operation.formula.expression,
+                ...(operation.formula.signals
+                  ? {
+                      signals: Object.fromEntries(
+                        Object.entries(operation.formula.signals).map(
+                          ([letter, refs]) => [
+                            letter,
+                            refs.flatMap((ref) => context.resolve(ref)),
+                          ],
+                        ),
+                      ),
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       };
     }
     case 'value':

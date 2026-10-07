@@ -75,7 +75,12 @@ There are no server API routes or cloud signal uploads.
   `valueInputIds`, which drive Edit/Delete impact, lineage, Used by, archive
   validation and workflow-file `{ value: step, factor }` settings.
   `components/value-binding-control.tsx` is the shared "A number | A value"
-  control. Previews run in inspection lanes and never save.
+  control. `lib/formula.ts` parses formula expressions (A = each input,
+  B–Z = signals matched by sample grid, lowercase = bound values) into
+  closures; never `eval`. Formula nodes keep `expression`, include it in
+  their recipe key, and evaluate their parents in lockstep like binary math.
+  `lib/units.ts` holds exact linear unit conversions for `convert` nodes;
+  conversions are only within one family and labels match exactly. Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
   window spans; workflow segment previews run automatically. Operation dialogs

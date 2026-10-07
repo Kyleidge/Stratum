@@ -10,6 +10,8 @@ import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
 import { validTriggerNoise } from './segmentation';
+import { compileFormula } from './formula';
+import { unitConversion } from './units';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
 import {
   BINDABLE_DERIVE,
@@ -257,6 +259,38 @@ export function validateWorkspace(value: unknown): Project {
           : !/^kg\/h$/i.test(units[0]) || units[1].toLowerCase() !== 'kw'
       )
         throw new Error('Invalid binary input units.');
+    } else if (node.operation === 'formula') {
+      let formula;
+      try {
+        formula = compileFormula(
+          typeof node.expression === 'string' ? node.expression : '',
+        );
+      } catch {
+        throw new Error('Invalid formula.');
+      }
+      const names = Object.keys(node.parameters);
+      if (
+        node.parents.length !== formula.signals.length ||
+        names.length !== formula.values.length ||
+        formula.values.some(
+          (name) => !names.includes(name) || !node.bindings?.[name],
+        ) ||
+        typeof node.unit !== 'string' ||
+        node.unit.length > 40
+      )
+        throw new Error('Invalid formula inputs.');
+    } else if (node.operation === 'convert') {
+      const conversion = unitConversion(
+        nodes.get(node.parents[0])?.unit ?? '',
+        node.unit,
+      );
+      if (
+        node.parents.length !== 1 ||
+        !conversion ||
+        node.parameters.factor !== conversion.factor ||
+        node.parameters.offset !== conversion.offset
+      )
+        throw new Error('Invalid unit conversion.');
     } else if (node.operation !== 'raw') {
       const spec = FUNCTIONS.find((item) => item.operation === node.operation);
       const parameter = node.parameters.value;
@@ -374,7 +408,11 @@ export function validateWorkspace(value: unknown): Project {
       node.id,
       boundSettings(
         node.bindings,
-        BINDABLE_DERIVE[node.operation] ? { value: true } : {},
+        node.operation === 'formula'
+          ? node.parameters
+          : BINDABLE_DERIVE[node.operation]
+            ? { value: true }
+            : {},
         node.parameters,
         node.id,
       ),

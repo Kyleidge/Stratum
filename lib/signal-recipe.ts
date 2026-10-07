@@ -65,6 +65,9 @@ export function recipeKey(graph: SignalGraph, id: string): string {
         stableJson({
           operation: node.operation,
           parameters: node.parameters,
+          ...(node.expression !== undefined
+            ? { expression: node.expression }
+            : {}),
           timeRecipe: node.timeRecipe ?? null,
           source:
             node.operation === 'raw' && !node.parents.length

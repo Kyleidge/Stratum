@@ -234,6 +234,17 @@ export function WorkflowStepSettings({
       methods[step.timeSettings.kind] ?? humanize(step.timeSettings.kind),
     ]);
   }
+  const output = index.nodes.get(step.outputIds[0]);
+  if (step.kind === 'derive' && output?.operation === 'formula') {
+    general.push([
+      'Formula',
+      <code key="formula">{output.expression}</code>,
+      output.expression,
+    ]);
+    general.push(['Output unit', output.unit || 'None']);
+  }
+  if (step.kind === 'derive' && output?.operation === 'convert')
+    general.push(['Converts to', output.unit]);
   general.push(['Inputs', formatCount(step.inputIds.length, 'input')]);
   if (step.valueInputIds?.length)
     general.push([

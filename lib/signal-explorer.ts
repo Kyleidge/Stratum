@@ -27,6 +27,8 @@ export const operationLabels: Record<Operation, string> = {
   resample: 'Resample',
   power: 'Brake power',
   bsfc: 'Specific fuel consumption',
+  formula: 'Formula',
+  convert: 'Convert units',
 };
 export function operationDetail(node: SignalNode): string {
   const value = node.parameters.value;

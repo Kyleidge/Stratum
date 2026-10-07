@@ -161,6 +161,29 @@ async function derivedSet(engine: SignalEngine, x: string, y: string) {
     maxGap: 0.001,
   });
   ids['uniform grid'] = grid.id;
+  const [formula] = await engine.deriveMany(
+    [ids['smooth 101']],
+    'formula',
+    0,
+    true,
+    undefined,
+    {
+      unit: 'V²',
+      formula: { expression: 'A * B + abs(A)', signals: { B: [y] } },
+    },
+  );
+  ids['formula of smooth and y'] = formula.id;
+  const [converted] = await engine.deriveMany(
+    [x],
+    'convert',
+    0,
+    true,
+    undefined,
+    {
+      unit: 'mV',
+    },
+  );
+  ids['converted to mV'] = converted.id;
   return ids;
 }
 

@@ -4,6 +4,7 @@ import { segmentationOperation } from './segmentation-operation';
 import { formatCount } from './format-count';
 import { stepName } from './workflow-history';
 import { savedBindings } from './value-bindings';
+import { compileFormula } from './formula';
 
 const withBindings = (
   bindings: import('./workflow-types').ParameterBindings | undefined,
@@ -245,7 +246,40 @@ export function savedCommand(
     );
     if (run) return { type: 'region-function', settings: { ...run } };
     const first = project.nodes.find((node) => node.id === step.outputIds[0]);
-    if (first && first.operation !== 'raw' && first.operation !== 'crop')
+    if (first && first.operation !== 'raw' && first.operation !== 'crop') {
+      const outputs = step.outputIds.flatMap(
+        (id) => project.nodes.find((node) => node.id === id) ?? [],
+      );
+      // A formula's other signals: each letter's inputs across the batch.
+      const letters =
+        first.operation === 'formula'
+          ? compileFormula(first.expression ?? '').signals.slice(1)
+          : [];
+      const formula =
+        first.operation === 'formula'
+          ? {
+              unit: first.unit,
+              formula: {
+                expression: first.expression ?? '',
+                ...(letters.length
+                  ? {
+                      signals: Object.fromEntries(
+                        letters.map((letter, k) => [
+                          letter,
+                          [
+                            ...new Set(
+                              outputs.map((node) => node.parents[k + 1]),
+                            ),
+                          ],
+                        ]),
+                      ),
+                    }
+                  : {}),
+              },
+            }
+          : first.operation === 'convert'
+            ? { unit: first.unit }
+            : {};
       return {
         type: 'derive-many',
         parentIds: step.outputIds.map(
@@ -253,14 +287,10 @@ export function savedCommand(
         ),
         operation: first.operation,
         parameter: step.parameters?.value ?? first.parameters.value ?? 0,
-        ...withBindings(
-          savedBindings(
-            step.outputIds.flatMap(
-              (id) => project.nodes.find((node) => node.id === id) ?? [],
-            ),
-          ),
-        ),
+        ...withBindings(savedBindings(outputs)),
+        ...formula,
       };
+    }
   }
   throw new Error(
     `Operation #${step.sequence + 1} uses a legacy recipe that cannot be rebuilt safely. Remove or recreate that dependent operation first.`,

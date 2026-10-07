@@ -34,6 +34,7 @@ import {
 import type {
   DerivePreview,
   EngineRequest,
+  FormulaSettings,
   EngineResponse,
   Operation,
   Plot,
@@ -41,6 +42,14 @@ import type {
   SignalNode,
 } from '@/lib/signal-types';
 import ValueOperationPalette from './value-operation-palette';
+import { gridKey } from '@/lib/sample-grid';
+import { conversionTargets } from '@/lib/units';
+import { compileFormula } from '@/lib/formula';
+import FormulaSettingsPanel, {
+  formulaRequest,
+  initialFormulaDraft,
+  type FormulaDraft,
+} from './formula-settings';
 import ValueBindingControl, {
   NUMBER_DRAFT,
   bindingFromDraft,
@@ -79,7 +88,12 @@ export type FunctionDraft = {
   valueParameters?: ValueParameters;
   /** Saved settings taken from values. */
   bindings?: ParameterBindings;
+  /** A formula's output unit or a conversion's target unit. */
+  unit?: string;
+  formula?: FormulaSettings;
 };
+/** Settings beyond the single parameter: formulas and conversions. */
+type DeriveExtra = { unit?: string; formula?: FormulaSettings };
 type Request = (message: EngineRequest) => Promise<EngineResponse>;
 type Range = [number, number];
 /** Inputs offered by the preview chooser; every input is still processed. */
@@ -120,59 +134,6 @@ function rememberOperation(kind: 'derive' | 'value', operation: string) {
   }
 }
 
-/**
- * The sample-grid identity the engine checks before combining two signals,
- * mirrored here only to group Input B choices. The engine still validates.
- */
-function gridKey(nodes: ReadonlyMap<string, SignalNode>, id: string): string {
-  const operations: [string, Record<string, number>][] = [];
-  let node = nodes.get(id);
-  while (node && node.operation !== 'raw') {
-    if (node.timeRecipe?.kind === 'resample')
-      return JSON.stringify([
-        node.timeReference?.id,
-        node.timeRecipe.grid,
-        operations,
-      ]);
-    if (
-      node.timeRecipe?.kind === 'align' ||
-      node.timeRecipe?.kind === 'crop' ||
-      node.operation === 'min-max'
-    )
-      return JSON.stringify([node.id, operations]);
-    if (
-      ['crop', 'resample', 'time-shift', 'zero-time'].includes(node.operation)
-    ) {
-      const last = operations.at(-1);
-      if (node.operation === 'crop' && last?.[0] === 'crop') {
-        const a = last[1],
-          b = node.parameters;
-        const end = Math.min(a.end, b.end);
-        last[1] = {
-          start: Math.max(a.start, b.start),
-          end,
-          endExclusive:
-            (a.end === end && a.endExclusive === 1) ||
-            (b.end === end && b.endExclusive === 1)
-              ? 1
-              : 0,
-        };
-      } else
-        operations.push([
-          node.operation,
-          node.operation === 'crop'
-            ? {
-                ...node.parameters,
-                endExclusive: node.parameters.endExclusive ?? 0,
-              }
-            : node.parameters,
-        ]);
-    }
-    node = nodes.get(node.parents[0]);
-  }
-  return JSON.stringify([node?.sourceId, operations]);
-}
-
 export default function FunctionEditor({
   editor,
   project,
@@ -193,6 +154,7 @@ export default function FunctionEditor({
     secondaryId: string,
     valueParameters?: ValueParameters,
     bindings?: ParameterBindings,
+    extra?: DeriveExtra,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -217,6 +179,16 @@ export default function FunctionEditor({
   // An untouched threshold follows the previewed input's range midpoint.
   const [valueForm, setValueForm] = useState<ValueForm>(() =>
     initialValueForm(index, editor.valueParameters, editor.bindings),
+  );
+  const [formulaDraft, setFormulaDraft] = useState<FormulaDraft>(() =>
+    initialFormulaDraft(
+      index,
+      index.nodes.get(editor.ids[0])?.unit ?? '',
+      editor.operation === 'formula' ? editor : undefined,
+    ),
+  );
+  const [convertUnit, setConvertUnit] = useState(
+    editor.operation === 'convert' ? (editor.unit ?? '') : '',
   );
   // A derive parameter typed as a number or taken from values.
   const [deriveBinding, setDeriveBinding] = useState<BindingDraft>(() =>
@@ -331,7 +303,34 @@ export default function FunctionEditor({
   const deriveBound = bindable
     ? bindingFromDraft(index, deriveBinding)
     : undefined;
-  const deriveBindings = deriveBound ? { value: deriveBound } : undefined;
+  // Formulas and conversions carry their own settings and value bindings.
+  const formula =
+    !values && operation === 'formula'
+      ? formulaRequest(index, formulaDraft)
+      : undefined;
+  const conversions =
+    !values && operation === 'convert'
+      ? conversionTargets(previewNode?.unit ?? '')
+      : [];
+  const extraProblem =
+    formula && 'problem' in formula
+      ? formula.problem
+      : operation === 'convert' && !values && !convertUnit
+        ? conversions.length
+          ? 'Choose the unit to convert to.'
+          : `Stratum has no conversions for ${previewNode?.unit || 'signals without a unit'}.`
+        : '';
+  const extra: DeriveExtra | undefined =
+    formula && !('problem' in formula)
+      ? { unit: formula.unit, formula: formula.formula }
+      : operation === 'convert' && !values && convertUnit
+        ? { unit: convertUnit }
+        : undefined;
+  const deriveBindings = deriveBound
+    ? { value: deriveBound }
+    : formula && !('problem' in formula)
+      ? formula.bindings
+      : undefined;
   const choices = editor.ids.slice(0, PREVIEW_CHOICES).map((id) => ({
     value: id,
     label: `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
@@ -350,6 +349,7 @@ export default function FunctionEditor({
   const ready =
     !values &&
     parameterReady &&
+    !extraProblem &&
     (!binary || !!secondaryId) &&
     !unitError &&
     !!previewNode;
@@ -361,17 +361,20 @@ export default function FunctionEditor({
     operation: operation as Operation,
     parameter: parameterValue,
     bindings: deriveBindings,
+    extra,
     secondaryId: binary ? secondaryId : undefined,
     ready,
     viewport,
   });
-  const waiting = !parameterReady
-    ? deriveBound === null
-      ? 'Choose a value and a finite factor to preview.'
-      : `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
-    : binary && !secondaryId
-      ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
-      : unitError || '';
+  const waiting = extraProblem
+    ? extraProblem
+    : !parameterReady
+      ? deriveBound === null
+        ? 'Choose a value and a finite factor to preview.'
+        : `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
+      : binary && !secondaryId
+        ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
+        : unitError || '';
   // Create stays disabled while the settings or their preview are invalid,
   // with the reason beside the button.
   const blocked = values
@@ -526,6 +529,61 @@ export default function FunctionEditor({
                   />
                 </ParameterSetting>
               )}
+              {operation === 'formula' && (
+                <FormulaSettingsPanel
+                  index={index}
+                  inputIds={editor.ids}
+                  previewId={previewId}
+                  draft={formulaDraft}
+                  disabled={busy}
+                  onChange={setFormulaDraft}
+                />
+              )}
+              {operation === 'convert' && conversions.length > 0 && (
+                <div className="parameter-control-field">
+                  <span>Convert to</span>
+                  <Select
+                    value={convertUnit}
+                    items={[
+                      { value: '', label: 'Choose a unit…' },
+                      ...conversions.flatMap((family) =>
+                        family.units.map((unit) => ({
+                          value: unit,
+                          label: unit,
+                        })),
+                      ),
+                    ]}
+                    disabled={busy}
+                    onValueChange={(next) => {
+                      if (next !== null) setConvertUnit(String(next));
+                    }}
+                  >
+                    <SelectTrigger
+                      className="workbench-select"
+                      aria-label="Convert to"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {conversions.map((family) => (
+                        <SelectGroup key={family.family}>
+                          <SelectLabel>
+                            {family.family} · from {previewNode?.unit}
+                          </SelectLabel>
+                          {family.units.map((unit) => (
+                            <SelectItem
+                              key={`${family.family}:${unit}`}
+                              value={unit}
+                            >
+                              {unit}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {binary && (
                 <SecondInput
                   label={
@@ -634,6 +692,7 @@ export default function FunctionEditor({
                     ? settings.parameters
                     : undefined,
                   values ? settings.bindings : deriveBindings,
+                  values ? undefined : extra,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
@@ -721,6 +780,7 @@ function useDerivePreview({
   operation,
   parameter,
   bindings,
+  extra,
   secondaryId,
   ready,
   viewport,
@@ -730,6 +790,7 @@ function useDerivePreview({
   operation: Operation;
   parameter: number;
   bindings?: ParameterBindings;
+  extra?: DeriveExtra;
   secondaryId?: string;
   ready: boolean;
   viewport?: Range;
@@ -748,21 +809,22 @@ function useDerivePreview({
         secondaryId,
         viewport,
         bindings,
+        extra,
       ])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const [id, operation, parameter, secondaryId, range, bindings] = JSON.parse(
-      key,
-    ) as [
-      string,
-      Operation,
-      number,
-      string | undefined,
-      Range | undefined,
-      ParameterBindings | undefined,
-    ];
+    const [id, operation, parameter, secondaryId, range, bindings, extra] =
+      JSON.parse(key) as [
+        string,
+        Operation,
+        number,
+        string | undefined,
+        Range | undefined,
+        ParameterBindings | undefined,
+        DeriveExtra | undefined,
+      ];
     // Debounced so slider drags send one request per pause, not per pixel.
     const timer = setTimeout(() => {
       void request({
@@ -771,6 +833,7 @@ function useDerivePreview({
         operation,
         parameter,
         ...(bindings ? { bindings } : {}),
+        ...extra,
         secondaryId,
         range,
         inspection: true,
@@ -1332,15 +1395,23 @@ function DerivedPreview({
   const { shown, error, secondaryId } = preview;
   const traces: PreviewTrace[] = [];
   if (shown) {
-    const ids = [inputId, ...(secondaryId ? [secondaryId] : [])];
+    const ids = secondaryId ? [inputId, secondaryId] : shown.node.parents;
+    // A formula names its inputs A, B, C …; two-input math names A and B.
+    const letters = shown.node.expression
+      ? compileFormula(shown.node.expression).signals
+      : secondaryId
+        ? ['A', 'B']
+        : ['Input'];
     shown.inputs.forEach((plot, position) => {
       const node = index.nodes.get(ids[position]);
       if (node)
         traces.push({
           node,
           plot,
-          label: `${position ? 'B' : secondaryId ? 'A' : 'Input'} · ${index.label(node.id)}`,
-          color: position ? 'var(--series-2)' : 'var(--ink-3)',
+          label: `${letters[position] ?? `Input ${position + 1}`} · ${index.label(node.id)}`,
+          color: position
+            ? `var(--series-${Math.min(8, position + 1)})`
+            : 'var(--ink-3)',
           width: 1.2,
         });
     });

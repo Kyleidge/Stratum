@@ -5,6 +5,7 @@ import {
   isBinaryOperation,
 } from './signal-arithmetic';
 import { executeTime } from './time-executor';
+import { compileFormula } from './formula';
 import { yieldEngine } from './engine-yield';
 import { parentWindow } from './signal-range';
 import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
@@ -158,6 +159,53 @@ export async function* executeSignal(
         }
       }
       if ((a || b) && !inputRange) throw new Error('Input lengths differ.');
+      if (output.length) yield { kind: 'output', chunk: arrays(output) };
+      return;
+    }
+    if (node.operation === 'formula') {
+      // Shared-timestamp math over every signal variable, in lockstep.
+      const formula = compileFormula(node.expression ?? '');
+      const count = node.parents.length;
+      const constants = formula.values.map((name) => node.parameters[name]);
+      const chunks: (SeriesChunk | undefined)[] = [];
+      const at: number[] = Array.from({ length: count }, () => 0);
+      for (let k = 0; k < count; k++)
+        chunks[k] = yield { kind: 'input', index: k };
+      const advance = async function* (k: number): Process {
+        if (++at[k] === chunks[k]!.time.length) {
+          chunks[k] = yield { kind: 'input', index: k };
+          at[k] = 0;
+        }
+      };
+      // Windowed inputs cover the window but may begin at different samples.
+      while (inputRange && chunks.every(Boolean)) {
+        const latest = Math.max(
+          ...chunks.map((chunk, k) => chunk!.time[at[k]]),
+        );
+        if (chunks.every((chunk, k) => chunk!.time[at[k]] === latest)) break;
+        for (let k = 0; k < count && chunks.every(Boolean); k++)
+          while (chunks[k] && chunks[k]!.time[at[k]] < latest)
+            yield* advance(k);
+      }
+      const signals = new Float64Array(count);
+      let output: Point[] = [];
+      while (chunks.every(Boolean)) {
+        check();
+        const time = chunks[0]!.time[at[0]];
+        for (let k = 0; k < count; k++) {
+          if (chunks[k]!.time[at[k]] !== time)
+            throw new Error('Inputs must share timestamps.');
+          signals[k] = chunks[k]!.values[at[k]];
+        }
+        output.push([time, formula.evaluate(signals, constants)]);
+        for (let k = 0; k < count; k++) yield* advance(k);
+        if (output.length === SIZE) {
+          yield { kind: 'output', chunk: arrays(output) };
+          output = [];
+        }
+      }
+      if (chunks.some(Boolean) && !inputRange)
+        throw new Error('Input lengths differ.');
       if (output.length) yield { kind: 'output', chunk: arrays(output) };
       return;
     }
@@ -409,6 +457,9 @@ export async function* executeSignal(
               break;
             case 'offset':
               value += node.parameters.value;
+              break;
+            case 'convert':
+              value = value * node.parameters.factor + node.parameters.offset;
               break;
             case 'absolute':
               value = Math.abs(value);

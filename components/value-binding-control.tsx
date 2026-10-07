@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
 import type { BindingUnit } from '@/lib/value-bindings';
-import type { ValueBinding } from '@/lib/workflow-types';
+import type { ValueBinding, WorkflowStep } from '@/lib/workflow-types';
 import { formatCount } from '@/lib/format-count';
 
 /** A setting's source: `''` for a typed number, else chosen values. */
@@ -66,6 +66,106 @@ export function bindingFromDraft(
     : null;
 }
 
+type SourceOption = { value: string; label: string; disabled: boolean };
+type SourceGroup = { step: WorkflowStep; options: SourceOption[] };
+
+/**
+ * Choices of calculated values, newest step first: a step with several
+ * values (matched to each input) and each single value. `usable` disables
+ * values in the wrong unit.
+ */
+export function valueSourceOptions(
+  index: WorkflowIndex,
+  usable: (unit: string) => boolean,
+  current = '',
+): { groups: SourceGroup[]; items: SourceOption[] } {
+  const steps = [...index.steps.values()]
+    .filter((step) => step.kind === 'value')
+    .sort((a, b) => b.sequence - a.sequence);
+  const items: { value: string; label: string; disabled: boolean }[] = [];
+  const groups = steps.map((step) => {
+    const values = step.outputIds.flatMap((id) => index.values.get(id) ?? []);
+    const options = [
+      ...(values.length > 1
+        ? [
+            {
+              value: `step:${step.id}`,
+              label: `${reference(step.sequence)} ${stepName(step)} · each input's own (${formatCount(values.length, 'value')})`,
+              disabled: !values.every((value) => usable(value.unit)),
+            },
+          ]
+        : []),
+      ...values.map((value) => ({
+        value: `value:${value.id}`,
+        label: `${reference(step.sequence)} ${index.label(value.id)}${value.unit ? ` [${value.unit}]` : ''}`,
+        disabled: !usable(value.unit),
+      })),
+    ];
+    items.push(...options);
+    return { step, options };
+  });
+  if (current.startsWith('ids:'))
+    items.push({
+      value: current,
+      label: `${formatCount((JSON.parse(current.slice(4)) as string[]).length, 'saved value')}`,
+      disabled: false,
+    });
+  return { groups, items };
+}
+
+/** A select of calculated values, grouped by the step that made them. */
+export function ValueSourceSelect({
+  label,
+  value,
+  groups,
+  items,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  groups: SourceGroup[];
+  items: SourceOption[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      items={items}
+      disabled={disabled}
+      onValueChange={(next) => {
+        if (next) onChange(String(next));
+      }}
+    >
+      <SelectTrigger className="workbench-select" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {groups.map(({ step, options }) => (
+          <SelectGroup key={step.id}>
+            <SelectLabel>
+              {reference(step.sequence)} {stepName(step)}
+            </SelectLabel>
+            {options.map((option) => (
+              <SelectItem
+                key={option.value}
+                value={option.value}
+                disabled={option.disabled}
+              >
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+        {value.startsWith('ids:') && (
+          <SelectItem value={value}>{items.at(-1)!.label}</SelectItem>
+        )}
+      </SelectContent>
+    </Select>
+  );
+}
+
 /**
  * A setting that is either typed (the `children` control) or taken from
  * calculated values, scaled by a factor. Values in another unit than the
@@ -100,37 +200,7 @@ export default function ValueBindingControl({
   const expected = unit === 'seconds' ? 's' : unit === 'input' ? inputUnit : '';
   const usable = (valueUnit: string) =>
     unit === 'any' || valueUnit === expected;
-  const steps = [...index.steps.values()]
-    .filter((step) => step.kind === 'value')
-    .sort((a, b) => b.sequence - a.sequence);
-  const items: { value: string; label: string; disabled: boolean }[] = [];
-  const groups = steps.map((step) => {
-    const values = step.outputIds.flatMap((id) => index.values.get(id) ?? []);
-    const options = [
-      ...(values.length > 1
-        ? [
-            {
-              value: `step:${step.id}`,
-              label: `${reference(step.sequence)} ${stepName(step)} · each input's own (${formatCount(values.length, 'value')})`,
-              disabled: !values.every((value) => usable(value.unit)),
-            },
-          ]
-        : []),
-      ...values.map((value) => ({
-        value: `value:${value.id}`,
-        label: `${reference(step.sequence)} ${index.label(value.id)}${value.unit ? ` [${value.unit}]` : ''}`,
-        disabled: !usable(value.unit),
-      })),
-    ];
-    items.push(...options);
-    return { step, options };
-  });
-  if (draft.source.startsWith('ids:'))
-    items.push({
-      value: draft.source,
-      label: `${formatCount((JSON.parse(draft.source.slice(4)) as string[]).length, 'saved value')}`,
-      disabled: false,
-    });
+  const { groups, items } = valueSourceOptions(index, usable, draft.source);
   const name = label.toLowerCase();
   return (
     <div className="value-binding-control">
@@ -186,44 +256,14 @@ export default function ValueBindingControl({
         <>
           <div className="parameter-control-field">
             <span>Value</span>
-            <Select
+            <ValueSourceSelect
+              label={`${label} value`}
               value={draft.source}
+              groups={groups}
               items={items}
               disabled={disabled}
-              onValueChange={(next) => {
-                if (next) onChange({ ...draft, source: String(next) });
-              }}
-            >
-              <SelectTrigger
-                className="workbench-select"
-                aria-label={`${label} value`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {groups.map(({ step, options }) => (
-                  <SelectGroup key={step.id}>
-                    <SelectLabel>
-                      {reference(step.sequence)} {stepName(step)}
-                    </SelectLabel>
-                    {options.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        disabled={option.disabled}
-                      >
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-                {draft.source.startsWith('ids:') && (
-                  <SelectItem value={draft.source}>
-                    {items.at(-1)!.label}
-                  </SelectItem>
-                )}
-              </SelectContent>
-            </Select>
+              onChange={(source) => onChange({ ...draft, source })}
+            />
           </div>
           <label className="parameter-control-field">
             <span>Factor</span>

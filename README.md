@@ -156,13 +156,26 @@ rises above 0.5 × its maximum.
 
 **Derive signal** opens a compact palette grouped into Math, Filters, Time and
 Calculus. Math includes add, subtract, multiply and divide between signals, plus
-constant scaling, offsets and absolute value. Each checked input is A; choose
-one B to use across the batch. Both inputs must have matching sample grids and
-time transformations in the same recording. Add/subtract require identical unit
-labels; multiply/divide compose labels without automatic conversion. Missing
-inputs, division by zero and non-finite results stay missing. Saved brake-power
-and fuel-consumption recipes remain readable and editable for compatibility;
-they are no longer offered for new operations.
+constant scaling, offsets, absolute value, **Formula** and **Convert units**.
+
+- **Formula** evaluates an expression such as `A * B / 9549` for each sample:
+  A is each input, B–Z are other signals on the same sample grid (a step's
+  outputs are matched to each input by grid, so segments pair with their own
+  sibling segments), and lowercase names are calculated values (matched per
+  input like other value settings). Operators `+ − * / % ^`, comparisons
+  (1 or 0) and functions such as `abs`, `sqrt`, `min`, `max`, `if`, `clamp`
+  are available. You set the output unit; it is never inferred. Missing
+  samples and non-finite results stay missing. Expressions are parsed, never
+  run as code.
+- **Convert units** converts between units of one quantity (torque, speed,
+  temperature, pressure, power, flow and more) with exact factors, such as
+  lbf·ft to N·m or °F to °C. The input's unit must be one Stratum knows. Each checked input is A; choose
+  one B to use across the batch. Both inputs must have matching sample grids and
+  time transformations in the same recording. Add/subtract require identical unit
+  labels; multiply/divide compose labels without automatic conversion. Missing
+  inputs, division by zero and non-finite results stay missing. Saved brake-power
+  and fuel-consumption recipes remain readable and editable for compatibility;
+  they are no longer offered for new operations.
 
 **Segment** uses method cards for time ranges, regular windows and signal
 triggers, with separate settings and scope panels. Switching methods retains

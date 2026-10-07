@@ -170,6 +170,10 @@ globalThis.onmessage = (
               r.parameter,
               true,
               r.bindings,
+              {
+                ...(r.unit !== undefined ? { unit: r.unit } : {}),
+                ...(r.formula ? { formula: r.formula } : {}),
+              },
             );
             break;
           case 'segment':
