@@ -351,3 +351,24 @@ void test('workflow files save formulas and conversions and replay them', async 
     engine.close();
   }
 });
+
+void test('random IDs are version-4 UUIDs even without crypto.randomUUID', async () => {
+  const { randomId } = await import('../lib/random-id');
+  const pattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  assert.match(randomId(), pattern);
+  // An insecure context (plain HTTP from another computer) lacks randomUUID.
+  const original = Object.getOwnPropertyDescriptor(crypto, 'randomUUID');
+  Object.defineProperty(crypto, 'randomUUID', {
+    value: undefined,
+    configurable: true,
+  });
+  try {
+    const ids = new Set(Array.from({ length: 1000 }, () => randomId()));
+    assert.equal(ids.size, 1000);
+    for (const id of ids) assert.match(id, pattern);
+  } finally {
+    if (original) Object.defineProperty(crypto, 'randomUUID', original);
+    else delete (crypto as { randomUUID?: unknown }).randomUUID;
+  }
+});

@@ -127,6 +127,7 @@ import {
   WORKFLOW_DRAG_TYPE,
   type WorkflowTarget,
 } from '@/lib/workflow-drag';
+import { randomId } from '@/lib/random-id';
 
 export type PlotScratchpadHandle = {
   createPlot: (target: WorkflowTarget) => void;
@@ -665,7 +666,7 @@ export default function PlotScratchpad({
       ).length >= MAX_CUSTOM_AXES
     )
       return;
-    const key = `axis:${crypto.randomUUID()}`;
+    const key = `axis:${randomId()}`;
     if (traceId) {
       update({
         axes: {
@@ -901,7 +902,7 @@ export default function PlotScratchpad({
     const next: PlotSheet = {
       ...initialSheet,
       ...template,
-      id: `plot:${crypto.randomUUID()}`,
+      id: `plot:${randomId()}`,
       name: template
         ? template.name.slice(0, 80)
         : ids.length === 1
@@ -973,7 +974,7 @@ export default function PlotScratchpad({
           : index.owner.get(target.id);
       const next: PlotSheet = {
         ...initialSheet,
-        id: `plot:${crypto.randomUUID()}`,
+        id: `plot:${randomId()}`,
         name:
           owner?.kind === 'segment'
             ? stepName(owner).slice(0, 80)
@@ -1015,7 +1016,7 @@ export default function PlotScratchpad({
       }
       const next: PlotSheet = {
         ...initialSheet,
-        id: `plot:${crypto.randomUUID()}`,
+        id: `plot:${randomId()}`,
         name: name.slice(0, 80),
         zeroTime: !!options?.zeroTime,
         traces: unique.map((trace, i) => ({
@@ -2454,7 +2455,7 @@ export default function PlotScratchpad({
                   ...sheet.annotations?.find(
                     (item) => item.id === noteDraft.id,
                   ),
-                  id: noteDraft.id ?? crypto.randomUUID(),
+                  id: noteDraft.id ?? randomId(),
                   time,
                   text: noteDraft.text.trim().slice(0, 160),
                   clockId: noteDraft.clockId,

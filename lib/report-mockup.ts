@@ -1,3 +1,5 @@
+import { randomId } from './random-id';
+
 export type ReportBlockType = 'text' | 'plot' | 'image' | 'table';
 
 export interface ReportBlock {
@@ -126,7 +128,7 @@ export function createBlock(
     table: { width: 560, height: 180 },
   };
   return {
-    id: crypto.randomUUID(),
+    id: randomId(),
     type,
     name: blockLabel(type),
     x: 48,

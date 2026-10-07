@@ -199,6 +199,7 @@ import type {
   WorkflowBatch,
   WorkflowRun,
 } from '@/lib/workflow-types';
+import { randomId } from '@/lib/random-id';
 
 const PAGE_SIZE = 30;
 /** Outputs of one operation drawn together on the Active plot. */
@@ -943,7 +944,7 @@ export default function WorkflowWorkbench() {
   async function runBatch(plan: BatchPlan) {
     setRunDialog(null);
     if (engine.busy) return;
-    const batchId = crypto.randomUUID();
+    const batchId = randomId();
     const failures: { name: string; message: string }[] = [];
     let cancelled = false;
     batchStop.current = false;

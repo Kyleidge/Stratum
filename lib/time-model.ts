@@ -5,6 +5,7 @@ import { arithmeticUnit } from './signal-arithmetic';
 import { SignalGraph } from './signal-graph';
 import { CrossingDetector, validTriggerNoise } from './segmentation';
 import type { SeriesChunk } from './signal-types';
+import { randomId } from './random-id';
 
 /** A UI/segmentation scope, never an imported recording or persisted source. */
 export function workspaceTimeScope(
@@ -169,7 +170,7 @@ export async function timeNodes(
   validateTimeSettings(settings);
   const graph = new SignalGraph(project);
   timeInputs(settings).forEach((id) => graph.find(id));
-  const batchId = crypto.randomUUID();
+  const batchId = randomId();
   const outputs: SignalNode[] = [];
   const sameClock = (ids: string[]) => {
     const reference = graph.timeReferences.get(ids[0])!;
@@ -188,7 +189,7 @@ export async function timeNodes(
     const parent = graph.find(inputId);
     const operation = `time-${recipe.kind}` as keyof typeof TIME_OPERATIONS;
     outputs.push({
-      id: crypto.randomUUID(),
+      id: randomId(),
       sourceId: '',
       parents: [inputId, ...extra],
       name: `${parent.name} · ${TIME_OPERATIONS[operation]}`,

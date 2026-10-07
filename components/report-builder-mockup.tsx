@@ -91,6 +91,7 @@ import {
   ReportDataLibrary,
   REPORT_ASSET_DRAG_TYPE,
 } from '@/components/report-data-library';
+import { randomId } from '@/lib/random-id';
 
 const DRAG_TYPE = 'application/x-stratum-report-block';
 const BLOCKS: {
@@ -577,7 +578,7 @@ export default function ReportBuilderMockup({
     commit({
       ...report,
       pages: overflow
-        ? [...report.pages, { id: crypto.randomUUID(), blocks: [block] }]
+        ? [...report.pages, { id: randomId(), blocks: [block] }]
         : report.pages.map((item) =>
             item.id === page.id
               ? { ...item, blocks: [...item.blocks, block] }
@@ -603,9 +604,9 @@ export default function ReportBuilderMockup({
     if (!blocks.length || gesture.current) return;
     const inserted = blocks.map((block) => ({
       ...block,
-      id: crypto.randomUUID(),
+      id: randomId(),
     }));
-    const newPageIds = blocks.map(() => crypto.randomUUID());
+    const newPageIds = blocks.map(() => randomId());
     function place(current: ReportDocument) {
       const index = current.pages.findIndex((item) => item.id === pageId);
       if (index < 0) return { report: current, firstPage: 0 };
@@ -795,7 +796,7 @@ export default function ReportBuilderMockup({
       addBlock(
         selected.type,
         { x: selected.x + 20, y: selected.y + 20 },
-        { ...selected, id: crypto.randomUUID(), name: selected.name + ' copy' },
+        { ...selected, id: randomId(), name: selected.name + ' copy' },
       );
   }
   function reorder(front: boolean) {
@@ -816,7 +817,7 @@ export default function ReportBuilderMockup({
   function addPage() {
     commit({
       ...report,
-      pages: [...report.pages, { id: crypto.randomUUID(), blocks: [] }],
+      pages: [...report.pages, { id: randomId(), blocks: [] }],
     });
     setPageIndex(report.pages.length);
     setSelectedId(null);

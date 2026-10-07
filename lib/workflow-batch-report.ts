@@ -31,6 +31,7 @@ import { createZip, uniqueNames, type ZipEntry } from './zip-store';
 import { TRACE_COLORS, type PlotSheet } from './plot-scratchpad';
 import type { EngineRequest, EngineResponse, Project } from './signal-types';
 import type { WorkflowBatch, WorkflowRun } from './workflow-types';
+import { randomId } from './random-id';
 
 type Request = (message: EngineRequest) => Promise<EngineResponse>;
 
@@ -181,7 +182,7 @@ export async function renderRunReport(options: {
       if (!bind) {
         blocks.push({
           ...block,
-          id: crypto.randomUUID(),
+          id: randomId(),
           name: fill(block.name),
           text,
         });
@@ -195,7 +196,7 @@ export async function renderRunReport(options: {
           });
           blocks.push({
             ...placed(block, createBlock('table'), text),
-            id: crypto.randomUUID(),
+            id: randomId(),
             tableData:
               rows.length > 1
                 ? rows
@@ -211,7 +212,7 @@ export async function renderRunReport(options: {
             throw new BlockedReference('no values were calculated.');
           blocks.push({
             ...placed(block, createBlock('table'), text),
-            id: crypto.randomUUID(),
+            id: randomId(),
             tableData: [
               ['Value', 'Result', 'Unit'],
               ...ids.slice(0, 40).map((id) => {
@@ -242,7 +243,7 @@ export async function renderRunReport(options: {
           );
           blocks.push({
             ...placed(block, captured, text),
-            id: crypto.randomUUID(),
+            id: randomId(),
           });
           continue;
         }
@@ -266,7 +267,7 @@ export async function renderRunReport(options: {
           throw new BlockedReference('the plotted outputs were not created.');
         const sheet: PlotSheet = {
           ...bind.sheet,
-          id: `plot:${crypto.randomUUID()}`,
+          id: `plot:${randomId()}`,
           name: fill(block.name),
           traces: unique.slice(0, 30),
         };
@@ -281,7 +282,7 @@ export async function renderRunReport(options: {
         captured.forEach((panel, position) =>
           blocks.push({
             ...placed(block, panel, position ? panel.text : text),
-            id: crypto.randomUUID(),
+            id: randomId(),
             y: Math.min(size.height - height, block.y + position * height),
             height,
           }),
@@ -299,7 +300,7 @@ export async function renderRunReport(options: {
         );
       }
     }
-    pages.push({ id: crypto.randomUUID(), blocks });
+    pages.push({ id: randomId(), blocks });
   }
   return {
     title: fill(template.title).slice(0, 200),
@@ -307,7 +308,7 @@ export async function renderRunReport(options: {
     orientation: template.orientation,
     background: template.background,
     ...(template.frame ? { frame: { ...template.frame } } : {}),
-    pages: pages.length ? pages : [{ id: crypto.randomUUID(), blocks: [] }],
+    pages: pages.length ? pages : [{ id: randomId(), blocks: [] }],
   };
 }
 

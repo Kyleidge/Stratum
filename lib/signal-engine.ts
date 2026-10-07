@@ -143,6 +143,7 @@ import type {
   SignalNode,
   Source,
 } from './signal-types';
+import { randomId } from './random-id';
 
 const CHUNK_SIZE = 16384;
 // Index read cache. A packed root costs 104 bytes per 4,096 samples.
@@ -160,7 +161,7 @@ const CHECKPOINTS_KEY = 'checkpoints-v1';
 const CHECKPOINT_BUDGET = 16 * 1024 * 1024;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
-const uid = () => crypto.randomUUID();
+const uid = () => randomId();
 function result<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -188,7 +189,7 @@ export class SignalEngine {
       () => this.check(),
     );
     const step = {
-      id: crypto.randomUUID(),
+      id: randomId(),
       sourceId: '',
       sequence: (before.workflowSteps ?? []).reduce(
         (max, item) => Math.max(max, item.sequence + 1),
