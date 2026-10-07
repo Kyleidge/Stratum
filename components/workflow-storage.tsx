@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FolderArchive } from 'lucide-react';
 import {
   Dialog,
@@ -17,9 +17,23 @@ import {
   AlertDialogFooter,
 } from '@/components/ui/alert-dialog';
 import { formatCount } from '@/lib/format-count';
-import type { EngineRequest, EngineResponse } from '@/lib/signal-types';
+import {
+  desktopBridge,
+  fileErrorMessage,
+  readNativeFile,
+  runAutoBackup,
+  streamToNativeFile,
+  type AutoBackupSettings,
+  type DesktopReadFile,
+  type StreamRequest,
+} from '@/lib/desktop-bridge';
+
+/** A backup chosen for restore: a browser File or a native file handle. */
+type Chosen = { name: string; file?: File; native?: DesktopReadFile };
 
 export default function WorkflowStorage({
+  open,
+  onOpenChange: setOpen,
   disabled,
   recordings,
   request,
@@ -29,20 +43,39 @@ export default function WorkflowStorage({
   exampleName,
   onOpenWorkflow,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   disabled: boolean;
   recordings: number;
-  request: (message: EngineRequest) => Promise<EngineResponse>;
-  restore: (file: File) => Promise<void>;
+  request: StreamRequest;
+  /** Restores a File, or a native file stream transferred to the worker. */
+  restore: (
+    file: File | ReadableStream<Uint8Array>,
+    transfer?: Transferable[],
+  ) => Promise<void>;
   cancel: () => void;
   example: (refresh?: boolean) => Promise<void>;
   exampleName?: string;
   /** A workflow file chosen as a backup opens the Run dialog instead. */
   onOpenWorkflow: (file: File) => void;
 }) {
-  const [open, setOpen] = useState(false),
-    [busy, setBusy] = useState(false),
+  // Desktop: native dialogs and streamed files; browser: downloads and inputs.
+  const [bridge] = useState(desktopBridge);
+  const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const [chosen, setChosen] = useState<File>();
+  const [chosen, setChosen] = useState<Chosen>();
+  const [auto, setAuto] = useState<AutoBackupSettings>();
+  useEffect(() => {
+    if (!open || !bridge) return;
+    let alive = true;
+    void bridge.autoBackup
+      .settings()
+      .then((settings) => alive && setAuto(settings))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open, bridge]);
   const [refreshing, setRefreshing] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const file = useRef<HTMLInputElement>(null),
@@ -51,7 +84,24 @@ export default function WorkflowStorage({
     setBusy(true);
     setError('');
     cancelled.current = false;
+    const name = `Stratum-workspace-${new Date().toISOString().slice(0, 10)}.stratum`;
     try {
+      if (bridge) {
+        const file = await bridge.saveFile({
+          kind: 'workspace',
+          defaultName: name,
+          title: 'Save workspace backup',
+        });
+        if (!file) return;
+        await streamToNativeFile(bridge, file, request, (stream) => ({
+          type: 'backup-workspace',
+          stream,
+        }));
+        setError(
+          `Backup saved to ${file.path}. Keep a copy somewhere separate from this device.`,
+        );
+        return;
+      }
       const response = await request({ type: 'backup-workspace' });
       if (cancelled.current) throw new Error('Backup cancelled.');
       if (response.type !== 'export')
@@ -59,14 +109,56 @@ export default function WorkflowStorage({
       const link = document.createElement('a'),
         url = URL.createObjectURL(response.blob);
       link.href = url;
-      link.download = `Stratum-workspace-${new Date().toISOString().slice(0, 10)}.stratum`;
+      link.download = name;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       setError(
         'Backup download prepared. Keep the file somewhere separate from this device.',
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Backup failed.');
+      setError(
+        cancelled.current
+          ? 'Backup cancelled. No file was saved.'
+          : fileErrorMessage(caught, 'Backup failed.'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function chooseRestore() {
+    setError('');
+    if (!bridge) {
+      file.current?.click();
+      return;
+    }
+    try {
+      const native = await bridge.openFile({
+        kind: 'workspace',
+        title: 'Restore workspace backup',
+      });
+      if (native) setChosen({ name: native.name, native });
+    } catch (caught) {
+      setError(fileErrorMessage(caught, 'Could not open the backup.'));
+    }
+  }
+  /** Closes the confirmation; an unused native file is released. */
+  function dismissChosen() {
+    if (chosen?.native) void bridge?.abort(chosen.native.handle);
+    setChosen(undefined);
+  }
+  async function autoBackupAction(
+    action: (
+      settings: NonNullable<typeof bridge>['autoBackup'],
+    ) => Promise<AutoBackupSettings | void>,
+  ) {
+    if (!bridge) return;
+    setBusy(true);
+    setError('');
+    try {
+      const settings = await action(bridge.autoBackup);
+      if (settings) setAuto(settings);
+    } catch (caught) {
+      setError(fileErrorMessage(caught, 'Could not change backup settings.'));
     } finally {
       setBusy(false);
     }
@@ -123,20 +215,115 @@ export default function WorkflowStorage({
               disabled={busy || !recordings}
               onClick={() => void backup()}
             >
-              Download workspace backup
+              {bridge ? 'Save workspace backup…' : 'Download workspace backup'}
             </button>
             <button
               className="secondary-button"
               disabled={busy}
-              onClick={() => file.current?.click()}
+              onClick={() => void chooseRestore()}
             >
-              Restore workspace backup
+              {bridge
+                ? 'Restore workspace backup…'
+                : 'Restore workspace backup'}
             </button>
           </div>
           <p className="workflow-muted">
-            Version 1 supports backups up to 128 MiB. Result CSV files are not
-            workspace backups.
+            {bridge
+              ? 'Backups are written to disk as they are prepared, so their size is limited only by free space.'
+              : 'Version 1 supports backups up to 128 MiB in the browser; the desktop app has no limit.'}{' '}
+            Result CSV files are not workspace backups.
           </p>
+          {bridge && (
+            <>
+              <h3 className="workflow-storage-heading">Automatic backups</h3>
+              {auto?.folder ? (
+                <>
+                  <p className="workflow-muted">
+                    Saved to <strong>{auto.folder}</strong> when Stratum closes
+                    and every {auto.intervalMinutes} minutes while there are
+                    changes. The newest {auto.keep} are kept.
+                  </p>
+                  <div className="workflow-storage-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={busy || !recordings}
+                      onClick={() =>
+                        void autoBackupAction(() =>
+                          runAutoBackup(bridge, request),
+                        )
+                      }
+                    >
+                      Back up now
+                    </button>
+                    <button
+                      className="workflow-link"
+                      disabled={busy}
+                      onClick={() =>
+                        void autoBackupAction((backups) => backups.openFolder())
+                      }
+                    >
+                      Open folder
+                    </button>
+                    <button
+                      className="workflow-link"
+                      disabled={busy}
+                      onClick={() =>
+                        void autoBackupAction((backups) =>
+                          backups.chooseFolder(),
+                        )
+                      }
+                    >
+                      Change folder…
+                    </button>
+                    <button
+                      className="workflow-link"
+                      disabled={busy}
+                      onClick={() =>
+                        void autoBackupAction((backups) => backups.disable())
+                      }
+                    >
+                      Turn off
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="workflow-muted">
+                    Off. Choose a folder, ideally on another drive or a synced
+                    folder, to keep the newest {auto?.keep ?? 10} backups,
+                    written when Stratum closes and every{' '}
+                    {auto?.intervalMinutes ?? 30} minutes while there are
+                    changes.
+                  </p>
+                  <div className="workflow-storage-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void autoBackupAction((backups) =>
+                          backups.chooseFolder(),
+                        )
+                      }
+                    >
+                      Choose a backup folder…
+                    </button>
+                  </div>
+                </>
+              )}
+              {auto?.last && (
+                <p
+                  className="workflow-muted workflow-storage-last"
+                  data-ok={auto.last.ok}
+                >
+                  Last automatic backup,{' '}
+                  {new Date(auto.last.time).toLocaleString()}:{' '}
+                  {auto.last.ok
+                    ? auto.last.file
+                    : `failed. ${auto.last.error ?? ''}`}
+                </p>
+              )}
+            </>
+          )}
           <p className="workflow-muted">
             Workflow files (.stratum.yaml) are opened, run and saved from the
             Import menu.
@@ -233,7 +420,7 @@ export default function WorkflowStorage({
       <AlertDialog
         open={!!chosen}
         onOpenChange={(value) => {
-          if (!value && !busy) setChosen(undefined);
+          if (!value && !busy) dismissChosen();
         }}
       >
         <AlertDialogContent className="workflow-dialog">
@@ -245,7 +432,7 @@ export default function WorkflowStorage({
           </AlertDialogDescription>
           <p className="workflow-muted">
             Undo keeps only recent changes on this device. To keep the current
-            workspace for good, download a backup first.
+            workspace for good, {bridge ? 'save' : 'download'} a backup first.
           </p>
           {error && <p role="alert">{error}</p>}
           <AlertDialogFooter>
@@ -254,7 +441,7 @@ export default function WorkflowStorage({
               disabled={busy || !recordings}
               onClick={() => void backup()}
             >
-              Download a backup first
+              {bridge ? 'Save a backup first' : 'Download a backup first'}
             </button>
             {busy ? (
               <button
@@ -270,18 +457,29 @@ export default function WorkflowStorage({
               <AlertDialogCancel>Keep current workspace</AlertDialogCancel>
             )}
             <AlertDialogAction
-              disabled={busy}
+              disabled={busy || (!chosen?.file && !chosen?.native)}
               onClick={() => {
                 if (!chosen) return;
                 setBusy(true);
                 setRestoring(true);
                 setError('');
-                void restore(chosen)
+                const native = chosen.native;
+                void (
+                  native && bridge
+                    ? readNativeFile(bridge, native, (stream) =>
+                        restore(stream, [stream]),
+                      )
+                    : restore(chosen.file!)
+                )
                   .then(() => {
                     setChosen(undefined);
                     setOpen(false);
                   })
-                  .catch((caught: Error) => setError(caught.message))
+                  .catch((caught: Error) => {
+                    setError(fileErrorMessage(caught, 'Restore failed.'));
+                    // A native file is read once; choose it again to retry.
+                    if (native) setChosen({ name: chosen.name });
+                  })
                   .finally(() => {
                     setBusy(false);
                     setRestoring(false);

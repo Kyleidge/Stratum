@@ -1,6 +1,7 @@
 import { SignalEngine } from './signal-engine';
 import type { EngineRequest, EngineResponse } from './signal-types';
 import { measurePlot } from './plot-measurement';
+import type { ByteSink } from './workspace-archive';
 
 let requestId = 0;
 const send = (message: EngineResponse) => globalThis.postMessage(message);
@@ -8,6 +9,28 @@ const engine = new SignalEngine((message, progress) =>
   send({ type: 'progress', requestId, message, progress }),
 );
 let queue = Promise.resolve();
+/**
+ * Writes to a transferred native file stream. Each write waits for the
+ * renderer to take the previous chunk, so memory stays bounded; a failure
+ * aborts the stream so the renderer discards the partial file.
+ */
+async function toStream(
+  stream: WritableStream<Uint8Array>,
+  write: (sink: ByteSink) => Promise<number>,
+) {
+  const writer = stream.getWriter();
+  try {
+    const bytes = await write(async (chunk) => {
+      await writer.ready;
+      await writer.write(chunk);
+    });
+    await writer.close();
+    return bytes;
+  } catch (error) {
+    await writer.abort(error).catch(() => {});
+    throw error;
+  }
+}
 const pending = new Set<number>(),
   cancelled = new Set<number>();
 type InspectionLane = 'view' | 'rows' | 'measure-plot' | 'sample-count';
@@ -74,11 +97,22 @@ globalThis.onmessage = (
             await engine.applyTimeOperation(r.settings);
             break;
           case 'backup-workspace':
-            send({
-              type: 'export',
-              requestId,
-              blob: await engine.backupWorkspace(),
-            });
+            if (r.stream) {
+              const stream = r.stream;
+              send({
+                type: 'written',
+                requestId,
+                revision: engine.savedRevision,
+                bytes: await toStream(stream, (sink) =>
+                  engine.writeBackup(sink),
+                ),
+              });
+            } else
+              send({
+                type: 'export',
+                requestId,
+                blob: await engine.backupWorkspace(),
+              });
             return;
           case 'restore-workspace':
             await engine.restoreWorkspace(r.file);
@@ -278,17 +312,29 @@ globalThis.onmessage = (
             });
             return;
           case 'export-samples':
-            send({
-              type: 'export',
-              requestId,
-              blob: await engine.exportSamples(r.ids),
-            });
+            if (r.stream) {
+              const stream = r.stream;
+              send({
+                type: 'written',
+                requestId,
+                revision: engine.savedRevision,
+                bytes: await toStream(stream, (sink) =>
+                  engine.writeSamples(r.ids, sink),
+                ),
+              });
+            } else
+              send({
+                type: 'export',
+                requestId,
+                blob: await engine.exportSamples(r.ids),
+              });
             return;
         }
         send({
           type: 'project',
           requestId,
           project: engine.project,
+          revision: engine.savedRevision,
           canUndo: engine.canUndo,
           canRedo: engine.canRedo,
           undoLabel: engine.undoLabel,

@@ -41,8 +41,90 @@ function validValueSettings(value: ScalarValue): boolean {
   }
 }
 
+/** Browser backups and downloads build one Blob, so they stay capped. */
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
 export const EXPORT_LIMIT = 64 * 1024 * 1024;
+/** One archive record (a header or a sample column) must fit in memory. */
+export const ARCHIVE_LINE_LIMIT = 32 * 1024 * 1024;
+/** Bytes handed to a sink at a time when streaming to a native file. */
+export const STREAM_CHUNK = 1024 * 1024;
+/** Receives encoded bytes in order; the next write waits for this one. */
+export type ByteSink = (bytes: Uint8Array) => Promise<void> | void;
+
+/**
+ * Encodes text into bounded chunks for a sink. Memory stays within one chunk
+ * plus the record being written, however large the whole output grows.
+ */
+export class ChunkedWriter {
+  private parts: Uint8Array[] = [];
+  private pending = 0;
+  private encoder = new TextEncoder();
+  /** Total bytes accepted so far. */
+  bytes = 0;
+  constructor(
+    private sink: ByteSink,
+    private limit = Infinity,
+    private limitMessage = 'The output exceeds its size limit.',
+    private chunk = STREAM_CHUNK,
+  ) {}
+  async write(text: string) {
+    const bytes = this.encoder.encode(text);
+    this.bytes += bytes.length;
+    if (this.bytes > this.limit) throw new Error(this.limitMessage);
+    this.parts.push(bytes);
+    this.pending += bytes.length;
+    if (this.pending >= this.chunk) await this.flush();
+  }
+  async flush() {
+    if (!this.pending) return;
+    const parts = this.parts;
+    let joined: Uint8Array;
+    if (parts.length === 1) joined = parts[0];
+    else {
+      joined = new Uint8Array(this.pending);
+      let offset = 0;
+      for (const part of parts) {
+        joined.set(part, offset);
+        offset += part.length;
+      }
+    }
+    this.parts = [];
+    this.pending = 0;
+    await this.sink(joined);
+  }
+}
+
+/** Reads a Blob in bounded slices. */
+export async function* blobChunks(
+  file: Blob,
+  size = 262144,
+): AsyncGenerator<Uint8Array> {
+  for (let offset = 0; offset < file.size; offset += size)
+    yield new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
+}
+/** Reads a byte stream, releasing it if the reader stops early. */
+export async function* streamChunks(
+  stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<Uint8Array> {
+  const reader = stream.getReader();
+  let done = false;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        return;
+      }
+      if (!(next.value instanceof Uint8Array))
+        throw new Error('The backup file could not be read.');
+      yield next.value;
+    }
+  } finally {
+    if (!done) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 function archiveRecord(line: string): unknown {
   try {
     return JSON.parse(line) as unknown;
@@ -52,28 +134,53 @@ function archiveRecord(line: string): unknown {
     );
   }
 }
-export async function* archiveLines(file: Blob): AsyncGenerator<unknown> {
-  if (file.size > ARCHIVE_LIMIT)
-    throw new Error(
-      'Workspace archives are limited to 128 MiB in this version.',
-    );
-  let buffer = '';
-  const decoder = new TextDecoder();
-  for (let offset = 0; offset < file.size; offset += 262144) {
-    buffer += decoder.decode(
-      await file.slice(offset, offset + 262144).arrayBuffer(),
-      { stream: true },
-    );
-    let newline: number;
-    while ((newline = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (line.trim()) yield archiveRecord(line);
+/**
+ * Parses NDJSON archive records from a Blob or a byte stream. Only one record
+ * and one input chunk are held at a time; `limit` caps the total bytes read
+ * (browser Blobs keep the 128 MiB limit, native streams have none).
+ */
+export async function* archiveLines(
+  file: Blob | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
+  limit = file instanceof Blob ? ARCHIVE_LIMIT : Infinity,
+): AsyncGenerator<unknown> {
+  const tooLarge = 'Workspace archives are limited to 128 MiB in this version.';
+  if (file instanceof Blob && file.size > limit) throw new Error(tooLarge);
+  const chunks =
+    file instanceof Blob
+      ? blobChunks(file)
+      : file instanceof ReadableStream
+        ? streamChunks(file)
+        : file;
+  let buffer = '',
+    total = 0;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decode = (bytes?: Uint8Array) => {
+    try {
+      return bytes ? decoder.decode(bytes, { stream: true }) : decoder.decode();
+    } catch {
+      throw new Error(
+        'This file is not a valid workspace backup. Choose a complete .stratum archive.',
+      );
     }
-    if (buffer.length > 32 * 1024 * 1024)
+  };
+  for await (const bytes of chunks) {
+    total += bytes.length;
+    if (total > limit) throw new Error(tooLarge);
+    buffer += decode(bytes);
+    let start = 0,
+      newline: number;
+    const records: unknown[] = [];
+    while ((newline = buffer.indexOf('\n', start)) >= 0) {
+      const line = buffer.slice(start, newline);
+      start = newline + 1;
+      if (line.trim()) records.push(archiveRecord(line));
+    }
+    buffer = buffer.slice(start);
+    if (buffer.length > ARCHIVE_LINE_LIMIT)
       throw new Error('Archive metadata is too large.');
+    yield* records;
   }
-  buffer += decoder.decode();
+  buffer += decode();
   if (buffer.trim()) yield archiveRecord(buffer);
 }
 

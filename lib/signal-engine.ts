@@ -68,8 +68,10 @@ import type { WorkflowCommand } from './workflow-lifecycle';
 import {
   ARCHIVE_LIMIT,
   EXPORT_LIMIT,
+  ChunkedWriter,
   archiveLines,
   validateWorkspace,
+  type ByteSink,
 } from './workspace-archive';
 import {
   statisticTime,
@@ -526,26 +528,36 @@ export class SignalEngine {
       labels: { ...this.project.labels, [id]: name },
     });
   }
-  async backupWorkspace() {
-    const parts: BlobPart[] = [];
-    let bytes = 0,
-      chunks = 0;
-    const append = (value: unknown) => {
-      const line = JSON.stringify(value) + '\n';
-      bytes += new TextEncoder().encode(line).length;
-      if (bytes > ARCHIVE_LIMIT)
-        throw new Error(
-          'This workspace exceeds the 128 MiB archive limit. Nothing was downloaded.',
-        );
-      parts.push(line);
-    };
-    append({
-      // Stable format identifier keeps backups compatible across the rename.
-      format: 'stratus-workspace',
-      version: 1,
-      project: withWorkflowHistory(this.project),
-    });
-    for (const source of this.project.sources)
+  /** The committed metadata revision, which changes with every save. */
+  get savedRevision() {
+    return this.revision;
+  }
+  /**
+   * Streams a version 1 NDJSON archive to `sink` in bounded chunks: the
+   * header, every original sample column, then a completion record. Returns
+   * the archive's size in bytes. `limit` caps it for in-memory downloads.
+   */
+  async writeBackup(sink: ByteSink, limit = Infinity) {
+    const out = new ChunkedWriter(
+      sink,
+      limit,
+      'This workspace exceeds the 128 MiB archive limit. Nothing was downloaded.',
+    );
+    const project = this.project;
+    let chunks = 0;
+    const total = project.sources.reduce(
+      (sum, source) => sum + source.chunks * (source.channels.length + 1),
+      0,
+    );
+    await out.write(
+      JSON.stringify({
+        // Stable format identifier keeps backups compatible across the rename.
+        format: 'stratus-workspace',
+        version: 1,
+        project: withWorkflowHistory(project),
+      }) + '\n',
+    );
+    for (const source of project.sources)
       for (let index = 0; index < source.chunks; index++)
         for (const column of [
           'time',
@@ -553,28 +565,56 @@ export class SignalEngine {
         ]) {
           this.check();
           const data = await this.column(source.id, index, column);
-          append({
-            sourceId: source.id,
-            index,
-            column,
-            data: Array.from(data, (value) =>
-              Number.isFinite(value) ? value : null,
-            ),
-          });
+          await out.write(
+            JSON.stringify({
+              sourceId: source.id,
+              index,
+              column,
+              data: Array.from(data, (value) =>
+                Number.isFinite(value) ? value : null,
+              ),
+            }) + '\n',
+          );
           chunks++;
+          if (chunks % 64 === 0) {
+            const percent = Math.round((chunks / total) * 100);
+            this.progress(`Writing workspace backup… ${percent}%`, percent);
+          }
         }
-    append({ complete: true, chunks });
+    await out.write(JSON.stringify({ complete: true, chunks }) + '\n');
+    await out.flush();
+    return out.bytes;
+  }
+  async backupWorkspace() {
+    const parts: BlobPart[] = [];
+    await this.writeBackup((bytes) => {
+      parts.push(bytes as Uint8Array<ArrayBuffer>);
+    }, ARCHIVE_LIMIT);
     return new Blob(parts, { type: 'application/x-stratus-workspace' });
   }
-  async restoreWorkspace(file: File) {
+  /**
+   * Restores a backup from a Blob (browser, 128 MiB) or a native byte stream
+   * (no size limit). Every record is validated and staged under fresh source
+   * IDs; the workspace is replaced in one commit only after the archive is
+   * complete, and the prior workspace stays available through Undo.
+   */
+  async restoreWorkspace(file: Blob | ReadableStream<Uint8Array>) {
     let next: Project | undefined;
     const sourceMapping = new Map<string, string>(),
       seen = new Set<string>();
     const previousTimes = new Map<string, number>();
     let completed = false;
     try {
+      let expected = 0;
       for await (const value of archiveLines(file)) {
         this.check();
+        if (expected && seen.size % 64 === 63) {
+          const percent = Math.min(
+            99,
+            Math.round((seen.size / expected) * 100),
+          );
+          this.progress(`Restoring workspace backup… ${percent}%`, percent);
+        }
         if (!value || typeof value !== 'object' || completed)
           throw new Error('Invalid or extra archive records.');
         const record = value as Record<string, unknown>;
@@ -582,6 +622,10 @@ export class SignalEngine {
           if (record.format !== 'stratus-workspace' || record.version !== 1)
             throw new Error('Choose a supported Stratum workspace backup.');
           next = validateWorkspace(record.project);
+          expected = next.sources.reduce(
+            (sum, source) => sum + source.chunks * (source.channels.length + 1),
+            0,
+          );
           next.sources.forEach((source) => sourceMapping.set(source.id, uid()));
           for (const id of sourceMapping.values())
             await this.trackImport(id, true);
@@ -648,15 +692,7 @@ export class SignalEngine {
         await done;
         seen.add(key);
       }
-      if (
-        !next ||
-        !completed ||
-        seen.size !==
-          next.sources.reduce(
-            (sum, source) => sum + source.chunks * (source.channels.length + 1),
-            0,
-          )
-      )
+      if (!next || !completed || seen.size !== expected)
         throw new Error('The archive is truncated or missing samples.');
       await this.save(
         remapProject(next, sourceMapping),
@@ -4111,14 +4147,22 @@ export class SignalEngine {
       }
     return { rows, hasMore: false };
   }
-  async exportSamples(ids: string[]) {
+  /**
+   * Streams evaluated samples as CSV to `sink` in bounded chunks and returns
+   * the size in bytes. `limit` caps it for in-memory downloads.
+   */
+  async writeSamples(ids: string[], sink: ByteSink, limit = Infinity) {
     const { csvText } = await import('./workflow-delivery');
     const { WorkflowIndex } = await import('./workflow-history');
     const index = new WorkflowIndex(this.project);
-    const parts: BlobPart[] = [
+    const out = new ChunkedWriter(
+      sink,
+      limit,
+      'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
+    );
+    await out.write(
       'Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value\r\n',
-    ];
-    let exportBytes = 0;
+    );
     for (const id of new Set(ids)) {
       const node = this.find(id);
       const source = this.project.sources.find(
@@ -4156,15 +4200,22 @@ export class SignalEngine {
           lines.push(
             `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}\r\n`,
           );
-        const part = lines.join('');
-        exportBytes += new TextEncoder().encode(part).length;
-        if (exportBytes > EXPORT_LIMIT)
-          throw new Error(
-            'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
-          );
-        parts.push(part);
+        await out.write(lines.join(''));
+        this.check();
       }
     }
+    await out.flush();
+    return out.bytes;
+  }
+  async exportSamples(ids: string[]) {
+    const parts: BlobPart[] = [];
+    await this.writeSamples(
+      ids,
+      (bytes) => {
+        parts.push(bytes as Uint8Array<ArrayBuffer>);
+      },
+      EXPORT_LIMIT,
+    );
     return new Blob(parts, { type: 'text/csv;charset=utf-8' });
   }
   async exportSummary(ids: string[]) {

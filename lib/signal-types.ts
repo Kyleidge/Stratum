@@ -241,9 +241,18 @@ export type EngineRequest =
       stepId: string;
       checks: import('./workflow-types').CheckDefinition[];
     }
-  | { type: 'undo' | 'redo' | 'backup-workspace' }
+  | { type: 'undo' | 'redo' }
+  | {
+      type: 'backup-workspace';
+      /** A native file stream; without one the reply is a capped Blob. */
+      stream?: WritableStream<Uint8Array>;
+    }
   | { type: 'demo-workflow'; refresh?: boolean; sourceId?: string }
-  | { type: 'restore-workspace'; file: File }
+  | {
+      type: 'restore-workspace';
+      /** A chosen File (browser, 128 MiB) or a native file stream. */
+      file: Blob | ReadableStream<Uint8Array>;
+    }
   | RegionRequest
   | { type: 'init-workflow'; refreshExample?: boolean }
   | {
@@ -324,13 +333,20 @@ export type EngineRequest =
   | { type: 'rows'; id: string; offset: number; inspection?: boolean }
   | { type: 'sample-count'; id: string | null; inspection?: boolean }
   | { type: 'export'; ids: string[] }
-  | { type: 'export-samples'; ids: string[] }
+  | {
+      type: 'export-samples';
+      ids: string[];
+      /** A native file stream; without one the reply is a capped Blob. */
+      stream?: WritableStream<Uint8Array>;
+    }
   | { type: 'cancel'; requestIds?: number[] };
 export type EngineResponse = { requestId: number } & (
   | { type: 'region-plan'; plan: RegionPlan }
   | {
       type: 'project';
       project: Project;
+      /** Committed metadata revision; it changes with every save. */
+      revision?: number;
       canUndo?: boolean;
       canRedo?: boolean;
       /** What Undo/Redo would reverse or repeat; absent when unnamed. */
@@ -351,6 +367,8 @@ export type EngineResponse = { requestId: number } & (
   | { type: 'rows'; rows: Point[]; hasMore: boolean }
   | { type: 'sample-count'; count: number | null }
   | { type: 'export'; blob: Blob }
+  /** A stream request finished; `revision` is the state that was written. */
+  | { type: 'written'; bytes: number; revision: number }
   | { type: 'progress'; message: string; progress: number }
   | { type: 'error'; message: string }
 );

@@ -119,6 +119,7 @@ import {
   type WorkflowManagementRequest,
 } from './workflow-management';
 import WorkflowStorage from './workflow-storage';
+import DesktopAutoBackup from './desktop-auto-backup';
 import WorkflowList from './workflow-list';
 import { describeChange, savedCommand } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
@@ -492,6 +493,7 @@ export default function WorkflowWorkbench() {
   }, [chosen]);
   const file = useRef<HTMLInputElement>(null);
   const workflowInput = useRef<HTMLInputElement>(null);
+  const [storageOpen, setStorageOpen] = useState(false);
   const plots = useRef<PlotScratchpadHandle>(null);
   const report = useRef<ReportBuilderHandle>(null);
   // Both workspaces stay mounted; switching only changes which one is shown.
@@ -795,8 +797,12 @@ export default function WorkflowWorkbench() {
     }
     reveal(await engine.mutate(message, label));
   }
-  async function manage(message: EngineRequest, label: string) {
-    await engine.mutate(message, label);
+  async function manage(
+    message: EngineRequest,
+    label: string,
+    transfer?: Transferable[],
+  ) {
+    await engine.mutate(message, label, transfer);
     if (message.type === 'rename') {
       announceChange(label);
       return;
@@ -2209,13 +2215,16 @@ export default function WorkflowWorkbench() {
               </DropdownMenuContent>
             </DropdownMenu>
             <WorkflowStorage
+              open={storageOpen}
+              onOpenChange={setStorageOpen}
               disabled={engine.busy || !engine.ready}
               recordings={project.sources.length}
               request={request}
-              restore={(file) =>
+              restore={(file, transfer) =>
                 manage(
                   { type: 'restore-workspace', file },
                   'Workspace restored.',
+                  transfer,
                 )
               }
               cancel={engine.cancel}
@@ -2932,6 +2941,15 @@ export default function WorkflowWorkbench() {
           }}
         />
       )}
+      <DesktopAutoBackup
+        request={request}
+        revision={engine.revision}
+        recordings={project.sources.length}
+        ready={engine.ready}
+        status={engine.status}
+        cancel={engine.cancel}
+        onOpenWorkspace={() => setStorageOpen(true)}
+      />
       {reportToast && !reportsShown && (
         <output key={reportToast.id} className="workflow-toast">
           <FilePlus2 size={15} />
@@ -3363,7 +3381,11 @@ export default function WorkflowWorkbench() {
         step={step}
         request={request}
         cancel={engine.cancel}
-        onSaved={(filename) => setNotice(`Download prepared: ${filename}`)}
+        onSaved={(filename, saved) =>
+          setNotice(
+            saved ? `Saved ${filename}` : `Download prepared: ${filename}`,
+          )
+        }
       />
       <Dialog
         open={editorOpen}
