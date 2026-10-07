@@ -344,6 +344,13 @@ There are no server API routes or cloud signal uploads.
   `import.meta.url` unsuitable for constructing browser worker URLs.
 - `desktop/`: Electron shell and a separate Vite renderer build that shares the
   workbench. Native windows load bundled assets using a restricted custom scheme.
+  `menu.mjs` is the application menu (Edit items never register accelerators,
+  so workbench shortcuts reach the page); `updater.mjs` wraps electron-updater
+  (installed Windows copies only, never dev or smoke runs); `notices.mjs`
+  writes `dist-desktop/THIRD_PARTY_NOTICES.txt` during `desktop:build`;
+  `package.mjs` stages a minimal app for electron-builder. Icons come from
+  `desktop/icons/stratum.svg` (`pnpm desktop:icons`). Releases (Windows NSIS,
+  `.github/workflows/release.yml`, signing, update feed): `docs/releasing.md`.
 - `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
   (surfaces, ink 1–3, primary, status, kind and series colours), defined once
   per theme under `:root[data-theme]`. Stylesheets and components use only
@@ -400,8 +407,10 @@ Run commands from the repository root:
 - `pnpm desktop:backup-smoke`: after the desktop build, save and restore a
   backup through the native bridge, reject an invalid one, write an automatic
   backup, then close the window and verify the close-time backup.
-- `pnpm desktop:package`: create a portable app under build/releases/ for the
-  current operating system. This is an unsigned development package.
+- `pnpm desktop:package`: package with electron-builder under build/releases/:
+  on Windows the NSIS installer and `win-unpacked`, elsewhere an unpacked app
+  (`--dir` for unpacked only). Unsigned unless signing secrets are set; tagged
+  releases publish through `.github/workflows/release.yml` (`docs/releasing.md`).
 
 The first install can require pnpm approval for esbuild, sharp, and workerd native
 build scripts. Use `pnpm approve-builds` to review pending scripts; do not disable

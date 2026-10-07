@@ -1,6 +1,7 @@
 {
   "name": "stratum-workbench",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": ">=22.15.0"
@@ -12,7 +13,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts tests/time-bases.test.ts tests/high-rate.test.ts tests/plot-ticks.test.ts tests/report-data.test.ts tests/report-templates.test.ts tests/workflow-batch.test.ts tests/parameter-scale.test.ts tests/formats.test.ts tests/formats-mdf.test.ts tests/formats-tdms.test.ts tests/formats-mat.test.ts tests/formats-xlsx.test.ts tests/windowed-evaluation.test.ts tests/analysis-values.test.ts tests/value-bindings.test.ts tests/trigger-noise.test.ts tests/formula.test.ts tests/workspace-files.test.ts",
+    "test": "node --import ./tests/typescript-loader.mjs --test tests/signal-engine.test.ts tests/signal-filters.test.ts tests/signal-history.test.ts tests/signal-functions.test.ts tests/regions.test.ts tests/workflow.test.ts tests/time-bases.test.ts tests/high-rate.test.ts tests/plot-ticks.test.ts tests/report-data.test.ts tests/report-templates.test.ts tests/workflow-batch.test.ts tests/parameter-scale.test.ts tests/formats.test.ts tests/formats-mdf.test.ts tests/formats-tdms.test.ts tests/formats-mat.test.ts tests/formats-xlsx.test.ts tests/windowed-evaluation.test.ts tests/analysis-values.test.ts tests/value-bindings.test.ts tests/trigger-noise.test.ts tests/formula.test.ts tests/desktop-packaging.test.ts tests/workspace-files.test.ts",
     "test:preview": "electron tests/preview-worker-smoke.mjs",
     "examples:eol": "node --import ./tests/typescript-loader.mjs examples/eol-rig/generate.ts",
     "desktop:build": "vite build --config desktop/vite.config.ts",
@@ -24,7 +25,8 @@
     "desktop:smoke": "electron desktop/main.mjs --smoke",
     "desktop:ui-smoke": "electron desktop/main.mjs --ui-smoke",
     "desktop:backup-smoke": "electron desktop/main.mjs --backup-smoke",
-    "desktop:package": "pnpm desktop:build && node desktop/package.mjs"
+    "desktop:package": "pnpm desktop:build && node desktop/package.mjs",
+    "desktop:icons": "node desktop/icons.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -32,6 +34,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
+    "electron-updater": "6.8.9",
     "lucide-react": "1.31.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
@@ -44,7 +47,6 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
-    "@electron/packager": "20.3.0",
     "@openai/sites-vite-plugin": "0.2.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -53,10 +55,12 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "electron": "44.2.0",
+    "electron-builder": "26.15.3",
     "fake-indexeddb": "6.2.5",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
+    "sharp": "0.34.5",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vite": "8.0.13",

@@ -400,8 +400,27 @@ export function registerDesktopFiles({ test } = {}) {
     return promise;
   }
 
+  // Set once an update install has had its backup; closing then skips it.
+  let quitting = false;
+  let attached;
+
+  /**
+   * Backs up before an update installer replaces the app, which would
+   * otherwise start while the close-time backup is still being written.
+   */
+  async function backupBeforeQuit() {
+    const window = attached;
+    if (window && !window.isDestroyed() && needsBackup()) {
+      window.setProgressBar(2, { mode: 'indeterminate' });
+      await (pending?.promise ?? requestBackup(window, 'close'));
+      if (!window.isDestroyed()) window.setProgressBar(-1);
+    }
+    quitting = true;
+  }
+
   /** Backs up on close and periodically while there are changes. */
   function attachWindow(window) {
+    attached = window;
     let allowClose = false,
       closing = false,
       responsive = true,
@@ -414,7 +433,7 @@ export function registerDesktopFiles({ test } = {}) {
       if (!window.isDestroyed()) window.close();
     };
     window.on('close', (event) => {
-      if (allowClose) return;
+      if (allowClose || quitting) return;
       if (
         !needsBackup() ||
         !responsive ||
@@ -480,5 +499,5 @@ export function registerDesktopFiles({ test } = {}) {
     timer.unref?.();
     window.on('closed', () => clearInterval(timer));
   }
-  return { attachWindow };
+  return { attachWindow, backupBeforeQuit };
 }

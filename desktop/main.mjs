@@ -14,6 +14,8 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { registerDesktopFiles } from './files.mjs';
 import { attachBackupSmoke } from './backup-smoke.mjs';
+import { applicationMenu } from './menu.mjs';
+import { createUpdater } from './updater.mjs';
 
 app.setName('Stratum');
 // Keep the original profile and origin: both own existing IndexedDB and layouts.
@@ -46,6 +48,10 @@ if (smoke || mockup)
 const singleInstance = smoke || mockup || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 let window, desktopFiles;
+const updater = createUpdater({
+  enabled: !smoke && !mockup,
+  beforeInstall: () => desktopFiles?.backupBeforeQuit(),
+});
 const downloads = [];
 const downloaded = new Set();
 if (smoke)
@@ -66,6 +72,7 @@ async function createWindow() {
     show: !smoke,
     backgroundColor: '#13191d',
     title: 'Stratum · Signal Workbench',
+    icon: fileURLToPath(new URL('./icons/icon.png', import.meta.url)),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -348,7 +355,11 @@ if (singleInstance) {
   void app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(null);
+      Menu.setApplicationMenu(
+        smoke || mockup
+          ? null
+          : applicationMenu({ checkForUpdates: updater.checkNow }),
+      );
       // Smoke runs (temporary profile) answer file dialogs without showing them.
       desktopFiles = registerDesktopFiles({
         test: smoke
@@ -408,6 +419,7 @@ if (singleInstance) {
         });
       });
       await createWindow();
+      updater.checkOnStartup();
       app.on('activate', () => {
         if (!BrowserWindow.getAllWindows().length) void createWindow();
       });
