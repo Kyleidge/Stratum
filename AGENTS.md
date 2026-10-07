@@ -67,7 +67,15 @@ There are no server API routes or cloud signal uploads.
   the catalog (groups, units, settings). Elapsed results are seconds from the
   input's start; crossings reuse `CrossingDetector`. `valueReference` in
   `lib/plot-scratchpad.ts` places a value on plots (time and count results
-  draw at the level they refer to). Previews run in inspection lanes and never save.
+  draw at the level they refer to). `lib/value-bindings.ts` lets offset,
+  scale, time-shift, value threshold/time and trigger threshold/offset
+  settings take factor × a value (`ParameterBindings`); several candidate
+  values are matched to each input by first-input lineage. Outputs store the
+  resolved number in `parameters` plus `bindings`; steps list the values in
+  `valueInputIds`, which drive Edit/Delete impact, lineage, Used by, archive
+  validation and workflow-file `{ value: step, factor }` settings.
+  `components/value-binding-control.tsx` is the shared "A number | A value"
+  control. Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
   window spans; workflow segment previews run automatically. Operation dialogs

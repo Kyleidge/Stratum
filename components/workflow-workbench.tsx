@@ -63,11 +63,12 @@ import { SignalGraph } from '@/lib/signal-graph';
 import TimeWorkbench from './time-workbench';
 import type { TimeSettings } from '@/lib/time-types';
 import { workspaceTimeScope } from '@/lib/time-model';
-import { stepName, WorkflowIndex } from '@/lib/workflow-history';
+import { stepInputs, stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { isBinaryOperation } from '@/lib/signal-arithmetic';
 import { VALUE_FUNCTIONS, valueTitle } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type {
+  ParameterBindings,
   ValueOperation,
   ValueParameters,
   WorkflowStep,
@@ -118,7 +119,7 @@ import {
 } from './workflow-management';
 import WorkflowStorage from './workflow-storage';
 import WorkflowList from './workflow-list';
-import { describeChange } from '@/lib/workflow-lifecycle';
+import { describeChange, savedCommand } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
 import ReportBuilderMockup from './report-builder-mockup';
 import {
@@ -253,8 +254,27 @@ type Editor = {
   parameter?: number;
   secondaryId?: string;
   valueParameters?: ValueParameters;
+  bindings?: ParameterBindings;
   savedSegment?: SegmentationOperation;
 };
+
+/** A step's settings taken from values, for reopening its editor. */
+function savedBindingsOf(
+  project: Project,
+  step: WorkflowStep,
+): { bindings?: ParameterBindings } {
+  try {
+    const command = savedCommand(project, step);
+    return (command.type === 'derive-many' ||
+      command.type === 'calculate-values') &&
+      command.bindings
+      ? { bindings: command.bindings }
+      : {};
+  } catch {
+    // Legacy recipes have no bound settings to restore.
+    return {};
+  }
+}
 
 export default function WorkflowWorkbench() {
   const engine = useSignalEngine('init-workflow');
@@ -1388,6 +1408,7 @@ export default function WorkflowWorkbench() {
         ...(step.kind === 'value' && step.parameters
           ? { valueParameters: step.parameters }
           : {}),
+        ...savedBindingsOf(project, step),
       });
     }
   }
@@ -1463,7 +1484,10 @@ export default function WorkflowWorkbench() {
       setLineageRoot(
         target.kind === 'output'
           ? [target.id]
-          : [...(targetStep?.inputIds ?? []), ...(targetStep?.outputIds ?? [])],
+          : [
+              ...(targetStep ? stepInputs(targetStep) : []),
+              ...(targetStep?.outputIds ?? []),
+            ],
       );
       setQuery('');
     } else if (action === 'owner') {
@@ -1797,12 +1821,14 @@ export default function WorkflowWorkbench() {
       })),
     ]);
   const selectedLineage = index.lineage(
-    selection.kind === 'output' ? [selection.id] : (step?.inputIds ?? []),
+    selection.kind === 'output' ? [selection.id] : step ? stepInputs(step) : [],
   );
   const immediateInputs =
     selection.kind === 'output'
       ? index.inputs(selection.id)
-      : (step?.inputIds ?? []);
+      : step
+        ? stepInputs(step)
+        : [];
   const usedBy = [
     ...new Map(
       targetOutputs(index, selection).flatMap((id) =>
@@ -3162,7 +3188,7 @@ export default function WorkflowWorkbench() {
                         selection.kind === 'output'
                           ? [selection.id]
                           : [
-                              ...(step?.inputIds ?? []),
+                              ...(step ? stepInputs(step) : []),
                               ...(step?.outputIds ?? []),
                             ],
                       );
@@ -3382,6 +3408,7 @@ export default function WorkflowWorkbench() {
                   workflowMode
                   rangePlot={{ graph, request }}
                   signalLabel={(id) => index.label(id)}
+                  valueIndex={index}
                   applyLabel={
                     editor.editingStepId
                       ? 'Save changes and recalculate'
@@ -3463,6 +3490,7 @@ export default function WorkflowWorkbench() {
                     parameter,
                     secondaryId,
                     valueParameters,
+                    bindings,
                   ) => {
                     if (editor.kind === 'value')
                       return perform(
@@ -3473,6 +3501,7 @@ export default function WorkflowWorkbench() {
                           ...(valueParameters
                             ? { parameters: valueParameters }
                             : {}),
+                          ...(bindings ? { bindings } : {}),
                         },
                         'Calculating values…',
                       );
@@ -3496,6 +3525,7 @@ export default function WorkflowWorkbench() {
                         parentIds: editor.ids,
                         operation: operation as Operation,
                         parameter,
+                        ...(bindings ? { bindings } : {}),
                       },
                       'Creating derived signals…',
                     );

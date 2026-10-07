@@ -47,6 +47,8 @@ export type SignalNode = {
   operation: Operation;
   parameters: Record<string, number>;
   channel?: number;
+  /** Settings taken from values; `parameters` holds their results. */
+  bindings?: Record<string, import('./workflow-types').BoundValue>;
   color: string;
   createdAt: string;
   version: 1;
@@ -114,7 +116,14 @@ export type SegmentationDefinition = (
       step: number;
       includePartial: boolean;
     }
-) & { boundary: 'clip' | 'discard' };
+) & {
+  boundary: 'clip' | 'discard';
+  /**
+   * Trigger settings taken from values: `start.threshold`, `end.threshold`,
+   * `start.offset` and `end.offset`. The saved numbers are their results.
+   */
+  bindings?: import('./workflow-types').ParameterBindings;
+};
 export type SegmentBoundary = {
   inputId?: string;
   start: number;
@@ -218,6 +227,8 @@ export type EngineRequest =
       inputIds: string[];
       operation: ValueOperation;
       parameters?: import('./workflow-types').ValueParameters;
+      /** Settings taken from other values; they replace `parameters`. */
+      bindings?: import('./workflow-types').ParameterBindings;
     }
   | { type: 'init' }
   | { type: 'import'; file: File; tables?: number[] }
@@ -234,6 +245,8 @@ export type EngineRequest =
       parentIds: string[];
       operation: Operation;
       parameter: number;
+      /** `value`: the parameter taken from values for each input. */
+      bindings?: import('./workflow-types').ParameterBindings;
     }
   | {
       type: 'segment' | 'segment-preview';
@@ -249,6 +262,7 @@ export type EngineRequest =
       inputId: string;
       operation: Operation;
       parameter: number;
+      bindings?: import('./workflow-types').ParameterBindings;
       secondaryId?: string;
       range?: [number, number];
       inspection?: boolean;
@@ -259,6 +273,7 @@ export type EngineRequest =
       /** A parameterised calculation to evaluate with the statistics. */
       operation?: ValueOperation;
       parameters?: import('./workflow-types').ValueParameters;
+      bindings?: import('./workflow-types').ParameterBindings;
       inspection?: boolean;
     }
   | { type: 'segment-metrics'; ids: string[] }

@@ -134,6 +134,25 @@ Thresholds start at the middle of the input's range. Plots draw a time or
 count at the level it refers to, such as the threshold, labelled with the
 result.
 
+### Use values as settings
+
+Some settings can come from a calculated value instead of a typed number:
+**Offset**, **Scale** and **Shift time** in Derive, the threshold and time of
+a value calculation, and the threshold and offset of segment triggers. Choose
+**A value**, pick the value and a factor; the setting is factor × value. For
+example, offset each run by −1 × its own average, or start segments when speed
+rises above 0.5 × its maximum.
+
+- Choosing a value step with several values matches one to each input: the
+  value calculated from that input, or from the nearest signal it came from
+  or that came from it. A single value is shared by every input.
+- Units must match exactly (a time shift needs seconds; a scale factor
+  multiplies the units). Nothing is converted. An unavailable value, or one
+  that matches no input or two, blocks Create with an explanation.
+- The step lists the values it uses as inputs, in Details, lineage and
+  **Used by**. Editing a value recalculates every step that uses it; deleting
+  it deletes them, after the usual impact confirmation.
+
 **Derive signal** opens a compact palette grouped into Math, Filters, Time and
 Calculus. Math includes add, subtract, multiply and divide between signals, plus
 constant scaling, offsets and absolute value. Each checked input is A; choose

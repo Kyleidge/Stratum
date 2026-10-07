@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Eye, Hash, LoaderCircle, Scan, Waves } from 'lucide-react';
 import { FUNCTIONS } from '@/lib/signal-functions';
 import { operationLabels } from '@/lib/signal-explorer';
@@ -25,6 +25,7 @@ import {
   VALUE_FUNCTIONS,
   valueSpec as findValueSpec,
   valueUnit,
+  type ParameterBindings,
   type ValueOperation,
   type ValueParameters,
   type ValueStatistics,
@@ -40,6 +41,13 @@ import type {
   SignalNode,
 } from '@/lib/signal-types';
 import ValueOperationPalette from './value-operation-palette';
+import ValueBindingControl, {
+  NUMBER_DRAFT,
+  bindingFromDraft,
+  draftFromBinding,
+  type BindingDraft,
+} from './value-binding-control';
+import { BINDABLE_DERIVE, BINDABLE_VALUE } from '@/lib/value-bindings';
 import {
   OPERATION_FORMULAS,
   SIGNAL_FUNCTIONS,
@@ -69,6 +77,8 @@ export type FunctionDraft = {
   secondaryId?: string;
   /** Saved settings of a parameterised value calculation. */
   valueParameters?: ValueParameters;
+  /** Saved settings taken from values. */
+  bindings?: ParameterBindings;
 };
 type Request = (message: EngineRequest) => Promise<EngineResponse>;
 type Range = [number, number];
@@ -182,6 +192,7 @@ export default function FunctionEditor({
     parameter: number,
     secondaryId: string,
     valueParameters?: ValueParameters,
+    bindings?: ParameterBindings,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -205,7 +216,13 @@ export default function FunctionEditor({
   const [error, setError] = useState('');
   // An untouched threshold follows the previewed input's range midpoint.
   const [valueForm, setValueForm] = useState<ValueForm>(() =>
-    initialValueForm(editor.valueParameters),
+    initialValueForm(index, editor.valueParameters, editor.bindings),
+  );
+  // A derive parameter typed as a number or taken from values.
+  const [deriveBinding, setDeriveBinding] = useState<BindingDraft>(() =>
+    editor.kind === 'derive'
+      ? draftFromBinding(index, editor.bindings?.value)
+      : NUMBER_DRAFT,
   );
   const valueSpec = values ? findValueSpec(operation) : undefined;
   const spec = values
@@ -294,6 +311,7 @@ export default function FunctionEditor({
   const context = parameterContext(plot?.summary);
   const previewNode = index.nodes.get(previewId);
   const settings = valueSettings(
+    index,
     valueSpec?.parameters ?? [],
     valueForm,
     rangeMidpoint(context.min, context.max),
@@ -302,16 +320,33 @@ export default function FunctionEditor({
     values ? editor.ids : [],
     request,
     valueSpec?.parameters?.length && settings.parameters
-      ? { operation: valueSpec.operation, parameters: settings.parameters }
+      ? {
+          operation: valueSpec.operation,
+          parameters: settings.parameters,
+          ...(settings.bindings ? { bindings: settings.bindings } : {}),
+        }
       : undefined,
   );
+  const bindable = !values && !!BINDABLE_DERIVE[operation as Operation];
+  const deriveBound = bindable
+    ? bindingFromDraft(index, deriveBinding)
+    : undefined;
+  const deriveBindings = deriveBound ? { value: deriveBound } : undefined;
   const choices = editor.ids.slice(0, PREVIEW_CHOICES).map((id) => ({
     value: id,
     label: `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
   }));
-  const parameterValue = spec?.parameter ? Number(parameter) : 0;
-  const parameterReady =
-    !spec?.parameter || (!!parameter.trim() && Number.isFinite(parameterValue));
+  const parameterValue = deriveBound
+    ? 0
+    : spec?.parameter
+      ? Number(parameter)
+      : 0;
+  const parameterReady = deriveBound
+    ? true
+    : deriveBound === null
+      ? false
+      : !spec?.parameter ||
+        (!!parameter.trim() && Number.isFinite(parameterValue));
   const ready =
     !values &&
     parameterReady &&
@@ -325,12 +360,15 @@ export default function FunctionEditor({
     inputId: previewId,
     operation: operation as Operation,
     parameter: parameterValue,
+    bindings: deriveBindings,
     secondaryId: binary ? secondaryId : undefined,
     ready,
     viewport,
   });
   const waiting = !parameterReady
-    ? `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
+    ? deriveBound === null
+      ? 'Choose a value and a finite factor to preview.'
+      : `Enter a ${spec?.parameter.toLowerCase() || 'parameter'} to preview.`
     : binary && !secondaryId
       ? `Choose ${isArithmetic(operation) ? 'Input B' : 'the second input'} to preview the result.`
       : unitError || '';
@@ -427,6 +465,10 @@ export default function FunctionEditor({
                   threshold={settings.threshold}
                   unit={previewNode?.unit ?? ''}
                   context={context}
+                  index={index}
+                  inputIds={editor.ids}
+                  resolved={focused?.result?.parameters}
+                  inputLabel={index.label(previewId)}
                   disabled={busy}
                   onChange={setValueForm}
                 />
@@ -442,24 +484,47 @@ export default function FunctionEditor({
                 </div>
               )}
               {spec?.parameter && (
-                <ParameterControl
+                <ParameterSetting
+                  bindable={bindable}
                   label={spec.parameter}
-                  value={parameter}
-                  unit={
-                    operation === 'offset'
-                      ? previewNode?.unit || spec.unit
-                      : spec.unit
+                  index={index}
+                  inputIds={editor.ids}
+                  draft={deriveBinding}
+                  unit={BINDABLE_DERIVE[operation as Operation] ?? 'any'}
+                  inputUnit={previewNode?.unit ?? ''}
+                  resolved={
+                    derived.shown?.node.bindings?.value
+                      ? `${index.label(previewId)} uses ${formatQuantity(derived.shown.node.parameters.value, 6)}${
+                          operation === 'offset' && previewNode?.unit
+                            ? ` ${previewNode.unit}`
+                            : operation === 'time-shift'
+                              ? ' s'
+                              : ''
+                        }.`
+                      : undefined
                   }
-                  scale={parameterScale(operation, context)}
-                  hint={parameterHint(
-                    operation,
-                    parameterValue,
-                    context,
-                    previewNode?.unit,
-                  )}
                   disabled={busy}
-                  onChange={setParameter}
-                />
+                  onChange={setDeriveBinding}
+                >
+                  <ParameterControl
+                    label={spec.parameter}
+                    value={parameter}
+                    unit={
+                      operation === 'offset'
+                        ? previewNode?.unit || spec.unit
+                        : spec.unit
+                    }
+                    scale={parameterScale(operation, context)}
+                    hint={parameterHint(
+                      operation,
+                      parameterValue,
+                      context,
+                      previewNode?.unit,
+                    )}
+                    disabled={busy}
+                    onChange={setParameter}
+                  />
+                </ParameterSetting>
               )}
               {binary && (
                 <SecondInput
@@ -510,7 +575,7 @@ export default function FunctionEditor({
                 index={index}
                 statistics={statistics}
                 operation={operation as ValueOperation}
-                parameters={settings.parameters}
+                parameters={focused?.result?.parameters ?? settings.parameters}
                 previewId={previewId}
                 plot={plot}
                 plotError={plotError}
@@ -561,11 +626,14 @@ export default function FunctionEditor({
               try {
                 await onApply(
                   operation as Operation | ValueOperation,
-                  !values && spec?.parameter ? finite(parameter) : 0,
+                  !values && spec?.parameter && !deriveBound
+                    ? finite(parameter)
+                    : 0,
                   secondaryId,
                   values && valueSpec?.parameters?.length
                     ? settings.parameters
                     : undefined,
+                  values ? settings.bindings : deriveBindings,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
@@ -652,6 +720,7 @@ function useDerivePreview({
   inputId,
   operation,
   parameter,
+  bindings,
   secondaryId,
   ready,
   viewport,
@@ -660,6 +729,7 @@ function useDerivePreview({
   inputId: string;
   operation: Operation;
   parameter: number;
+  bindings?: ParameterBindings;
   secondaryId?: string;
   ready: boolean;
   viewport?: Range;
@@ -671,17 +741,27 @@ function useDerivePreview({
     error?: string;
   }>();
   const key = ready
-    ? JSON.stringify([inputId, operation, parameter, secondaryId, viewport])
+    ? JSON.stringify([
+        inputId,
+        operation,
+        parameter,
+        secondaryId,
+        viewport,
+        bindings,
+      ])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const [id, operation, parameter, secondaryId, range] = JSON.parse(key) as [
+    const [id, operation, parameter, secondaryId, range, bindings] = JSON.parse(
+      key,
+    ) as [
       string,
       Operation,
       number,
       string | undefined,
       Range | undefined,
+      ParameterBindings | undefined,
     ];
     // Debounced so slider drags send one request per pause, not per pixel.
     const timer = setTimeout(() => {
@@ -690,6 +770,7 @@ function useDerivePreview({
         inputId: id,
         operation,
         parameter,
+        ...(bindings ? { bindings } : {}),
         secondaryId,
         range,
         inspection: true,
@@ -734,28 +815,63 @@ type ValueForm = {
   threshold?: string;
   edge: 1 | -1;
   time: string;
+  /** Settings taken from values instead of typed numbers. */
+  bindings: Partial<Record<'threshold' | 'time', BindingDraft>>;
 };
-function initialValueForm(parameters?: ValueParameters): ValueForm {
+function initialValueForm(
+  index: WorkflowIndex,
+  parameters?: ValueParameters,
+  bindings?: ParameterBindings,
+): ValueForm {
   return {
-    ...(parameters?.threshold !== undefined
+    ...(parameters?.threshold !== undefined && !bindings?.threshold
       ? { threshold: String(parameters.threshold) }
       : {}),
     edge: parameters?.edge === -1 ? -1 : 1,
-    time: String(parameters?.time ?? 0),
+    time: bindings?.time ? '0' : String(parameters?.time ?? 0),
+    bindings: {
+      ...(bindings?.threshold
+        ? { threshold: draftFromBinding(index, bindings.threshold) }
+        : {}),
+      ...(bindings?.time
+        ? { time: draftFromBinding(index, bindings.time) }
+        : {}),
+    },
   };
 }
 /** The settings a value calculation needs, or why they are incomplete. */
 function valueSettings(
+  index: WorkflowIndex,
   needed: readonly string[],
   form: ValueForm,
   midpoint?: number,
-): { parameters?: ValueParameters; threshold: string; waiting: string } {
+): {
+  parameters?: ValueParameters;
+  bindings?: ParameterBindings;
+  threshold: string;
+  waiting: string;
+} {
   const threshold =
     form.threshold ?? (midpoint !== undefined ? String(midpoint) : '');
   const parameters: ValueParameters = {};
+  const bindings: ParameterBindings = {};
   for (const name of needed) {
-    if (name === 'edge') parameters.edge = form.edge;
-    else if (name === 'time') {
+    if (name === 'edge') {
+      parameters.edge = form.edge;
+      continue;
+    }
+    const draft = form.bindings[name as 'threshold' | 'time'];
+    if (draft?.source) {
+      const binding = bindingFromDraft(index, draft);
+      if (!binding)
+        return {
+          threshold,
+          waiting: `Choose a value and a finite factor for the ${name}.`,
+        };
+      bindings[name] = binding;
+      // The engine replaces this placeholder with the value's result.
+      parameters[name] = 0;
+    } else if (name === 'time') {
       const time = Number(form.time);
       if (!form.time.trim() || !Number.isFinite(time) || time < 0)
         return {
@@ -770,7 +886,28 @@ function valueSettings(
       parameters.threshold = level;
     }
   }
-  return { parameters, threshold, waiting: '' };
+  return {
+    parameters,
+    ...(Object.keys(bindings).length ? { bindings } : {}),
+    threshold,
+    waiting: '',
+  };
+}
+
+/** A typed parameter that can also come from values when `bindable`. */
+function ParameterSetting({
+  bindable,
+  children,
+  ...control
+}: Omit<Parameters<typeof ValueBindingControl>[0], 'children'> & {
+  bindable: boolean;
+  children: ReactNode;
+}) {
+  return bindable ? (
+    <ValueBindingControl {...control}>{children}</ValueBindingControl>
+  ) : (
+    children
+  );
 }
 
 /** Threshold, edge and time settings of a parameterised value. */
@@ -780,6 +917,10 @@ function ValueSettings({
   threshold,
   unit,
   context,
+  index,
+  inputIds,
+  resolved,
+  inputLabel,
   disabled,
   onChange,
 }: {
@@ -788,9 +929,31 @@ function ValueSettings({
   threshold: string;
   unit: string;
   context: ReturnType<typeof parameterContext>;
+  index: WorkflowIndex;
+  inputIds: string[];
+  /** Settings the engine used for the previewed input. */
+  resolved?: ValueParameters;
+  inputLabel: string;
   disabled: boolean;
   onChange: (form: ValueForm) => void;
 }) {
+  const bind = (name: 'threshold' | 'time') => ({
+    bindable: true,
+    index,
+    inputIds,
+    draft: form.bindings[name] ?? NUMBER_DRAFT,
+    unit: BINDABLE_VALUE[name],
+    inputUnit: unit,
+    resolved:
+      form.bindings[name]?.source && resolved?.[name] !== undefined
+        ? `${inputLabel} uses ${formatQuantity(resolved[name], 6)}${
+            name === 'time' ? ' s' : unit ? ` ${unit}` : ''
+          }.`
+        : undefined,
+    disabled,
+    onChange: (draft: BindingDraft) =>
+      onChange({ ...form, bindings: { ...form.bindings, [name]: draft } }),
+  });
   return (
     <>
       {parameters.includes('edge') && (
@@ -810,24 +973,28 @@ function ValueSettings({
         </fieldset>
       )}
       {parameters.includes('threshold') && (
-        <ParameterControl
-          label="Threshold"
-          value={threshold}
-          unit={unit}
-          scale={parameterScale('value-threshold', context)}
-          disabled={disabled}
-          onChange={(next) => onChange({ ...form, threshold: next })}
-        />
+        <ParameterSetting label="Threshold" {...bind('threshold')}>
+          <ParameterControl
+            label="Threshold"
+            value={threshold}
+            unit={unit}
+            scale={parameterScale('value-threshold', context)}
+            disabled={disabled}
+            onChange={(next) => onChange({ ...form, threshold: next })}
+          />
+        </ParameterSetting>
       )}
       {parameters.includes('time') && (
-        <ParameterControl
-          label="Time from start"
-          value={form.time}
-          unit="s"
-          scale={parameterScale('value-time', context)}
-          disabled={disabled}
-          onChange={(time) => onChange({ ...form, time })}
-        />
+        <ParameterSetting label="Time from start" {...bind('time')}>
+          <ParameterControl
+            label="Time from start"
+            value={form.time}
+            unit="s"
+            scale={parameterScale('value-time', context)}
+            disabled={disabled}
+            onChange={(time) => onChange({ ...form, time })}
+          />
+        </ParameterSetting>
       )}
     </>
   );
@@ -838,10 +1005,15 @@ function ValueSettings({
  * share one request per dialog; a parameterised one is evaluated with its
  * settings, debounced while they change.
  */
+type ValueCalculation = {
+  operation: ValueOperation;
+  parameters: ValueParameters;
+  bindings?: ParameterBindings;
+};
 function useValueStatistics(
   ids: string[],
   request: Request,
-  calculation?: { operation: ValueOperation; parameters: ValueParameters },
+  calculation?: ValueCalculation,
 ) {
   const [statistics, setStatistics] = useState<{
     key: string;
@@ -856,7 +1028,7 @@ function useValueStatistics(
     let alive = true;
     const [ids, calculation] = JSON.parse(key) as [
       string[],
-      { operation: ValueOperation; parameters: ValueParameters } | null,
+      ValueCalculation | null,
     ];
     const timer = setTimeout(
       () => {

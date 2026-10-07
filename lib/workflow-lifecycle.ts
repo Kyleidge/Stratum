@@ -3,6 +3,11 @@ import type { WorkflowStep } from './workflow-types';
 import { segmentationOperation } from './segmentation-operation';
 import { formatCount } from './format-count';
 import { stepName } from './workflow-history';
+import { savedBindings } from './value-bindings';
+
+const withBindings = (
+  bindings: import('./workflow-types').ParameterBindings | undefined,
+) => (bindings ? { bindings } : {});
 
 export type WorkflowCommand =
   | Extract<
@@ -70,6 +75,7 @@ export function affectedOperations(
         !removed.has(step.id) &&
         ((first.kind === 'import' && step.sourceId === first.sourceId) ||
           step.inputIds.some((id) => outputs.has(id)) ||
+          step.valueInputIds?.some((id) => outputs.has(id)) ||
           // Saved invocations also depend on inputs that yielded no outputs.
           segmentation?.targetIds.some((id) => outputs.has(id)) ||
           (!!step.regionSetId && sets.has(step.regionSetId)) ||
@@ -225,6 +231,13 @@ export function savedCommand(
       inputIds: step.inputIds,
       operation: step.operation as import('./workflow-types').ValueOperation,
       ...(step.parameters ? { parameters: { ...step.parameters } } : {}),
+      ...withBindings(
+        savedBindings(
+          step.outputIds.flatMap(
+            (id) => project.values?.find((value) => value.id === id) ?? [],
+          ),
+        ),
+      ),
     };
   if (step.kind === 'derive') {
     const run = project.functionRuns?.find((item) =>
@@ -240,6 +253,13 @@ export function savedCommand(
         ),
         operation: first.operation,
         parameter: step.parameters?.value ?? first.parameters.value ?? 0,
+        ...withBindings(
+          savedBindings(
+            step.outputIds.flatMap(
+              (id) => project.nodes.find((node) => node.id === id) ?? [],
+            ),
+          ),
+        ),
       };
   }
   throw new Error(

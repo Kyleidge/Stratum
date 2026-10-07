@@ -4739,6 +4739,45 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   flex-direction: column;
   gap: 6px;
 }
+/* A setting typed as a number or taken from calculated values. */
+.value-binding-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.value-binding-mode {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.value-binding-mode legend {
+  float: left;
+  width: 110px;
+  margin: 0 10px 0 0;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
+.workflow-segmentation-editor .segment-edge-toggle.value-binding-mode {
+  display: flex;
+}
+/* Trigger cards are narrow: stack labels above their fields. */
+.trigger-card .value-binding-control .parameter-control-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.trigger-card .value-binding-mode legend {
+  width: auto;
+  margin-right: 8px;
+}
+.value-binding-control .parameter-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
 .parameter-control-field {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);

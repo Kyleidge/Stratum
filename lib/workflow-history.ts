@@ -1,8 +1,15 @@
 import { FUNCTIONS } from './signal-functions';
+import { bindingValueIds } from './value-bindings';
 import { TIME_OPERATIONS } from './time-types';
 import { valueTitle, type ValueOperation } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
+
+/** A step's signal inputs, then the values its settings use. */
+export const stepInputs = (step: WorkflowStep): string[] =>
+  step.valueInputIds?.length
+    ? [...step.inputIds, ...step.valueInputIds]
+    : step.inputIds;
 
 export function stepName(step: WorkflowStep): string {
   if (step.name) return step.name;
@@ -21,6 +28,21 @@ export function stepName(step: WorkflowStep): string {
     step.operation
   );
 }
+
+/** The distinct values a batch of saved outputs used for settings. */
+function boundValueIds(
+  records: { bindings?: Record<string, { valueId: string }> }[],
+): string[] {
+  return [
+    ...new Set(
+      records.flatMap((record) =>
+        Object.values(record.bindings ?? {}).map((bound) => bound.valueId),
+      ),
+    ),
+  ];
+}
+const withValueInputs = (ids: string[]) =>
+  ids.length ? { valueInputIds: ids } : {};
 
 /**
  * Capture additions atomically with the project. Existing records never move.
@@ -69,6 +91,7 @@ export function withWorkflowHistory(project: Project): Project {
         ...new Set(outputs.flatMap((id) => nodes.get(id)?.parents ?? [])),
       ],
       outputIds: outputs,
+      ...withValueInputs(bindingValueIds(operation.definition?.bindings)),
       definition: operation.definition,
       segmentationId: operation.id,
     });
@@ -148,6 +171,7 @@ export function withWorkflowHistory(project: Project): Project {
       createdAt: first.createdAt,
       inputIds: [...new Set(group.flatMap((node) => node.parents))],
       outputIds: group.map((node) => node.id),
+      ...withValueInputs(boundValueIds(group)),
       parameters: first.parameters,
     });
   }
@@ -166,6 +190,7 @@ export function withWorkflowHistory(project: Project): Project {
       createdAt: batch[0].createdAt,
       inputIds: batch.map((value) => value.inputId),
       outputIds: batch.map((value) => value.id),
+      ...withValueInputs(boundValueIds(batch)),
       ...(batch[0].parameters ? { parameters: batch[0].parameters } : {}),
     });
   if (!candidates.length) return project;
@@ -187,7 +212,7 @@ export function withWorkflowHistory(project: Project): Project {
   const children = new Map<number, number[]>();
   const degrees = candidates.map((step, index) => {
     const dependencies = new Set(
-      step.inputIds.flatMap((id) => {
+      [...step.inputIds, ...(step.valueInputIds ?? [])].flatMap((id) => {
         const parent = owner.get(id);
         return parent === undefined || parent === index ? [] : [parent];
       }),
@@ -295,7 +320,7 @@ export class WorkflowIndex {
     }
     for (const step of this.steps.values()) {
       for (const id of step.outputIds) this.owner.set(id, step);
-      for (const id of step.inputIds) {
+      for (const id of [...step.inputIds, ...(step.valueInputIds ?? [])]) {
         const list = this.consumers.get(id) ?? [];
         list.push(step);
         this.consumers.set(id, list);
@@ -325,11 +350,13 @@ export class WorkflowIndex {
         ? 'Original signal'
         : 'Derived signal';
   }
+  /** Signal inputs first, then values used for settings. */
   inputs(id: string): string[] {
-    return (
-      this.nodes.get(id)?.parents ??
-      (this.values.has(id) ? [this.values.get(id)!.inputId] : [])
-    );
+    const record = this.nodes.get(id) ?? this.values.get(id);
+    if (!record) return [];
+    const signals = 'parents' in record ? record.parents : [record.inputId];
+    const bound = boundValueIds([record]);
+    return bound.length ? [...new Set([...signals, ...bound])] : signals;
   }
   /** Iterative DAG traversal includes every binary and trigger dependency. */
   lineage(ids: string[]): {

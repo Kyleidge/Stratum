@@ -190,6 +190,30 @@ settings, and any other setting is rejected:
   value: { function: first-crossing, input: speed, threshold: 850 }
 ```
 
+A derive `parameter` (for `offset`, `scale` and `time-shift`), a value's
+`threshold` or `time`, and a trigger's `threshold` or `offset` can instead take
+a value step's result: `{ value: <step>, factor: <number> }` (the factor
+defaults to 1). A step with several values matches one to each input, as in
+the app; `step[2]` picks one value for every input. The reference must be an
+earlier `value` step.
+
+```yaml
+- id: peak-speed
+  value: { function: maximum, input: speed }
+- id: runs
+  segment:
+    input: torque
+    triggers:
+      start:
+        signal: speed
+        edge: rising
+        threshold: { value: peak-speed, factor: 0.5 }
+      end:
+        signal: speed
+        edge: falling
+        threshold: { value: peak-speed, factor: 0.5 }
+```
+
 `time-origin` applies to segment `ranges` and `windows`:
 
 - `recording` (the default): recording times, exactly as saved.

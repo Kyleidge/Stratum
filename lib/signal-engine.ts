@@ -80,10 +80,19 @@ import {
   valueUnit,
 } from './workflow-types';
 import { ValueAccumulator } from './value-statistics';
+import {
+  BINDABLE_DERIVE,
+  BINDABLE_VALUE,
+  resolveBinding,
+  resolveTriggerBindings,
+  type BindingContext,
+} from './value-bindings';
 import type {
   CheckDefinition,
   RunFlag,
   ScalarValue,
+  BoundValue,
+  ParameterBindings,
   ValueOperation,
   ValueParameters,
   ValueStatistics,
@@ -643,6 +652,8 @@ export class SignalEngine {
           command.parentIds,
           command.operation,
           command.parameter,
+          true,
+          command.bindings,
         );
         break;
       case 'calculate-values':
@@ -650,6 +661,7 @@ export class SignalEngine {
           command.inputIds,
           command.operation,
           command.parameters,
+          command.bindings,
         );
         break;
       case 'segment':
@@ -1738,10 +1750,11 @@ export class SignalEngine {
     inputIds: string[],
     operation: ValueOperation,
     parameters?: ValueParameters,
+    bindings?: ParameterBindings,
   ) {
     const spec = valueSpec(operation);
     if (!spec) throw new Error('Choose a supported value calculation.');
-    const settings = valueParameters(operation, parameters);
+    this.checkBindings(bindings, spec.parameters ?? [], spec.name);
     if (!inputIds.length || new Set(inputIds).size !== inputIds.length)
       throw new Error('Choose at least one unique signal.');
     if (inputIds.length > 10000)
@@ -1757,6 +1770,12 @@ export class SignalEngine {
       this.progress(
         `Calculating ${spec.name.toLowerCase()} · ${index + 1}/${inputs.length}`,
         index / inputs.length,
+      );
+      const { parameters: settings, bound } = this.boundValueSettings(
+        operation,
+        parameters,
+        bindings,
+        input,
       );
       const statistics = await this.valueStatistics(
         input.id,
@@ -1774,6 +1793,7 @@ export class SignalEngine {
         unit: valueUnit(operation, input.unit),
         operation,
         ...(spec.parameters?.length ? { parameters: settings } : {}),
+        ...(bound ? { bindings: bound } : {}),
         value: statisticValue(statistics, operation),
         sampleCount: statistics.sampleCount,
         validDuration: statistics.validDuration,
@@ -1823,21 +1843,83 @@ export class SignalEngine {
     ids: string[],
     operation?: ValueOperation,
     parameters?: ValueParameters,
+    bindings?: ParameterBindings,
   ): Promise<ValueStatistics[]> {
     if (ids.length > 50) throw new Error('Preview up to 50 signals at once.');
-    const parameterised = operation && valueSpec(operation)?.parameters?.length;
+    const spec = operation ? valueSpec(operation) : undefined;
+    if (spec) this.checkBindings(bindings, spec.parameters ?? [], spec.name);
     const statistics: ValueStatistics[] = [];
     for (const id of new Set(ids)) {
       this.check();
       statistics.push(
-        await this.valueStatistics(
-          id,
-          parameterised ? operation : undefined,
-          parameters,
-        ),
+        spec?.parameters?.length
+          ? await this.valueStatistics(
+              id,
+              spec.operation,
+              this.boundValueSettings(
+                spec.operation,
+                parameters,
+                bindings,
+                this.find(id),
+              ).parameters,
+            )
+          : await this.valueStatistics(id),
       );
     }
     return statistics;
+  }
+  /** Lookups and names for resolving settings taken from values. */
+  private bindingContext(): BindingContext {
+    const values = new Map(
+      (this.project.values ?? []).map((value) => [value.id, value]),
+    );
+    const nodes = new Map(this.project.nodes.map((node) => [node.id, node]));
+    return {
+      values,
+      nodes,
+      label: (id) =>
+        this.project.labels?.[id] ??
+        values.get(id)?.name ??
+        nodes.get(id)?.name ??
+        'this input',
+    };
+  }
+  /** Bindings may only name settings that accept values. */
+  private checkBindings(
+    bindings: ParameterBindings | undefined,
+    allowed: readonly string[],
+    name: string,
+  ) {
+    for (const key of Object.keys(bindings ?? {}))
+      if (!allowed.includes(key) || !BINDABLE_VALUE[key])
+        throw new Error(`${name} cannot take its ${key} from a value.`);
+  }
+  /** A value calculation's settings for one input, with bound values. */
+  private boundValueSettings(
+    operation: ValueOperation,
+    parameters: ValueParameters | undefined,
+    bindings: ParameterBindings | undefined,
+    input: SignalNode,
+  ): { parameters: ValueParameters; bound?: Record<string, BoundValue> } {
+    const resolved: ValueParameters = { ...parameters };
+    const bound: Record<string, BoundValue> = {};
+    const context = bindings ? this.bindingContext() : undefined;
+    for (const [name, binding] of Object.entries(bindings ?? {})) {
+      const result = resolveBinding(
+        context!,
+        binding,
+        input.id,
+        BINDABLE_VALUE[name],
+        name,
+        input.unit,
+      );
+      resolved[name] = result.number;
+      bound[name] = { valueId: result.valueId, factor: result.factor };
+    }
+    return {
+      parameters: valueParameters(operation, resolved),
+      ...(Object.keys(bound).length ? { bound } : {}),
+    };
   }
   async previewRegions(settings: RegionSettings): Promise<RegionPlan> {
     this.check();
@@ -2556,8 +2638,9 @@ export class SignalEngine {
   async deriveMany(
     parentIds: string[],
     operation: Operation,
-    value: number,
+    constant: number,
     persist = true,
+    bindings?: ParameterBindings,
   ) {
     if (
       !FUNCTIONS.some(
@@ -2572,6 +2655,13 @@ export class SignalEngine {
       );
     if (!parentIds.length || new Set(parentIds).size !== parentIds.length)
       throw new Error('Choose unique inputs for this operation.');
+    for (const key of Object.keys(bindings ?? {}))
+      if (key !== 'value' || !BINDABLE_DERIVE[operation])
+        throw new Error(
+          'Only offsets, scale factors and time shifts can come from values.',
+        );
+    const binding = bindings?.value;
+    const context = binding ? this.bindingContext() : undefined;
     const nodes: SignalNode[] = [];
     const batchId = uid();
     const mixedSources =
@@ -2579,6 +2669,21 @@ export class SignalEngine {
     for (const parentId of parentIds) {
       this.check();
       const parent = this.find(parentId);
+      const bound = binding
+        ? resolveBinding(
+            context!,
+            binding,
+            parentId,
+            BINDABLE_DERIVE[operation]!,
+            operation === 'offset'
+              ? 'offset'
+              : operation === 'scale'
+                ? 'scale factor'
+                : 'time shift',
+            parent.unit,
+          )
+        : undefined;
+      const value = bound ? bound.number : constant;
       if (!Number.isFinite(value)) throw new Error('Enter a finite parameter.');
       if (
         operation === 'raw' ||
@@ -2636,7 +2741,9 @@ export class SignalEngine {
           ? `${parent.unit}/s`
           : operation === 'integral'
             ? `${parent.unit}·s`
-            : parent.unit;
+            : operation === 'scale' && bound
+              ? arithmeticUnit('multiply', parent.unit, bound.value.unit)
+              : parent.unit;
       const n = this.node(
         mixedSources ? '' : parent.sourceId,
         `${parent.name.split(' · ')[0]} · ${labels[operation]}`,
@@ -2647,6 +2754,10 @@ export class SignalEngine {
       );
       n.color = parent.color;
       n.batchId = batchId;
+      if (bound)
+        n.bindings = {
+          value: { valueId: bound.valueId, factor: bound.factor },
+        };
       if (operation === 'resample') {
         const first = await this.evaluate(parentId).next();
         const t = first.value?.time;
@@ -2676,6 +2787,7 @@ export class SignalEngine {
     inputId: string;
     operation: Operation;
     parameter: number;
+    bindings?: ParameterBindings;
     secondaryId?: string;
     range?: [number, number];
   }): Promise<DerivePreview> {
@@ -2700,6 +2812,7 @@ export class SignalEngine {
         request.operation,
         request.parameter,
         false,
+        request.bindings,
       );
     const graph = new SignalGraph({
       ...this.project,
@@ -2954,6 +3067,7 @@ export class SignalEngine {
       }
       return combined;
     }
+    definition = resolveTriggerBindings(this.bindingContext(), definition);
     const cacheKey = JSON.stringify([
       sourceId,
       definition,
@@ -3209,13 +3323,25 @@ export class SignalEngine {
     // are segmented independently) and named after each parent's display
     // label. Saved segments keep their names.
     const numbers = new Map<string, number>();
-    const savedDefinition = structuredClone(definition);
+    // Bound trigger settings are saved as the results each segment used.
+    const context = this.bindingContext();
+    const savedDefinition = resolveTriggerBindings(
+      context,
+      structuredClone(definition),
+    );
     const batchId = uid();
     const segments = plan.ranges.map((boundary): Segment => {
       const number = (numbers.get(boundary.inputId ?? '') ?? 0) + 1;
       numbers.set(boundary.inputId ?? '', number);
       const recipe = boundary.inputId
-        ? this.memberDefinition(savedDefinition, targetIds[0], boundary.inputId)
+        ? resolveTriggerBindings(
+            context,
+            this.memberDefinition(
+              savedDefinition,
+              targetIds[0],
+              boundary.inputId,
+            ),
+          )
         : savedDefinition;
       const cropped = (boundary.inputId ? [boundary.inputId] : targetIds).map(
         (id) => {

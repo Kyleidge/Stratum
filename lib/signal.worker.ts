@@ -118,7 +118,12 @@ globalThis.onmessage = (
             if (r.refreshExample) await engine.workflowExample(true);
             break;
           case 'calculate-values':
-            await engine.calculateValues(r.inputIds, r.operation, r.parameters);
+            await engine.calculateValues(
+              r.inputIds,
+              r.operation,
+              r.parameters,
+              r.bindings,
+            );
             break;
           case 'init-regions':
             await engine.open();
@@ -159,7 +164,13 @@ globalThis.onmessage = (
             await engine.derive(r.parentId, r.operation, r.parameter);
             break;
           case 'derive-many':
-            await engine.deriveMany(r.parentIds, r.operation, r.parameter);
+            await engine.deriveMany(
+              r.parentIds,
+              r.operation,
+              r.parameter,
+              true,
+              r.bindings,
+            );
             break;
           case 'segment':
             await engine.segment(
@@ -198,6 +209,7 @@ globalThis.onmessage = (
                 r.ids,
                 r.operation,
                 r.parameters,
+                r.bindings,
               ),
             });
             return;

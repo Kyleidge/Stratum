@@ -26,6 +26,18 @@ export type ValueOperation =
  */
 export type ValueParameters = Record<string, number>;
 
+/**
+ * A setting taken from calculated values: `factor` × the matched value. One
+ * value is shared by every input; several are matched to each input by
+ * lineage (the value calculated from that input, or from a signal it came
+ * from or that came from it).
+ */
+export type ValueBinding = { valueIds: string[]; factor: number };
+/** Settings taken from values, by setting name. */
+export type ParameterBindings = Record<string, ValueBinding>;
+/** The value one saved output used for a setting. */
+export type BoundValue = { valueId: string; factor: number };
+
 export type ScalarValue = {
   id: string;
   sourceId: string;
@@ -36,6 +48,8 @@ export type ScalarValue = {
   operation: ValueOperation;
   /** Settings of a parameterised calculation, such as its threshold. */
   parameters?: ValueParameters;
+  /** Settings taken from other values. */
+  bindings?: Record<string, BoundValue>;
   /**
    * The input level a time result refers to (the extreme of a time of
    * minimum or maximum), so plots can mark it over its input.
@@ -66,6 +80,8 @@ export type WorkflowStep = {
   operation: Operation | ValueOperation | 'import' | 'regions' | 'segment';
   inputIds: string[];
   outputIds: string[];
+  /** Values whose results this step's settings use. */
+  valueInputIds?: string[];
   parameters?: Record<string, number>;
   definition?: SegmentationDefinition;
   segmentationId?: string;

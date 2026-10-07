@@ -10,6 +10,13 @@ import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
+import {
+  BINDABLE_DERIVE,
+  BINDABLE_TRIGGER,
+  BINDABLE_VALUE,
+  bindingValueIds,
+  validBindings,
+} from './value-bindings';
 
 /** A known calculation whose saved settings are exactly its valid settings. */
 function validValueSettings(value: ScalarValue): boolean {
@@ -330,6 +337,61 @@ export function validateWorkspace(value: unknown): Project {
       (value.value !== null && !Number.isFinite(value.value))
     )
       throw new Error('Invalid calculated value.');
+  // A bound setting names an existing value and holds exactly its result.
+  const boundSettings = (
+    bindings: unknown,
+    allowed: Record<string, unknown>,
+    parameters: Record<string, number> | undefined,
+    self: string,
+  ): string[] => {
+    if (bindings === undefined) return [];
+    if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings))
+      throw new Error('Invalid settings taken from values.');
+    const entries = Object.entries(bindings as Record<string, unknown>);
+    if (!entries.length) throw new Error('Invalid settings taken from values.');
+    return entries.map(([name, item]) => {
+      const bound = item as { valueId?: unknown; factor?: unknown };
+      const value = values.get(
+        typeof bound?.valueId === 'string' ? bound.valueId : '',
+      );
+      if (
+        !Object.hasOwn(allowed, name) ||
+        !value ||
+        value.id === self ||
+        typeof bound.factor !== 'number' ||
+        !Number.isFinite(bound.factor) ||
+        value.value === null ||
+        parameters?.[name] !== bound.factor * value.value
+      )
+        throw new Error('Invalid settings taken from values.');
+      return value.id;
+    });
+  };
+  const usedValues = new Map<string, string[]>();
+  for (const node of project.nodes)
+    usedValues.set(
+      node.id,
+      boundSettings(
+        node.bindings,
+        BINDABLE_DERIVE[node.operation] ? { value: true } : {},
+        node.parameters,
+        node.id,
+      ),
+    );
+  for (const value of project.values ?? [])
+    usedValues.set(
+      value.id,
+      boundSettings(
+        value.bindings,
+        Object.fromEntries(
+          (valueSpec(value.operation)?.parameters ?? [])
+            .filter((name) => BINDABLE_VALUE[name])
+            .map((name) => [name, true]),
+        ),
+        value.parameters,
+        value.id,
+      ),
+    );
   const owners = new Map<
     string,
     NonNullable<Project['workflowSteps']>[number]
@@ -350,6 +412,10 @@ export function validateWorkspace(value: unknown): Project {
         (!Number.isSafeInteger(step.revision) || step.revision < 1)) ||
       !stringList(step.outputIds) ||
       !stringList(step.inputIds) ||
+      (step.valueInputIds !== undefined &&
+        (!stringList(step.valueInputIds) ||
+          !step.valueInputIds.length ||
+          step.valueInputIds.some((id) => !values.has(id)))) ||
       !Number.isSafeInteger(step.sequence) ||
       step.sequence < 0 ||
       sequences.has(step.sequence) ||
@@ -429,12 +495,27 @@ export function validateWorkspace(value: unknown): Project {
       step.inputIds.some((id) => !dependencies.has(id))
     )
       throw new Error('Operation history does not match signal dependencies.');
+    const segmentation = project.segmentationOperations?.find(
+      (item) => item.id === step.segmentationId,
+    );
+    const used = new Set(
+      step.kind === 'segment'
+        ? Object.values(segmentation?.definition?.bindings ?? {}).flatMap(
+            (binding) => binding.valueIds,
+          )
+        : step.outputIds.flatMap((id) => usedValues.get(id) ?? []),
+    );
+    if (
+      used.size !== (step.valueInputIds?.length ?? 0) ||
+      step.valueInputIds?.some((id) => !used.has(id))
+    )
+      throw new Error('Operation history does not match value dependencies.');
   }
   if (owners.size !== outputs.size)
     throw new Error('Some outputs have no operation history.');
   for (const step of project.workflowSteps ?? [])
     if (
-      step.inputIds.some(
+      [...step.inputIds, ...(step.valueInputIds ?? [])].some(
         (id) => (owners.get(id)?.sequence ?? Infinity) >= step.sequence,
       )
     )
@@ -457,6 +538,13 @@ export function validateWorkspace(value: unknown): Project {
   ) {
     if (!def || !['clip', 'discard'].includes(def.boundary))
       throw new Error('Invalid segmentation settings.');
+    if (
+      def.bindings !== undefined &&
+      (def.method !== 'triggers' ||
+        !validBindings(def.bindings, BINDABLE_TRIGGER) ||
+        bindingValueIds(def.bindings).some((id) => !values.has(id)))
+    )
+      throw new Error('Invalid trigger settings taken from values.');
     if (def.method === 'ranges') {
       if (
         !Array.isArray(def.ranges) ||
