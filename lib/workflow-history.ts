@@ -1,6 +1,6 @@
 import { FUNCTIONS } from './signal-functions';
 import { TIME_OPERATIONS } from './time-types';
-import { VALUE_FUNCTIONS } from './workflow-types';
+import { valueTitle, type ValueOperation } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
 
@@ -14,8 +14,9 @@ export function stepName(step: WorkflowStep): string {
   if (step.operation === 'bsfc') return 'Specific fuel consumption';
   if (step.operation in TIME_OPERATIONS)
     return TIME_OPERATIONS[step.operation as keyof typeof TIME_OPERATIONS];
+  if (step.kind === 'value')
+    return valueTitle(step.operation as ValueOperation, step.parameters);
   return (
-    VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     step.operation
   );
@@ -165,6 +166,7 @@ export function withWorkflowHistory(project: Project): Project {
       createdAt: batch[0].createdAt,
       inputIds: batch.map((value) => value.inputId),
       outputIds: batch.map((value) => value.id),
+      ...(batch[0].parameters ? { parameters: batch[0].parameters } : {}),
     });
   if (!candidates.length) return project;
   // Stable topological ordering resolves tied timestamps and old batch metadata.
@@ -306,7 +308,7 @@ export class WorkflowIndex {
     if (!node) {
       const value = this.values.get(id);
       return value
-        ? `${VALUE_FUNCTIONS.find((spec) => spec.operation === value.operation)?.name ?? value.operation} · ${this.label(value.inputId)}`
+        ? `${valueTitle(value.operation, value.parameters, this.nodes.get(value.inputId)?.unit)} · ${this.label(value.inputId)}`
         : 'Unavailable input';
     }
     if (node.operation === 'crop') {

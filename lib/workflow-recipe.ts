@@ -1,7 +1,11 @@
 import { FUNCTIONS } from './signal-functions';
 import { isBinaryOperation } from './signal-arithmetic';
-import { VALUE_FUNCTIONS } from './workflow-types';
-import type { CheckDefinition, ValueOperation } from './workflow-types';
+import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
+import type {
+  CheckDefinition,
+  ValueOperation,
+  ValueParameters,
+} from './workflow-types';
 import type {
   EdgeTrigger,
   Operation,
@@ -52,7 +56,12 @@ export type RecipeOperation =
       scope?: SegmentationScope;
       timeOrigin: TimeOrigin;
     }
-  | { kind: 'value'; operation: ValueOperation; inputs: RecipeRef[] }
+  | {
+      kind: 'value';
+      operation: ValueOperation;
+      inputs: RecipeRef[];
+      parameters?: ValueParameters;
+    }
   | { kind: 'time'; settings: TimeSettings };
 export type RecipeStep = {
   id: string;
@@ -829,17 +838,45 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   } else if (present[0] === 'segment') {
     operation = readSegment(reader, body, context);
   } else if (present[0] === 'value') {
-    reader.keys(body, ['function', 'input', 'inputs'], context);
+    const function_ = reader.choice(
+      body.function,
+      VALUE_FUNCTIONS.map((item) => item.operation),
+      `${context} function`,
+      undefined,
+      body,
+    );
+    const settings = valueSpec(function_)?.parameters ?? [];
+    reader.keys(body, ['function', 'input', 'inputs', ...settings], context);
+    const raw: ValueParameters = {};
+    for (const name of settings) {
+      if (body[name] === undefined || body[name] === null) continue;
+      raw[name] =
+        name === 'edge'
+          ? reader.choice(
+              body.edge,
+              ['rising', 'falling'] as const,
+              `${context} edge`,
+              undefined,
+              body,
+            ) === 'falling'
+            ? -1
+            : 1
+          : reader.number(body[name], `${context} ${name}`, body);
+    }
+    let parameters: ValueParameters;
+    try {
+      parameters = valueParameters(function_, raw);
+    } catch (error) {
+      reader.fail(
+        `${context}: ${error instanceof Error ? error.message : 'invalid settings.'}`,
+        body,
+      );
+    }
     operation = {
       kind: 'value',
-      operation: reader.choice(
-        body.function,
-        VALUE_FUNCTIONS.map((item) => item.operation),
-        `${context} function`,
-        undefined,
-        body,
-      ),
+      operation: function_,
       inputs: readInputs(reader, body, context),
+      ...(settings.length ? { parameters } : {}),
     };
   } else operation = readTime(reader, body, context);
   let outputs: RecipeStep['outputs'];
@@ -1113,11 +1150,23 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
         },
       ];
     }
-    case 'value':
+    case 'value': {
+      const parameters = operation.parameters ?? {};
       return [
         'value',
-        { function: operation.operation, ...inputYaml(operation.inputs) },
+        {
+          function: operation.operation,
+          ...inputYaml(operation.inputs),
+          ...(parameters.threshold !== undefined
+            ? { threshold: parameters.threshold }
+            : {}),
+          ...(parameters.edge !== undefined
+            ? { edge: parameters.edge === -1 ? 'falling' : 'rising' }
+            : {}),
+          ...(parameters.time !== undefined ? { time: parameters.time } : {}),
+        },
       ];
+    }
     case 'segment': {
       const definition = operation.definition;
       const method: YamlMap =
@@ -1477,6 +1526,9 @@ export function stepCommand(
         type: 'calculate-values',
         inputIds: many(operation.inputs),
         operation: operation.operation,
+        ...(operation.parameters
+          ? { parameters: { ...operation.parameters } }
+          : {}),
       };
     case 'segment': {
       const targetIds = many(operation.inputs);

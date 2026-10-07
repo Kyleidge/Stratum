@@ -62,7 +62,12 @@ There are no server API routes or cloud signal uploads.
   live preview (`components/preview-lanes.tsx`, one lane per unit). The worker's
   `derive-preview` evaluates an unsaved candidate built by creation's own
   validation; `value-preview` uses `SignalEngine.valueStatistics`, which
-  `calculateValues` also uses. Previews run in inspection lanes and never save.
+  `calculateValues` also uses. `lib/value-statistics.ts` computes every value
+  in one streaming pass; `VALUE_FUNCTIONS` in `lib/workflow-types.ts` defines
+  the catalog (groups, units, settings). Elapsed results are seconds from the
+  input's start; crossings reuse `CrossingDetector`. `valueReference` in
+  `lib/plot-scratchpad.ts` places a value on plots (time and count results
+  draw at the level they refer to). Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
   window spans; workflow segment previews run automatically. Operation dialogs

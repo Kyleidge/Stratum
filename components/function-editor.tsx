@@ -15,13 +15,18 @@ import {
   parameterContext,
   parameterHint,
   parameterScale,
+  rangeMidpoint,
 } from '@/lib/parameter-scale';
-import { VALUE_TAGS } from '@/lib/plot-scratchpad';
+import { VALUE_TAGS, valueReference } from '@/lib/plot-scratchpad';
 import type { WorkflowIndex } from '@/lib/workflow-history';
 import {
+  statisticTime,
   statisticValue,
   VALUE_FUNCTIONS,
+  valueSpec as findValueSpec,
+  valueUnit,
   type ValueOperation,
+  type ValueParameters,
   type ValueStatistics,
   type WorkflowStep,
 } from '@/lib/workflow-types';
@@ -62,6 +67,8 @@ export type FunctionDraft = {
   operation?: Operation | ValueOperation;
   parameter?: number;
   secondaryId?: string;
+  /** Saved settings of a parameterised value calculation. */
+  valueParameters?: ValueParameters;
 };
 type Request = (message: EngineRequest) => Promise<EngineResponse>;
 type Range = [number, number];
@@ -174,6 +181,7 @@ export default function FunctionEditor({
     operation: Operation | ValueOperation,
     parameter: number,
     secondaryId: string,
+    valueParameters?: ValueParameters,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -195,13 +203,15 @@ export default function FunctionEditor({
   const [secondaryId, setSecondaryId] = useState(editor.secondaryId ?? '');
   const [previewId, setPreviewId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
-  const statistics = useValueStatistics(values ? editor.ids : [], request);
-  const valueSpec = VALUE_FUNCTIONS.find(
-    (spec) => spec.operation === operation,
+  // An untouched threshold follows the previewed input's range midpoint.
+  const [valueForm, setValueForm] = useState<ValueForm>(() =>
+    initialValueForm(editor.valueParameters),
   );
-  const spec =
-    SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
-    FUNCTIONS.find((spec) => spec.operation === operation);
+  const valueSpec = values ? findValueSpec(operation) : undefined;
+  const spec = values
+    ? undefined
+    : (SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
+      FUNCTIONS.find((spec) => spec.operation === operation));
   const binary = isBinaryOperation(operation);
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
   const inputGrids = new Set(editor.ids.map((id) => gridKey(index.nodes, id)));
@@ -283,6 +293,18 @@ export default function FunctionEditor({
   const plotError = inputPlot?.id === previewId ? inputPlot.error : undefined;
   const context = parameterContext(plot?.summary);
   const previewNode = index.nodes.get(previewId);
+  const settings = valueSettings(
+    valueSpec?.parameters ?? [],
+    valueForm,
+    rangeMidpoint(context.min, context.max),
+  );
+  const statistics = useValueStatistics(
+    values ? editor.ids : [],
+    request,
+    valueSpec?.parameters?.length && settings.parameters
+      ? { operation: valueSpec.operation, parameters: settings.parameters }
+      : undefined,
+  );
   const choices = editor.ids.slice(0, PREVIEW_CHOICES).map((id) => ({
     value: id,
     label: `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
@@ -315,12 +337,11 @@ export default function FunctionEditor({
   // Create stays disabled while the settings or their preview are invalid,
   // with the reason beside the button.
   const blocked = values
-    ? statistics.error
-      ? `The preview failed: ${statistics.error}`
-      : ''
+    ? settings.waiting ||
+      (statistics.error ? `The preview failed: ${statistics.error}` : '')
     : waiting || (derived.error ? `The preview failed: ${derived.error}` : '');
   const blockedError = values
-    ? !!statistics.error
+    ? !settings.waiting && !!statistics.error
     : !waiting && !!derived.error;
   const count = editor.ids.length;
   const create = editor.editingStepId
@@ -388,9 +409,27 @@ export default function FunctionEditor({
               </p>
               {values && (
                 <p className="value-output-hint">
-                  One result per input, in its original unit. Missing samples
-                  are excluded.
+                  One result per input,{' '}
+                  {valueSpec?.result === 'level'
+                    ? 'in its original unit'
+                    : valueSpec?.result === 'area'
+                      ? 'in its unit × seconds'
+                      : valueSpec?.result === 'time'
+                        ? 'in seconds'
+                        : 'as a count'}
+                  . Missing samples are excluded.
                 </p>
+              )}
+              {values && !!valueSpec?.parameters?.length && (
+                <ValueSettings
+                  parameters={valueSpec.parameters}
+                  form={valueForm}
+                  threshold={settings.threshold}
+                  unit={previewNode?.unit ?? ''}
+                  context={context}
+                  disabled={busy}
+                  onChange={setValueForm}
+                />
               )}
               {binary && (
                 <div className="signal-first-input">
@@ -471,6 +510,7 @@ export default function FunctionEditor({
                 index={index}
                 statistics={statistics}
                 operation={operation as ValueOperation}
+                parameters={settings.parameters}
                 previewId={previewId}
                 plot={plot}
                 plotError={plotError}
@@ -521,8 +561,11 @@ export default function FunctionEditor({
               try {
                 await onApply(
                   operation as Operation | ValueOperation,
-                  spec?.parameter ? finite(parameter) : 0,
+                  !values && spec?.parameter ? finite(parameter) : 0,
                   secondaryId,
+                  values && valueSpec?.parameters?.length
+                    ? settings.parameters
+                    : undefined,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
@@ -686,34 +729,160 @@ function useDerivePreview({
   };
 }
 
-/** Exact value statistics for the first inputs, computed once per dialog. */
-function useValueStatistics(ids: string[], request: Request) {
+type ValueForm = {
+  /** Typed threshold; undefined follows the input's range midpoint. */
+  threshold?: string;
+  edge: 1 | -1;
+  time: string;
+};
+function initialValueForm(parameters?: ValueParameters): ValueForm {
+  return {
+    ...(parameters?.threshold !== undefined
+      ? { threshold: String(parameters.threshold) }
+      : {}),
+    edge: parameters?.edge === -1 ? -1 : 1,
+    time: String(parameters?.time ?? 0),
+  };
+}
+/** The settings a value calculation needs, or why they are incomplete. */
+function valueSettings(
+  needed: readonly string[],
+  form: ValueForm,
+  midpoint?: number,
+): { parameters?: ValueParameters; threshold: string; waiting: string } {
+  const threshold =
+    form.threshold ?? (midpoint !== undefined ? String(midpoint) : '');
+  const parameters: ValueParameters = {};
+  for (const name of needed) {
+    if (name === 'edge') parameters.edge = form.edge;
+    else if (name === 'time') {
+      const time = Number(form.time);
+      if (!form.time.trim() || !Number.isFinite(time) || time < 0)
+        return {
+          threshold,
+          waiting: "Enter a time of 0 s or later from the input's start.",
+        };
+      parameters.time = time;
+    } else {
+      const level = Number(threshold);
+      if (!threshold.trim() || !Number.isFinite(level))
+        return { threshold, waiting: 'Enter a threshold to preview.' };
+      parameters.threshold = level;
+    }
+  }
+  return { parameters, threshold, waiting: '' };
+}
+
+/** Threshold, edge and time settings of a parameterised value. */
+function ValueSettings({
+  parameters,
+  form,
+  threshold,
+  unit,
+  context,
+  disabled,
+  onChange,
+}: {
+  parameters: readonly string[];
+  form: ValueForm;
+  threshold: string;
+  unit: string;
+  context: ReturnType<typeof parameterContext>;
+  disabled: boolean;
+  onChange: (form: ValueForm) => void;
+}) {
+  return (
+    <>
+      {parameters.includes('edge') && (
+        <fieldset className="segment-edge-toggle">
+          <legend className="field-label">Crossing</legend>
+          {([1, -1] as const).map((edge) => (
+            <button
+              key={edge}
+              type="button"
+              aria-pressed={form.edge === edge}
+              disabled={disabled}
+              onClick={() => onChange({ ...form, edge })}
+            >
+              {edge === 1 ? '↗ Rising above' : '↘ Falling below'}
+            </button>
+          ))}
+        </fieldset>
+      )}
+      {parameters.includes('threshold') && (
+        <ParameterControl
+          label="Threshold"
+          value={threshold}
+          unit={unit}
+          scale={parameterScale('value-threshold', context)}
+          disabled={disabled}
+          onChange={(next) => onChange({ ...form, threshold: next })}
+        />
+      )}
+      {parameters.includes('time') && (
+        <ParameterControl
+          label="Time from start"
+          value={form.time}
+          unit="s"
+          scale={parameterScale('value-time', context)}
+          disabled={disabled}
+          onChange={(time) => onChange({ ...form, time })}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * Exact value statistics for the first inputs. Parameterless calculations
+ * share one request per dialog; a parameterised one is evaluated with its
+ * settings, debounced while they change.
+ */
+function useValueStatistics(
+  ids: string[],
+  request: Request,
+  calculation?: { operation: ValueOperation; parameters: ValueParameters },
+) {
   const [statistics, setStatistics] = useState<{
     key: string;
     items?: ValueStatistics[];
     error?: string;
   }>();
   const key = ids.length
-    ? JSON.stringify(ids.slice(0, VALUE_PREVIEW_LIMIT))
+    ? JSON.stringify([ids.slice(0, VALUE_PREVIEW_LIMIT), calculation ?? null])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const ids = JSON.parse(key) as string[];
-    void request({ type: 'value-preview', ids, inspection: true })
-      .then((response) => {
-        if (alive && response.type === 'value-preview')
-          setStatistics({ key, items: response.statistics });
-      })
-      .catch((caught: unknown) => {
-        if (alive)
-          setStatistics({
-            key,
-            error: message(caught, 'Values could not be previewed.'),
+    const [ids, calculation] = JSON.parse(key) as [
+      string[],
+      { operation: ValueOperation; parameters: ValueParameters } | null,
+    ];
+    const timer = setTimeout(
+      () => {
+        void request({
+          type: 'value-preview',
+          ids,
+          ...calculation,
+          inspection: true,
+        })
+          .then((response) => {
+            if (alive && response.type === 'value-preview')
+              setStatistics({ key, items: response.statistics });
+          })
+          .catch((caught: unknown) => {
+            if (alive)
+              setStatistics({
+                key,
+                error: message(caught, 'Values could not be previewed.'),
+              });
           });
-      });
+      },
+      calculation ? 200 : 0,
+    );
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
   }, [key, request]);
   const map = new Map<string, ValueStatistics>();
@@ -731,19 +900,22 @@ function valueText(
   unit = '',
 ) {
   const value = statisticValue(statistics, operation);
+  const shown = valueUnit(operation, unit);
   return value === null
     ? 'Unavailable'
-    : `${formatQuantity(value, 5)}${unit ? ` ${unit}` : ''}`;
+    : `${formatQuantity(value, 5)}${shown ? ` ${shown}` : ''}`;
 }
 
 function valueResults(statistics?: ValueStatistics, unit?: string) {
   if (!statistics) return undefined;
   return Object.fromEntries(
-    VALUE_FUNCTIONS.map((spec) => [
-      spec.operation,
-      valueText(statistics, spec.operation, unit),
-    ]),
-  ) as Record<ValueOperation, string>;
+    VALUE_FUNCTIONS.flatMap((spec) =>
+      // Parameterised results are shown only for the settings being edited.
+      spec.parameters?.length && statistics.result?.operation !== spec.operation
+        ? []
+        : [[spec.operation, valueText(statistics, spec.operation, unit)]],
+    ),
+  ) as Partial<Record<ValueOperation, string>>;
 }
 
 function ValuePreview({
@@ -751,6 +923,7 @@ function ValuePreview({
   index,
   statistics,
   operation,
+  parameters,
   previewId,
   plot,
   plotError,
@@ -760,6 +933,7 @@ function ValuePreview({
   index: WorkflowIndex;
   statistics: ReturnType<typeof useValueStatistics>;
   operation: ValueOperation;
+  parameters?: ValueParameters;
   previewId: string;
   plot?: Plot;
   plotError?: string;
@@ -768,12 +942,8 @@ function ValuePreview({
   const node = index.nodes.get(previewId);
   const focused = statistics.get(previewId);
   const value = focused ? statisticValue(focused, operation) : null;
-  const time =
-    operation === 'minimum'
-      ? focused?.minimumTime
-      : operation === 'maximum'
-        ? focused?.maximumTime
-        : undefined;
+  const time = focused ? statisticTime(focused, operation) : undefined;
+  const spec = findValueSpec(operation);
   const traces: PreviewTrace[] = [];
   if (node && plot) {
     traces.push({
@@ -782,32 +952,55 @@ function ValuePreview({
       label: index.label(previewId),
       color: 'var(--primary)',
     });
-    if (value !== null) {
+    const reference = focused
+      ? valueReference(
+          {
+            operation,
+            value,
+            unit: valueUnit(operation, node.unit),
+            parameters,
+            level:
+              operation === 'time-of-minimum'
+                ? (focused.minimum ?? undefined)
+                : operation === 'time-of-maximum'
+                  ? (focused.maximum ?? undefined)
+                  : undefined,
+          },
+          node.unit,
+          (number) => formatQuantity(number, 4),
+        )
+      : undefined;
+    if (reference && Number.isFinite(reference.y)) {
       const start = plot.summary.start,
-        end = plot.summary.end;
+        end = plot.summary.end,
+        y = reference.y;
       traces.push({
-        node: { ...node, id: `${node.id}:value`, operation: 'raw' },
+        node: {
+          ...node,
+          id: `${node.id}:value`,
+          operation: 'raw',
+          unit: reference.unit,
+        },
         plot: {
           id: `${node.id}:value`,
           points: [
-            [start, value],
-            [end, value],
+            [start, y],
+            [end, y],
           ],
           summary: {
             count: 1,
-            min: value,
-            max: value,
-            mean: value,
+            min: y,
+            max: y,
+            mean: y,
             integral: NaN,
             start,
             end,
           },
         },
-        label: VALUE_FUNCTIONS.find((item) => item.operation === operation)!
-          .name,
+        label: spec?.name ?? operation,
         color: 'var(--kind-value)',
         referenceLine: true,
-        referenceLabel: `${VALUE_TAGS[operation]} ${formatQuantity(value, 4)}`,
+        referenceLabel: reference.label,
         referenceTime: time,
       });
     }
@@ -815,6 +1008,16 @@ function ValuePreview({
   const range: Range | undefined = plot
     ? [plot.summary.start, plot.summary.end]
     : undefined;
+  const event =
+    time === undefined
+      ? ''
+      : operation === 'minimum' || operation === 'time-of-minimum'
+        ? ` · first minimum at ${formatValue(time, 3)} s`
+        : operation === 'maximum' || operation === 'time-of-maximum'
+          ? ` · first maximum at ${formatValue(time, 3)} s`
+          : operation === 'first-crossing'
+            ? ` · crosses at ${formatValue(time, 3)} s`
+            : ` · at ${formatValue(time, 3)} s`;
   return (
     <>
       <div className="operation-preview-heading">
@@ -839,12 +1042,10 @@ function ValuePreview({
       {focused && (
         <p className="operation-preview-summary">
           {value === null
-            ? 'No finite samples: this value will be stored as unavailable.'
-            : `${formatCount(focused.sampleCount, 'valid sample')} over ${formatDuration(focused.validDuration)}${
-                time !== undefined
-                  ? ` · first ${operation === 'minimum' ? 'minimum' : 'maximum'} at ${formatValue(time, 3)} s`
-                  : ''
-              }.`}
+            ? focused.sampleCount
+              ? `${formatCount(focused.sampleCount, 'valid sample')}, but this value is unavailable for these settings; it will be stored as unavailable.`
+              : 'No finite samples: this value will be stored as unavailable.'
+            : `${formatCount(focused.sampleCount, 'valid sample')} over ${formatDuration(focused.validDuration)}${event}.`}
         </p>
       )}
       {statistics.error && (

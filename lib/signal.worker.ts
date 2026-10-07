@@ -118,7 +118,7 @@ globalThis.onmessage = (
             if (r.refreshExample) await engine.workflowExample(true);
             break;
           case 'calculate-values':
-            await engine.calculateValues(r.inputIds, r.operation);
+            await engine.calculateValues(r.inputIds, r.operation, r.parameters);
             break;
           case 'init-regions':
             await engine.open();
@@ -194,7 +194,11 @@ globalThis.onmessage = (
             send({
               type: 'value-preview',
               requestId,
-              statistics: await engine.previewValues(r.ids),
+              statistics: await engine.previewValues(
+                r.ids,
+                r.operation,
+                r.parameters,
+              ),
             });
             return;
           case 'segment-metrics':

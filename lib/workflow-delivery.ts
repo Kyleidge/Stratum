@@ -124,7 +124,7 @@ export function reportHtml(
         );
         content = `<p class="result">${html(finite(value.value))} <small>${html(value.unit)}</small></p>
         <p>${html(spec?.description ?? value.operation)}</p>
-        <p>${value.sampleCount} finite samples · ${value.validDuration} s of valid intervals${value.timestamp === undefined ? '' : ` · first occurrence ${value.timestamp} s`}</p>`;
+        <p>${value.sampleCount} finite samples · ${value.validDuration} s of valid intervals${value.timestamp === undefined ? '' : ` · at ${value.timestamp} s`}</p>`;
       } else if (plot && bounds) {
         const low = Number.isFinite(plot.summary.min) ? plot.summary.min : 0;
         const high = Number.isFinite(plot.summary.max) ? plot.summary.max : 1;

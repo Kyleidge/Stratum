@@ -21,7 +21,7 @@ import {
 } from './plot-axes';
 import {
   plotExtent,
-  VALUE_TAGS,
+  valueReference,
   type PlotRange,
   type PlotSheet,
 } from './plot-scratchpad';
@@ -168,7 +168,10 @@ export async function captureReportPlot(
     const value = index.values.get(trace.id);
     const node = signalFor(trace.id);
     if (!node) throw new Error('A saved plot value has lost its input signal.');
-    const y = value?.value ?? NaN;
+    const reference = value
+      ? valueReference(value, node.unit, (number) => formatValue(number, 1))
+      : undefined;
+    const y = reference?.y ?? NaN;
     const plot: Plot = value
       ? {
           id: value.id,
@@ -177,7 +180,7 @@ export async function captureReportPlot(
             [value.end, y],
           ],
           summary: {
-            count: value.value === null ? 0 : 1,
+            count: Number.isFinite(y) ? 1 : 0,
             start: value.start,
             end: value.end,
             min: y,
@@ -193,7 +196,7 @@ export async function captureReportPlot(
             ...node,
             id: value.id,
             name: index.label(value.id),
-            unit: value.unit,
+            unit: reference!.unit,
             operation: 'raw' as const,
           }
         : node,
@@ -212,10 +215,7 @@ export async function captureReportPlot(
       label: trace.label ?? index.label(trace.id),
       offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
       referenceLine: !!value,
-      referenceLabel:
-        value && value.value !== null
-          ? `${VALUE_TAGS[value.operation] ?? ''} ${formatValue(value.value, 1)}`.trim()
-          : undefined,
+      referenceLabel: reference?.label,
       referenceTime: value?.timestamp,
       style: trace.style,
       width: trace.width,

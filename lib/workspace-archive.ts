@@ -9,6 +9,26 @@ import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
 import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
+import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
+
+/** A known calculation whose saved settings are exactly its valid settings. */
+function validValueSettings(value: ScalarValue): boolean {
+  const spec = valueSpec(value.operation);
+  if (!spec) return false;
+  if (!spec.parameters?.length) return value.parameters === undefined;
+  if (!value.parameters || typeof value.parameters !== 'object') return false;
+  try {
+    const valid = valueParameters(value.operation, value.parameters);
+    return (
+      Object.keys(valid).length === Object.keys(value.parameters).length &&
+      Object.entries(valid).every(
+        ([name, number]) => value.parameters![name] === number,
+      )
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
 export const EXPORT_LIMIT = 64 * 1024 * 1024;
@@ -305,9 +325,8 @@ export function validateWorkspace(value: unknown): Project {
       !Number.isFinite(value.start) ||
       !Number.isFinite(value.end) ||
       (value.timestamp !== undefined && !Number.isFinite(value.timestamp)) ||
-      !['minimum', 'maximum', 'time-average', 'sample-average'].includes(
-        value.operation,
-      ) ||
+      (value.level !== undefined && !Number.isFinite(value.level)) ||
+      !validValueSettings(value) ||
       (value.value !== null && !Number.isFinite(value.value))
     )
       throw new Error('Invalid calculated value.');

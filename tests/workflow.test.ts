@@ -1935,6 +1935,15 @@ void test('dialog previews match created results and never change the workspace'
       maximum: 30,
       minimumTime: 0,
       maximumTime: 7,
+      rms: 20,
+      standardDeviation: Math.sqrt(180),
+      integral: 65,
+      startValue: 0,
+      startTime: 0,
+      endValue: 30,
+      endTime: 8,
+      start: 0,
+      end: 8,
     });
     const smoothed = await engine.previewDerived({
       inputId: source.channels[0],

@@ -233,6 +233,9 @@ export function extractWorkflow(
             kind: 'value',
             operation: command.operation,
             inputs: many(command.inputIds),
+            ...(command.parameters
+              ? { parameters: { ...command.parameters } }
+              : {}),
           };
           break;
         case 'segment': {

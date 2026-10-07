@@ -213,7 +213,12 @@ export type EngineRequest =
   | { type: 'restore-workspace'; file: File }
   | RegionRequest
   | { type: 'init-workflow'; refreshExample?: boolean }
-  | { type: 'calculate-values'; inputIds: string[]; operation: ValueOperation }
+  | {
+      type: 'calculate-values';
+      inputIds: string[];
+      operation: ValueOperation;
+      parameters?: import('./workflow-types').ValueParameters;
+    }
   | { type: 'init' }
   | { type: 'import'; file: File; tables?: number[] }
   | { type: 'demo' }
@@ -248,7 +253,14 @@ export type EngineRequest =
       range?: [number, number];
       inspection?: boolean;
     }
-  | { type: 'value-preview'; ids: string[]; inspection?: boolean }
+  | {
+      type: 'value-preview';
+      ids: string[];
+      /** A parameterised calculation to evaluate with the statistics. */
+      operation?: ValueOperation;
+      parameters?: import('./workflow-types').ValueParameters;
+      inspection?: boolean;
+    }
   | { type: 'segment-metrics'; ids: string[] }
   | {
       type: 'view';

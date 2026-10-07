@@ -283,6 +283,40 @@ export function parameterScale(
             : [],
       };
     }
+    // Value settings: a level within the input's range, or a time from its start.
+    case 'value-threshold': {
+      if (min === undefined || max === undefined) return undefined;
+      const pad = niceCeil(Math.max((max - min) * 0.05, 1e-9));
+      const percent = (fraction: number) => ({
+        label: `${fraction * 100} %`,
+        value: roundSignificant(min + (max - min) * fraction, 6),
+        title: `${fraction * 100} % of the input's range`,
+      });
+      return {
+        min: Number((min - pad).toPrecision(12)),
+        max: Number((max + pad).toPrecision(12)),
+        log: false,
+        integer: false,
+        presets: max > min ? [0.1, 0.5, 0.9].map(percent) : [],
+      };
+    }
+    case 'value-time': {
+      if (span === undefined || span <= 0) return undefined;
+      return {
+        min: 0,
+        max: niceCeil(span),
+        log: false,
+        integer: false,
+        presets: [
+          { label: 'Start', value: 0 },
+          {
+            label: 'Middle',
+            value: roundSignificant(span / 2, 6),
+            title: formatDuration(span / 2),
+          },
+        ],
+      };
+    }
   }
   return undefined;
 }

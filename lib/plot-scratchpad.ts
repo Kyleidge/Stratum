@@ -1,3 +1,6 @@
+import { VALUE_FUNCTIONS, valueSpec } from './workflow-types';
+import type { ScalarValue } from './workflow-types';
+
 /** Device-local plot layouts. Signal data and workflow history stay in the engine. */
 export const PLOT_STORAGE_KEY = 'stratus.plot-scratchpad.v1';
 export const MAX_PLOT_TABS = 12;
@@ -41,12 +44,58 @@ export function resolveColor(color: string, element?: Element): string {
 }
 
 /** Short tags for a value's direct label at the end of its reference line. */
-export const VALUE_TAGS: Record<string, string> = {
-  'time-average': 'avg',
-  'sample-average': 'mean',
-  minimum: 'min',
-  maximum: 'max',
+export const VALUE_TAGS: Record<string, string> = Object.fromEntries(
+  VALUE_FUNCTIONS.map((spec) => [spec.operation, spec.tag]),
+);
+export type ValueReference = {
+  /** Height of the reference line; NaN draws nothing. */
+  y: number;
+  /** Unit of the axis the line is drawn on. */
+  unit: string;
+  label?: string;
 };
+/**
+ * How a value is drawn over its input. Levels are lines at the value. Times
+ * and counts that refer to a level (a threshold or an extreme) draw that
+ * level in the input's unit, labelled with the result; the rest are lines at
+ * the value on their own unit's axis.
+ */
+export function valueReference(
+  value: Pick<ScalarValue, 'operation' | 'value' | 'unit'> &
+    Partial<Pick<ScalarValue, 'parameters' | 'level'>>,
+  inputUnit: string,
+  format: (value: number) => string,
+): ValueReference {
+  const spec = valueSpec(value.operation);
+  const tag = spec?.tag ?? '';
+  const result = value.value;
+  const own = (unit: string) =>
+    result === null ? '—' : `${format(result)}${unit ? ` ${unit}` : ''}`;
+  const level =
+    value.level ??
+    (spec?.result !== 'level' ? value.parameters?.threshold : undefined);
+  if (
+    spec &&
+    spec.result === 'level' &&
+    !['standard-deviation', 'peak-to-peak'].includes(spec.operation)
+  )
+    return {
+      y: result ?? NaN,
+      unit: value.unit,
+      ...(result !== null ? { label: `${tag} ${format(result)}`.trim() } : {}),
+    };
+  if (level !== undefined && Number.isFinite(level))
+    return {
+      y: level,
+      unit: inputUnit,
+      label: `${tag} ${own(value.unit)}`.trim(),
+    };
+  return {
+    y: result ?? NaN,
+    unit: value.unit,
+    ...(result !== null ? { label: `${tag} ${format(result)}`.trim() } : {}),
+  };
+}
 export type PlotRange = [number, number];
 export type PlotTrace = {
   id: string;

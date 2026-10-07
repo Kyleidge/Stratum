@@ -4,7 +4,27 @@ export type ValueOperation =
   | 'minimum'
   | 'maximum'
   | 'time-average'
-  | 'sample-average';
+  | 'sample-average'
+  | 'rms'
+  | 'standard-deviation'
+  | 'peak-to-peak'
+  | 'start-value'
+  | 'end-value'
+  | 'value-at'
+  | 'area'
+  | 'duration'
+  | 'time-of-minimum'
+  | 'time-of-maximum'
+  | 'time-above'
+  | 'time-below'
+  | 'first-crossing'
+  | 'crossing-count';
+
+/**
+ * Numeric settings of a value calculation, by name: `threshold` (input unit),
+ * `edge` (1 rising, −1 falling) and `time` (seconds from the input's start).
+ */
+export type ValueParameters = Record<string, number>;
 
 export type ScalarValue = {
   id: string;
@@ -14,6 +34,13 @@ export type ScalarValue = {
   name: string;
   unit: string;
   operation: ValueOperation;
+  /** Settings of a parameterised calculation, such as its threshold. */
+  parameters?: ValueParameters;
+  /**
+   * The input level a time result refers to (the extreme of a time of
+   * minimum or maximum), so plots can mark it over its input.
+   */
+  level?: number;
   value: number | null;
   sampleCount: number;
   validDuration: number;
@@ -122,6 +149,7 @@ export type WorkflowRecipeRecord = {
 /**
  * Exact statistics behind every value calculation. Previews and created values
  * read the same record, so a preview always matches the value it creates.
+ * Times are on the input's own axis; elapsed results subtract `start`.
  */
 export type ValueStatistics = {
   inputId: string;
@@ -134,46 +162,362 @@ export type ValueStatistics = {
   /** First occurrence times; present only when a finite sample exists. */
   minimumTime?: number;
   maximumTime?: number;
+  rms?: number | null;
+  /** Sample standard deviation (n − 1); unavailable below two samples. */
+  standardDeviation?: number | null;
+  /** Trapezoidal area over valid intervals; unavailable without one. */
+  integral?: number | null;
+  startValue?: number | null;
+  startTime?: number;
+  endValue?: number | null;
+  endTime?: number;
+  /** The input's time bounds, which elapsed times and durations use. */
+  start?: number;
+  end?: number;
+  /** A parameterised calculation evaluated in the same pass. */
+  result?: {
+    operation: ValueOperation;
+    parameters: ValueParameters;
+    value: number | null;
+    timestamp?: number;
+  };
 };
 
-export function statisticValue(
-  statistics: ValueStatistics,
-  operation: ValueOperation,
-): number | null {
-  return operation === 'minimum'
-    ? statistics.minimum
-    : operation === 'maximum'
-      ? statistics.maximum
-      : operation === 'sample-average'
-        ? statistics.sampleAverage
-        : statistics.timeAverage;
-}
-
-export const VALUE_FUNCTIONS: {
+export type ValueGroup = 'Level' | 'Spread' | 'Time' | 'Events';
+/** What a value measures, which decides its unit. */
+export type ValueResult = 'level' | 'area' | 'time' | 'count';
+export type ValueParameter = 'threshold' | 'edge' | 'time';
+export type ValueFunctionSpec = {
   operation: ValueOperation;
   name: string;
+  group: ValueGroup;
+  result: ValueResult;
+  /** Short tag for plot labels and tables, such as "avg". */
+  tag: string;
   description: string;
-}[] = [
+  parameters?: ValueParameter[];
+};
+
+export const VALUE_FUNCTIONS: ValueFunctionSpec[] = [
   {
     operation: 'time-average',
     name: 'Time average',
+    group: 'Level',
+    result: 'level',
+    tag: 'avg',
     description:
       'Trapezoidal integral divided by valid elapsed time. Adjacent finite samples contribute; missing intervals are excluded. Requires a positive valid duration.',
   },
   {
+    operation: 'sample-average',
+    name: 'Sample average',
+    group: 'Level',
+    result: 'level',
+    tag: 'mean',
+    description:
+      'Arithmetic mean of finite samples. Each sample has equal weight.',
+  },
+  {
     operation: 'minimum',
     name: 'Minimum',
+    group: 'Level',
+    result: 'level',
+    tag: 'min',
     description: 'Lowest finite sample, with its first occurrence time.',
   },
   {
     operation: 'maximum',
     name: 'Maximum',
+    group: 'Level',
+    result: 'level',
+    tag: 'max',
     description: 'Highest finite sample, with its first occurrence time.',
   },
   {
-    operation: 'sample-average',
-    name: 'Sample average',
+    operation: 'start-value',
+    name: 'Start value',
+    group: 'Level',
+    result: 'level',
+    tag: 'start',
+    description: 'The first finite sample, with its time.',
+  },
+  {
+    operation: 'end-value',
+    name: 'End value',
+    group: 'Level',
+    result: 'level',
+    tag: 'end',
+    description: 'The last finite sample, with its time.',
+  },
+  {
+    operation: 'value-at',
+    name: 'Value at time',
+    group: 'Level',
+    result: 'level',
+    tag: 'at',
+    parameters: ['time'],
     description:
-      'Arithmetic mean of finite samples. Each sample has equal weight.',
+      "The signal at a time measured from the input's start, interpolated linearly between adjacent finite samples. Unavailable outside the input or inside a gap.",
+  },
+  {
+    operation: 'rms',
+    name: 'RMS',
+    group: 'Spread',
+    result: 'level',
+    tag: 'rms',
+    description:
+      'Root mean square of finite samples. Each sample has equal weight.',
+  },
+  {
+    operation: 'standard-deviation',
+    name: 'Standard deviation',
+    group: 'Spread',
+    result: 'level',
+    tag: 'σ',
+    description:
+      'Sample standard deviation (n − 1) of finite samples. Requires at least two samples.',
+  },
+  {
+    operation: 'peak-to-peak',
+    name: 'Peak to peak',
+    group: 'Spread',
+    result: 'level',
+    tag: 'p-p',
+    description: 'Maximum minus minimum of finite samples.',
+  },
+  {
+    operation: 'area',
+    name: 'Area (integral)',
+    group: 'Spread',
+    result: 'area',
+    tag: '∫',
+    description:
+      'Trapezoidal integral over valid intervals; missing intervals are excluded. The unit includes seconds.',
+  },
+  {
+    operation: 'duration',
+    name: 'Duration',
+    group: 'Time',
+    result: 'time',
+    tag: 'dur',
+    description:
+      "The input's length in seconds, from its start to its end. Useful for segments.",
+  },
+  {
+    operation: 'time-of-minimum',
+    name: 'Time of minimum',
+    group: 'Time',
+    result: 'time',
+    tag: 't(min)',
+    description:
+      "Seconds from the input's start to the first lowest finite sample.",
+  },
+  {
+    operation: 'time-of-maximum',
+    name: 'Time of maximum',
+    group: 'Time',
+    result: 'time',
+    tag: 't(max)',
+    description:
+      "Seconds from the input's start to the first highest finite sample.",
+  },
+  {
+    operation: 'time-above',
+    name: 'Time above',
+    group: 'Time',
+    result: 'time',
+    tag: 't>',
+    parameters: ['threshold'],
+    description:
+      'Total seconds strictly above a threshold, interpolating crossings linearly between adjacent finite samples. Missing intervals are excluded.',
+  },
+  {
+    operation: 'time-below',
+    name: 'Time below',
+    group: 'Time',
+    result: 'time',
+    tag: 't<',
+    parameters: ['threshold'],
+    description:
+      'Total seconds strictly below a threshold, interpolating crossings linearly between adjacent finite samples. Missing intervals are excluded.',
+  },
+  {
+    operation: 'first-crossing',
+    name: 'First crossing',
+    group: 'Events',
+    result: 'time',
+    tag: 't×',
+    parameters: ['threshold', 'edge'],
+    description:
+      "Seconds from the input's start to the first rising or falling crossing of a threshold, as segmentation triggers detect it. Unavailable when it never crosses.",
+  },
+  {
+    operation: 'crossing-count',
+    name: 'Crossing count',
+    group: 'Events',
+    result: 'count',
+    tag: '#×',
+    parameters: ['threshold', 'edge'],
+    description:
+      'The number of rising or falling crossings of a threshold. Missing samples break adjacency, so a gap never counts as a crossing.',
   },
 ];
+
+export const valueSpec = (operation: string) =>
+  VALUE_FUNCTIONS.find((spec) => spec.operation === operation);
+
+/** The unit of a value calculated from an input with `unit`. */
+export function valueUnit(operation: ValueOperation, unit: string): string {
+  switch (valueSpec(operation)?.result) {
+    case 'area':
+      return unit ? `${/[·×/]/.test(unit) ? `(${unit})` : unit}·s` : 's';
+    case 'time':
+      return 's';
+    case 'count':
+      return '';
+    default:
+      return unit;
+  }
+}
+
+/** Default and validated settings for a value calculation. */
+export function valueParameters(
+  operation: ValueOperation,
+  parameters: ValueParameters = {},
+): ValueParameters {
+  const spec = valueSpec(operation);
+  if (!spec) throw new Error('Choose a supported value calculation.');
+  const result: ValueParameters = {};
+  for (const name of spec.parameters ?? []) {
+    const value = parameters[name];
+    if (name === 'edge') {
+      const edge = value ?? 1;
+      if (edge !== 1 && edge !== -1)
+        throw new Error('Choose a rising or falling edge.');
+      result.edge = edge;
+    } else if (name === 'time') {
+      const time = value ?? 0;
+      if (!Number.isFinite(time) || time < 0)
+        throw new Error(
+          "Enter a time of 0 s or later, measured from the input's start.",
+        );
+      result.time = time;
+    } else {
+      if (value === undefined || !Number.isFinite(value))
+        throw new Error('Enter a finite threshold.');
+      result.threshold = value;
+    }
+  }
+  for (const name of Object.keys(parameters))
+    if (!spec.parameters?.includes(name as ValueParameter))
+      throw new Error(`${spec.name} has no "${name}" setting.`);
+  return result;
+}
+
+/** "Time above 1500 rpm" — a calculation and its settings, for names. */
+export function valueTitle(
+  operation: ValueOperation,
+  parameters: ValueParameters = {},
+  unit = '',
+): string {
+  const spec = valueSpec(operation);
+  const name = spec?.name ?? operation;
+  const quantity = (value: number, suffix: string) =>
+    `${Number(value.toPrecision(6))}${suffix ? ` ${suffix}` : ''}`;
+  const edge = parameters.edge === -1 ? 'falling' : 'rising';
+  switch (operation) {
+    case 'value-at':
+      return parameters.time === undefined
+        ? name
+        : `Value at ${quantity(parameters.time, 's')}`;
+    case 'time-above':
+    case 'time-below':
+      return parameters.threshold === undefined
+        ? name
+        : `${name} ${quantity(parameters.threshold, unit)}`;
+    case 'first-crossing':
+      return parameters.threshold === undefined
+        ? name
+        : `First ${edge} crossing of ${quantity(parameters.threshold, unit)}`;
+    case 'crossing-count':
+      return parameters.threshold === undefined
+        ? name
+        : `${edge[0].toUpperCase()}${edge.slice(1)} crossings of ${quantity(parameters.threshold, unit)}`;
+    default:
+      return name;
+  }
+}
+
+/**
+ * The value an operation stores, from statistics of its input. Elapsed
+ * results are measured from the input's start; a parameterised calculation
+ * reads the `result` evaluated with the same statistics.
+ */
+export function statisticValue(
+  statistics: ValueStatistics,
+  operation: ValueOperation,
+): number | null {
+  const elapsed = (time: number | undefined) =>
+    time === undefined || statistics.start === undefined
+      ? null
+      : time - statistics.start;
+  switch (operation) {
+    case 'minimum':
+      return statistics.minimum;
+    case 'maximum':
+      return statistics.maximum;
+    case 'sample-average':
+      return statistics.sampleAverage;
+    case 'time-average':
+      return statistics.timeAverage;
+    case 'rms':
+      return statistics.rms ?? null;
+    case 'standard-deviation':
+      return statistics.standardDeviation ?? null;
+    case 'peak-to-peak':
+      return statistics.minimum === null || statistics.maximum === null
+        ? null
+        : statistics.maximum - statistics.minimum;
+    case 'start-value':
+      return statistics.startValue ?? null;
+    case 'end-value':
+      return statistics.endValue ?? null;
+    case 'area':
+      return statistics.integral ?? null;
+    case 'duration':
+      return statistics.start === undefined || statistics.end === undefined
+        ? null
+        : statistics.end - statistics.start;
+    case 'time-of-minimum':
+      return elapsed(statistics.minimumTime);
+    case 'time-of-maximum':
+      return elapsed(statistics.maximumTime);
+    default:
+      return statistics.result?.operation === operation
+        ? statistics.result.value
+        : null;
+  }
+}
+
+/** The time a value refers to on its input's axis, for plot markers. */
+export function statisticTime(
+  statistics: ValueStatistics,
+  operation: ValueOperation,
+): number | undefined {
+  switch (operation) {
+    case 'minimum':
+    case 'time-of-minimum':
+      return statistics.minimumTime;
+    case 'maximum':
+    case 'time-of-maximum':
+      return statistics.maximumTime;
+    case 'start-value':
+      return statistics.startTime;
+    case 'end-value':
+      return statistics.endTime;
+    default:
+      return statistics.result?.operation === operation
+        ? statistics.result.timestamp
+        : undefined;
+  }
+}

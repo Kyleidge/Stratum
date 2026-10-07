@@ -71,12 +71,21 @@ import {
   archiveLines,
   validateWorkspace,
 } from './workspace-archive';
-import { VALUE_FUNCTIONS, statisticValue } from './workflow-types';
+import {
+  statisticTime,
+  statisticValue,
+  valueParameters,
+  valueSpec,
+  valueTitle,
+  valueUnit,
+} from './workflow-types';
+import { ValueAccumulator } from './value-statistics';
 import type {
   CheckDefinition,
   RunFlag,
   ScalarValue,
   ValueOperation,
+  ValueParameters,
   ValueStatistics,
   WorkflowRun,
   WorkflowStep,
@@ -637,7 +646,11 @@ export class SignalEngine {
         );
         break;
       case 'calculate-values':
-        await this.calculateValues(command.inputIds, command.operation);
+        await this.calculateValues(
+          command.inputIds,
+          command.operation,
+          command.parameters,
+        );
         break;
       case 'segment':
         await this.segment(
@@ -1721,9 +1734,14 @@ export class SignalEngine {
         { undo: this.undoStack, redo: this.redoStack },
       );
   }
-  async calculateValues(inputIds: string[], operation: ValueOperation) {
-    const spec = VALUE_FUNCTIONS.find((item) => item.operation === operation);
+  async calculateValues(
+    inputIds: string[],
+    operation: ValueOperation,
+    parameters?: ValueParameters,
+  ) {
+    const spec = valueSpec(operation);
     if (!spec) throw new Error('Choose a supported value calculation.');
+    const settings = valueParameters(operation, parameters);
     if (!inputIds.length || new Set(inputIds).size !== inputIds.length)
       throw new Error('Choose at least one unique signal.');
     if (inputIds.length > 10000)
@@ -1740,26 +1758,33 @@ export class SignalEngine {
         `Calculating ${spec.name.toLowerCase()} · ${index + 1}/${inputs.length}`,
         index / inputs.length,
       );
-      const statistics = await this.valueStatistics(input.id);
+      const statistics = await this.valueStatistics(
+        input.id,
+        operation,
+        settings,
+      );
       const [start, end] = this.bounds(input.id);
+      const timestamp = statisticTime(statistics, operation);
       values.push({
         id: uid(),
         sourceId: mixedSources ? '' : input.sourceId,
         inputId: input.id,
         batchId,
-        name: `${input.name} · ${spec.name}`,
-        unit: input.unit,
+        name: `${input.name} · ${valueTitle(operation, settings, input.unit)}`,
+        unit: valueUnit(operation, input.unit),
         operation,
+        ...(spec.parameters?.length ? { parameters: settings } : {}),
         value: statisticValue(statistics, operation),
         sampleCount: statistics.sampleCount,
         validDuration: statistics.validDuration,
         start,
         end,
         createdAt,
-        ...(operation === 'minimum' && statistics.minimumTime !== undefined
-          ? { timestamp: statistics.minimumTime }
-          : operation === 'maximum' && statistics.maximumTime !== undefined
-            ? { timestamp: statistics.maximumTime }
+        ...(timestamp !== undefined ? { timestamp } : {}),
+        ...(operation === 'time-of-minimum' && statistics.minimum !== null
+          ? { level: statistics.minimum }
+          : operation === 'time-of-maximum' && statistics.maximum !== null
+            ? { level: statistics.maximum }
             : {}),
       });
     }
@@ -1769,63 +1794,48 @@ export class SignalEngine {
     });
     return values;
   }
-  /** Exact statistics for every value calculation, from every finite sample. */
-  async valueStatistics(id: string): Promise<ValueStatistics> {
-    let count = 0,
-      mean = 0,
-      minimum = Infinity,
-      maximum = -Infinity;
-    let minTime = 0,
-      maxTime = 0,
-      duration = 0,
-      area = 0;
-    let previous: Point | undefined;
+  /**
+   * Exact statistics for every value calculation, from every finite sample,
+   * with the result of `operation` when it takes settings.
+   */
+  async valueStatistics(
+    id: string,
+    operation?: ValueOperation,
+    parameters?: ValueParameters,
+  ): Promise<ValueStatistics> {
+    const [start, end] = this.bounds(id);
+    const accumulator = new ValueAccumulator(
+      id,
+      start,
+      end,
+      operation,
+      parameters,
+    );
     for await (const chunk of this.evaluate(id)) {
       this.check();
-      for (let i = 0; i < chunk.time.length; i++) {
-        const time = chunk.time[i],
-          value = chunk.values[i];
-        if (!Number.isFinite(value)) {
-          previous = undefined;
-          continue;
-        }
-        count++;
-        mean = mean * ((count - 1) / count) + value / count;
-        if (value < minimum) {
-          minimum = value;
-          minTime = time;
-        }
-        if (value > maximum) {
-          maximum = value;
-          maxTime = time;
-        }
-        if (previous && time > previous[0]) {
-          const dt = time - previous[0];
-          area += (previous[1] / 2 + value / 2) * dt;
-          duration += dt;
-        }
-        previous = [time, value];
-      }
+      for (let i = 0; i < chunk.time.length; i++)
+        accumulator.add(chunk.time[i], chunk.values[i]);
     }
-    const finite = (value: number) => (Number.isFinite(value) ? value : null);
-    return {
-      inputId: id,
-      sampleCount: count,
-      validDuration: duration,
-      sampleAverage: count ? finite(mean) : null,
-      timeAverage: duration > 0 ? finite(area / duration) : null,
-      minimum: finite(minimum),
-      maximum: finite(maximum),
-      ...(count ? { minimumTime: minTime, maximumTime: maxTime } : {}),
-    };
+    return accumulator.finish();
   }
   /** Value statistics for a dialog preview; nothing is saved. */
-  async previewValues(ids: string[]): Promise<ValueStatistics[]> {
+  async previewValues(
+    ids: string[],
+    operation?: ValueOperation,
+    parameters?: ValueParameters,
+  ): Promise<ValueStatistics[]> {
     if (ids.length > 50) throw new Error('Preview up to 50 signals at once.');
+    const parameterised = operation && valueSpec(operation)?.parameters?.length;
     const statistics: ValueStatistics[] = [];
     for (const id of new Set(ids)) {
       this.check();
-      statistics.push(await this.valueStatistics(id));
+      statistics.push(
+        await this.valueStatistics(
+          id,
+          parameterised ? operation : undefined,
+          parameters,
+        ),
+      );
     }
     return statistics;
   }

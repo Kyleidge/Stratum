@@ -224,6 +224,7 @@ export function savedCommand(
       type: 'calculate-values',
       inputIds: step.inputIds,
       operation: step.operation as import('./workflow-types').ValueOperation,
+      ...(step.parameters ? { parameters: { ...step.parameters } } : {}),
     };
   if (step.kind === 'derive') {
     const run = project.functionRuns?.find((item) =>

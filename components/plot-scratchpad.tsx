@@ -85,7 +85,7 @@ import {
   MAX_CUSTOM_AXES,
   PLOT_STORAGE_KEY,
   TRACE_COLORS,
-  VALUE_TAGS,
+  valueReference,
   readPlotSheets,
   resolveColor,
   seriesColor,
@@ -392,10 +392,20 @@ export default function PlotScratchpad({
     const range = timeRange(id);
     return sheet.zeroTime ? [0, range[1] - range[0]] : range;
   }
+  function referenceOf(id: string) {
+    const value = index.values.get(id);
+    return value
+      ? valueReference(
+          value,
+          index.nodes.get(value.inputId)?.unit ?? '',
+          (number) => formatValue(number, 1),
+        )
+      : undefined;
+  }
   for (const id of visibleIds) {
     const value = index.values.get(id);
     if (!value) continue;
-    const y = value.value ?? NaN;
+    const y = referenceOf(id)!.y;
     plots.set(id, {
       id,
       points: [
@@ -403,7 +413,7 @@ export default function PlotScratchpad({
         [value.end, y],
       ],
       summary: {
-        count: value.value === null ? 0 : 1,
+        count: Number.isFinite(y) ? 1 : 0,
         start: value.start,
         end: value.end,
         min: y,
@@ -423,7 +433,7 @@ export default function PlotScratchpad({
             ...signal,
             id: value.id,
             name: index.label(value.id),
-            unit: value.unit,
+            unit: referenceOf(value.id)!.unit,
             operation: 'raw' as const,
           }
         : signal;
@@ -437,10 +447,7 @@ export default function PlotScratchpad({
             label: trace.label ?? index.label(trace.id),
             offset: sheet.zeroTime ? timeRange(trace.id)[0] : 0,
             referenceLine: !!value,
-            referenceLabel:
-              value && value.value !== null
-                ? `${VALUE_TAGS[value.operation] ?? ''} ${formatValue(value.value, 1)}`.trim()
-                : undefined,
+            referenceLabel: value ? referenceOf(value.id)!.label : undefined,
             referenceTime: value?.timestamp,
             style: trace.style,
             width: trace.width,
@@ -450,7 +457,7 @@ export default function PlotScratchpad({
       : [];
   });
   function traceUnit(id: string) {
-    return index.values.get(id)?.unit ?? index.nodes.get(id)?.unit ?? '';
+    return referenceOf(id)?.unit ?? index.nodes.get(id)?.unit ?? '';
   }
   const axisTraces = sheet.traces
     .filter((trace) => index.nodes.has(trace.id) || index.values.has(trace.id))
@@ -488,11 +495,7 @@ export default function PlotScratchpad({
     sheet.traces.find(
       (trace) => index.nodes.has(trace.id) || index.values.has(trace.id),
     )?.id ?? '';
-  const primaryAxisKey = plotAxisKey(
-    index.values.get(firstTraceId)?.unit ??
-      index.nodes.get(firstTraceId)?.unit ??
-      '',
-  );
+  const primaryAxisKey = plotAxisKey(traceUnit(firstTraceId));
   const safeAxisPage = Math.min(
     axisPage,
     Math.max(0, Math.ceil(axisGroups.length / MAX_CHART_AXES) - 1),

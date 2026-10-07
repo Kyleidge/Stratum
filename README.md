@@ -114,8 +114,25 @@ The header's **Undo** and **Redo** retain the last 20 changes across restarts.
 Recordings, operations and individual output display names can be renamed.
 Original samples are never edited.
 
-Minimum, maximum, time average, and sample average create stored scalar values.
+**Calculate value** creates stored scalar values, one per input, grouped in
+four tabs:
+
+- **Level**: time average, sample average, minimum, maximum, start value, end
+  value and the value at a time from the input's start.
+- **Spread**: RMS, standard deviation (n − 1), peak to peak and the area
+  under the signal (unit × s).
+- **Time**: duration, time of the minimum or maximum, and time above or below
+  a threshold.
+- **Events**: the time of the first rising or falling crossing of a threshold,
+  and the number of crossings.
+
 Time average weights by valid elapsed time and excludes missing intervals.
+Every value excludes missing samples, and no interval spans a gap. Times are
+seconds measured from the input's start, so they stay meaningful for
+segments. Crossings use the same detection as segmentation triggers.
+Thresholds start at the middle of the input's range. Plots draw a time or
+count at the level it refers to, such as the threshold, labelled with the
+result.
 
 **Derive signal** opens a compact palette grouped into Math, Filters, Time and
 Calculus. Math includes add, subtract, multiply and divide between signals, plus
@@ -130,8 +147,8 @@ they are no longer offered for new operations.
 **Segment** uses method cards for time ranges, regular windows and signal
 triggers, with separate settings and scope panels. Switching methods retains
 the entered settings and clears any outdated interval preview. **Calculate
-value** offers four cards for time average, sample average, minimum and maximum,
-with a short explanation of how each result is calculated.
+value** offers cards in Level, Spread, Time and Events tabs, each with a short
+explanation of how its result is calculated.
 
 ### Compose a report
 

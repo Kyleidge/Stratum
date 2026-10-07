@@ -168,11 +168,27 @@ Each step has exactly one operation:
 | --------- | --------------------------------------------------------------------------------------------------------------- | --------------- |
 | `derive`  | `function`, `input`/`inputs`, `parameter`; two-input functions also need `with`                                 | Derive          |
 | `segment` | `input`/`inputs`, one of `ranges`, `windows` or `triggers`, `boundary`, `independently`, `scope`, `time-origin` | Segment         |
-| `value`   | `function` (`time-average`, `sample-average`, `minimum`, `maximum`), `input`/`inputs`                           | Calculate value |
+| `value`   | `function`, `input`/`inputs`, and the function's settings (see below)                                           | Calculate value |
 | `time`    | one of `align`, `resample`, `combine`, `crop`                                                                   | Compare & align |
 
 Optional step settings: `name`, `outputs` (a label with `{n}`, `{input}` and
 `{item}` tokens, or a list of labels), `checks` and `on-fail: stop`.
+
+Value functions are `time-average`, `sample-average`, `minimum`, `maximum`,
+`start-value`, `end-value`, `value-at`, `rms`, `standard-deviation`,
+`peak-to-peak`, `area`, `duration`, `time-of-minimum`, `time-of-maximum`,
+`time-above`, `time-below`, `first-crossing` and `crossing-count`. Some take
+settings, and any other setting is rejected:
+
+- `value-at`: `time`, seconds from the input's start (default 0).
+- `time-above`, `time-below`: `threshold`, in the input's unit (required).
+- `first-crossing`, `crossing-count`: `threshold` (required) and `edge`,
+  `rising` (the default) or `falling`.
+
+```yaml
+- id: spin-up
+  value: { function: first-crossing, input: speed, threshold: 850 }
+```
 
 `time-origin` applies to segment `ranges` and `windows`:
 

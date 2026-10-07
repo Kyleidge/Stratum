@@ -99,7 +99,9 @@ const humanize = (key: string) => {
 /** The step's function as named in the Derive and Value catalogs. */
 export function stepFunctionName(step: WorkflowStep): string {
   return (
-    VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
+    (step.kind === 'value'
+      ? VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name
+      : undefined) ??
     SIGNAL_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     operationLabels[step.operation as Operation] ??
     step.operation
