@@ -23,6 +23,7 @@ import electron from 'electron';
 const SMOKES = [
   { name: 'smoke', args: ['desktop/main.mjs', '--smoke'] },
   { name: 'ui-smoke', args: ['desktop/main.mjs', '--ui-smoke'] },
+  { name: 'backup-smoke', args: ['desktop/main.mjs', '--backup-smoke'] },
   { name: 'report-workspace', args: ['tests/report-workspace-smoke.mjs'] },
   { name: 'report-plot', args: ['tests/report-plot-smoke.mjs'] },
   { name: 'report-builder', args: ['tests/report-builder-smoke.mjs'] },
