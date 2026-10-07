@@ -49,9 +49,18 @@ a newer one.
 Versioned NDJSON (`lib/workspace-archive.ts`): a header record
 `{ format: 'stratus-workspace', version: 1, project }` (the format name keeps
 its pre-rename spelling), sample column records, then a completion record
-that counts them. Restore validates everything before publishing anything and
-gives sources fresh IDs; other IDs are kept. Any other format or version is
-refused before anything is written. Unknown project fields are preserved, but
+that counts them. The header always comes first. Since 1.0 it also carries
+optional `app` (the writing Stratum version), `createdAt` (ISO UTC) and
+`schema` (`WORKSPACE_SCHEMA_VERSION`); readers must not require them, so
+earlier backups still restore. `ARCHIVE_VERSION` is written and is the newest
+version read. A backup's metadata is validated as restore would before it is
+written, so non-finite numbers (which JSON writes as `null`) are refused at
+backup time; `null` samples are missing values. Restore validates everything
+before publishing anything and gives sources fresh IDs; other IDs are kept.
+Another format, a newer version (named with "made by a newer version of
+Stratum") or any other version is refused before anything is staged. The
+desktop app streams archives to and from disk without a size limit; the
+browser keeps 128 MiB. Unknown project fields are preserved, but
 unknown operations are rejected, so a newer Stratum must raise `version`
 whenever its projects use anything 1.0 does not validate. Derived caches,
 plot indexes, saved plots and report drafts are never included.

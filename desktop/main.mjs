@@ -12,6 +12,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import { registerDesktopFiles } from './files.mjs';
+import { attachBackupSmoke } from './backup-smoke.mjs';
 import { applicationMenu } from './menu.mjs';
 import { createUpdater } from './updater.mjs';
 
@@ -31,7 +33,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 const root = fileURLToPath(new URL('../dist-desktop/', import.meta.url));
 const uiSmoke = process.argv.includes('--ui-smoke');
-const smoke = process.argv.includes('--smoke') || uiSmoke;
+const backupSmoke = process.argv.includes('--backup-smoke');
+const smoke = process.argv.includes('--smoke') || uiSmoke || backupSmoke;
 // The report mockup uses local sample data and never opens the workspace.
 const mockup = !smoke && process.argv.includes('--report-mockup');
 if (smoke || mockup)
@@ -44,8 +47,11 @@ if (smoke || mockup)
 // A running user app must not cause a smoke test to exit without testing.
 const singleInstance = smoke || mockup || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
-const updater = createUpdater({ enabled: !smoke && !mockup });
-let window;
+let window, desktopFiles;
+const updater = createUpdater({
+  enabled: !smoke && !mockup,
+  beforeInstall: () => desktopFiles?.backupBeforeQuit(),
+});
 const downloads = [];
 const downloaded = new Set();
 if (smoke)
@@ -54,7 +60,7 @@ if (smoke)
       process.stderr.write('Desktop startup or integration test timed out.\n');
       app.exit(1);
     },
-    uiSmoke ? 180000 : 60000,
+    uiSmoke || backupSmoke ? 180000 : 60000,
   );
 
 async function createWindow() {
@@ -73,8 +79,11 @@ async function createWindow() {
       sandbox: true,
       webSecurity: true,
       backgroundThrottling: !smoke,
+      preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),
     },
   });
+  desktopFiles.attachWindow(window);
+  if (backupSmoke) attachBackupSmoke(window);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   if (!smoke) {
@@ -328,7 +337,7 @@ async function createWindow() {
   }
   try {
     await window.loadURL(
-      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : smoke ? '?smoke=1' : mockup ? '?report-mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
+      `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : backupSmoke ? '?backup-smoke=1' : smoke ? '?smoke=1' : mockup ? '?report-mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
     );
   } catch (error) {
     // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.
@@ -351,6 +360,15 @@ if (singleInstance) {
           ? null
           : applicationMenu({ checkForUpdates: updater.checkNow }),
       );
+      // Smoke runs (temporary profile) answer file dialogs without showing them.
+      desktopFiles = registerDesktopFiles({
+        test: smoke
+          ? {
+              dir: resolve('outputs'),
+              saved: (name, automatic) => automatic || downloaded.add(name),
+            }
+          : undefined,
+      });
       if (uiSmoke)
         session.defaultSession.on('will-download', (_event, item) => {
           const name = item.getFilename();

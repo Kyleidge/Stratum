@@ -38,9 +38,10 @@ function show(options) {
 
 /**
  * `enabled` is false for smoke tests and the report mockup, which must never
- * reach the network or show update dialogs.
+ * reach the network or show update dialogs. `beforeInstall` finishes work
+ * that must not race the installer (the automatic close-time backup).
  */
-export function createUpdater({ enabled }) {
+export function createUpdater({ enabled, beforeInstall }) {
   let updater;
   /** @type {'idle' | 'checking' | 'downloading' | 'ready'} */
   let state = 'idle';
@@ -82,7 +83,12 @@ export function createUpdater({ enabled }) {
       cancelId: 1,
     });
     prompting = false;
-    if (response === 0) setImmediate(() => updater.quitAndInstall(false, true));
+    if (response !== 0) return;
+    // The installer starts at once, so back up first rather than on close.
+    await beforeInstall?.().catch((error) =>
+      process.stderr.write(`Backup before update failed: ${error}\n`),
+    );
+    setImmediate(() => updater.quitAndInstall(false, true));
   }
 
   async function check(interactive) {
