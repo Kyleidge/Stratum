@@ -64,3 +64,6 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# Python bytecode from agent tooling
+__pycache__/
