@@ -1,0 +1,492 @@
+/* Plot document, value results, legend, dock and plot toolbar. Imported after workflow.css, in order. */
+
+/* Plot document: the chart fills the space between its controls and the
+ * dock, so an operation's outputs stay visible together with their table. */
+.workflow-main {
+  display: flex;
+  flex-direction: column;
+}
+.workflow-main > .plot-scratchpad {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.plot-scratchpad > .scratchpad-tabs {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.scratchpad-tabs > [role='tabpanel'] {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+.scratchpad-tabs > [role='tabpanel'] > * {
+  flex-shrink: 0;
+}
+.scratchpad-tabs > [role='tabpanel'] > .scratchpad-canvas {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+}
+.scratchpad-canvas > * {
+  flex-shrink: 0;
+}
+.scratchpad-canvas > .signal-chart:has(svg[data-fill-height]) {
+  flex: 1 1 0;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+}
+.scratchpad-canvas .signal-chart svg[data-fill-height] {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Value results: tiles above the plot, reference lines on it */
+.workflow-value-card,
+.workflow-value-tile {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-left: 3px solid var(--kind-value);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--kind-value) 7%, var(--surface));
+  color: var(--ink-1);
+  text-align: left;
+}
+.workflow-value-card > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.workflow-value-card > div > span,
+.workflow-value-tile > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-value-card strong,
+.workflow-value-tile strong {
+  color: var(--ink-1);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.workflow-value-card strong small,
+.workflow-value-tile strong small {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.workflow-value-card p,
+.workflow-value-tile em {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-style: normal;
+}
+.workflow-value-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--line);
+  background: var(--line);
+}
+.workflow-value-tile {
+  border-left: 0;
+  background: var(--surface);
+  cursor: pointer;
+}
+.workflow-app .workflow-value-tile:hover {
+  background: var(--hover-solid);
+  color: var(--ink-1);
+}
+.workflow-value-tile > span i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.workflow-value-tile > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chart-reference text.chart-reference-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--plot-surface, var(--surface));
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  fill: inherit;
+}
+.scratchpad-canvas .signal-chart svg .chart-reference text {
+  fill: inherit;
+}
+
+/* Legend chips hide and show the traces of an operation */
+.plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 0 12px 4px;
+}
+.plot-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-1);
+  font-size: var(--text-xs);
+}
+.plot-legend button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plot-legend button[aria-pressed='false'] {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+.plot-legend button svg {
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+.plot-legend i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.plot-legend i[data-value='true'] {
+  height: 0;
+  border-top: 2px dashed;
+}
+.plot-legend-note {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+/* Output kinds are a coloured dot and text, never button-like chips */
+.workflow-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.workflow-type::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kind-derived);
+  flex-shrink: 0;
+}
+.workflow-type[data-type='original']::before {
+  background: var(--kind-original);
+}
+.workflow-type[data-type='value']::before {
+  background: var(--kind-value);
+}
+
+/* Dock: outputs, exact samples and saved settings of the selection */
+.plot-output-dock {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+.plot-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+}
+.plot-dock-head [role='tablist'] {
+  display: flex;
+  align-self: stretch;
+  gap: 2px;
+}
+.plot-dock-head [role='tab'] {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.plot-dock-head [role='tab'] span {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.plot-dock-head [role='tab'][aria-selected='true'] {
+  color: var(--ink-1);
+}
+.plot-dock-head [role='tab'][aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.plot-dock-context {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plot-dock-head > .workflow-icon-button {
+  margin-left: auto;
+}
+/* One height for every tab, so switching views never moves the plot. */
+.plot-dock-body {
+  height: clamp(150px, 31vh, 320px);
+  overflow: auto;
+}
+.plot-dock-body .workflow-output-panel {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.workflow-dock-samples,
+.workflow-dock-settings {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.workflow-dock-settings .workflow-property-grid {
+  max-width: 720px;
+}
+.workflow-dock-settings .workflow-property-grid > div,
+.workflow-dock-settings .workflow-settings dl > div {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+}
+.workflow-dock-settings .workflow-property-grid dt {
+  color: var(--ink-3);
+}
+.workflow-dock-settings .workflow-property-grid dd span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-settings-raw {
+  max-width: 720px;
+}
+.workflow-settings-raw summary {
+  width: fit-content;
+  color: var(--primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.workflow-settings-raw[open] summary {
+  margin-bottom: 6px;
+}
+.workflow-dock-settings .workflow-settings {
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.workflow-dock-settings .workflow-settings h3 {
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.workflow-dock-settings pre {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  font-size: var(--text-xs);
+}
+.workflow-dock-samples > .region-field {
+  max-width: 360px;
+}
+/* Transient readouts must not resize the chart that fills the canvas. */
+.scratchpad-axis-footer {
+  flex-wrap: nowrap;
+  height: 26px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.scratchpad-axis-label {
+  min-height: 22px;
+  white-space: nowrap;
+}
+.scratchpad-axis-label > span,
+.scratchpad-axis-label strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Plot toolbar: one row of grouped segmented controls. Labels collapse to
+ * icons when the plot is narrow; every control keeps an accessible name. */
+.scratchpad-canvas {
+  container-type: inline-size;
+}
+.scratchpad-chart-tools {
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-height: 38px;
+  padding: 4px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.scratchpad-chart-tools fieldset {
+  flex-shrink: 0;
+  gap: 1px;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.scratchpad-chart-tools fieldset:last-child {
+  border: 1px solid var(--line);
+}
+.scratchpad-chart-tools button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 7px;
+  gap: 5px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.scratchpad-chart-tools button[aria-pressed='true'] {
+  background: var(--raised);
+  color: var(--ink-1);
+}
+.workflow-app .scratchpad-chart-tools button:hover:not(:disabled) {
+  background: var(--hover-solid);
+  color: var(--ink-1);
+}
+.scratchpad-tools-gap {
+  flex: 1;
+  min-width: 4px;
+}
+.scratchpad-export-menu {
+  width: auto;
+  min-width: 170px;
+}
+.scratchpad-chart-tools .scratchpad-tools-overflow {
+  display: none;
+}
+/* Narrower plots first move the settings group into a "More plot tools"
+ * menu, then drop the remaining labels; the toolbar never clips. */
+@container (max-width: 1060px) {
+  .scratchpad-chart-tools .scratchpad-tools-secondary {
+    display: none;
+  }
+  .scratchpad-chart-tools .scratchpad-tools-overflow {
+    display: flex;
+  }
+}
+@container (max-width: 940px) {
+  .scratchpad-chart-tools button > span {
+    display: none;
+  }
+}
+
+/* Short windows: a value's result stays on one line above the plot; its
+ * explanation opens on request so the plot keeps its height. */
+.scratchpad-values {
+  position: relative;
+}
+.scratchpad-values-toggle {
+  display: none;
+}
+@media (max-height: 800px) {
+  .scratchpad-values:has(.workflow-value-card) .scratchpad-values-toggle {
+    display: inline-flex;
+    position: absolute;
+    top: 6px;
+    right: 26px;
+    min-height: 24px;
+  }
+  .scratchpad-values:not([data-expanded]) .workflow-value-card {
+    padding-block: 6px;
+    padding-right: 72px;
+  }
+  .scratchpad-values:not([data-expanded]) .workflow-value-card p {
+    display: none;
+  }
+}
+
+/* Lanes: different units stacked on one shared time axis */
+.scratchpad-lane {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 140px;
+}
+.scratchpad-lane + .scratchpad-lane {
+  border-top: 1px dashed var(--line);
+}
+.scratchpad-lane > .signal-chart {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* A narrow plot wraps its toolbar instead of hiding controls off-screen. */
+@container (max-width: 720px) {
+  .scratchpad-chart-tools {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .scratchpad-tools-gap {
+    display: none;
+  }
+}
+.workflow-output-table .workflow-output-name {
+  display: inline-block;
+  vertical-align: middle;
+  min-width: 140px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

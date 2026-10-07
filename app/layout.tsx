@@ -2,6 +2,11 @@ import type { Metadata } from 'next';
 import './globals.css';
 import './regions.css';
 import './workflow.css';
+import './workflow-layout.css';
+import './workflow-plot.css';
+import './workflow-topbar.css';
+import './workflow-dialogs.css';
+import './workflow-onboarding.css';
 import './workflow-batch.css';
 import './report-builder-mockup.css';
 

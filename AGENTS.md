@@ -330,6 +330,10 @@ There are no server API routes or cloud signal uploads.
   draws panel borders and `--line-strong` outlines fields and controls at ≥3:1.
   Light-theme primary, kind and series colours meet ≥4.5:1 as text. Controls
   keep at least 24×24 px hit areas.
+- `app/workflow*.css`: workbench styles by area: `workflow.css` (base),
+  `-layout`, `-plot`, `-topbar`, `-dialogs`, `-onboarding`, then
+  `workflow-batch.css`. `app/layout.tsx` and `desktop/renderer.tsx` import
+  them in that order; keep it, since later files override earlier ones.
 - `components/ui/`: the Base UI/shadcn primitives the app uses, with Lucide
   icons. Unused ones were removed; add new ones with the shadcn CLI
   (`components.json`) when needed.
