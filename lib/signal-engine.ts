@@ -65,11 +65,17 @@ import {
   remapProject,
 } from './workflow-lifecycle';
 import type { WorkflowCommand } from './workflow-lifecycle';
+import { APP_VERSION } from './app-version';
 import {
+  ARCHIVE_FORMAT,
   ARCHIVE_LIMIT,
+  ARCHIVE_VERSION,
   EXPORT_LIMIT,
+  ChunkedWriter,
+  checkArchiveHeader,
   archiveLines,
   validateWorkspace,
+  type ByteSink,
 } from './workspace-archive';
 import {
   statisticTime,
@@ -156,8 +162,19 @@ const leavesKey = (channel: number) => `plot-leaves-v2:${channel}`;
 // Rebuildable artifacts of a derived signal, owned by its recipe key rather
 // than a source: plot index (channel 0) and filter checkpoints.
 const DERIVED = 'derived-v1:';
+// Owners of every derived-cache version start with this; see pruning.
+const DERIVED_ANY = 'derived-v';
 const derivedOwner = (recipe: string) => `${DERIVED}${recipe}`;
 const CHECKPOINTS_KEY = 'checkpoints-v1';
+/**
+ * Workspace schema version: the IndexedDB database version. Raise it whenever
+ * a newer Stratum could store data an older one would misread, reject or drop
+ * when rewriting, so older versions refuse the workspace instead
+ * (docs/file-format-stability.md).
+ */
+export const WORKSPACE_SCHEMA_VERSION = 1;
+export const NEWER_WORKSPACE_MESSAGE =
+  'This workspace was saved by a newer version of Stratum. Update Stratum to open it; this version has not changed it.';
 const CHECKPOINT_BUDGET = 16 * 1024 * 1024;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
@@ -304,12 +321,25 @@ export class SignalEngine {
     private databaseName = 'stratus-workbench-v1',
   ) {}
   async open() {
-    const request = indexedDB.open(this.databaseName, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore('chunks');
-      request.result.createObjectStore('project');
+    const request = indexedDB.open(this.databaseName, WORKSPACE_SCHEMA_VERSION);
+    request.onupgradeneeded = (event) => {
+      if (event.oldVersion < 1) {
+        request.result.createObjectStore('chunks');
+        request.result.createObjectStore('project');
+      }
     };
-    this.db = await result(request);
+    try {
+      this.db = await result(request);
+    } catch (error) {
+      // The browser refuses to open a database at an older version.
+      if ((error as { name?: unknown } | null)?.name === 'VersionError')
+        throw new Error(NEWER_WORKSPACE_MESSAGE);
+      throw error;
+    }
+    // Yield to a newer Stratum upgrading the schema rather than blocking it;
+    // this window's later requests then fail and offer Reload.
+    const db = this.db;
+    db.onversionchange = () => db.close();
     const tx = this.db.transaction('project');
     const snapshot = tx.objectStore('project').get('current');
     const revision = tx.objectStore('project').get('revision');
@@ -502,26 +532,45 @@ export class SignalEngine {
       labels: { ...this.project.labels, [id]: name },
     });
   }
-  async backupWorkspace() {
-    const parts: BlobPart[] = [];
-    let bytes = 0,
-      chunks = 0;
-    const append = (value: unknown) => {
-      const line = JSON.stringify(value) + '\n';
-      bytes += new TextEncoder().encode(line).length;
-      if (bytes > ARCHIVE_LIMIT)
-        throw new Error(
-          'This workspace exceeds the 128 MiB archive limit. Nothing was downloaded.',
-        );
-      parts.push(line);
-    };
-    append({
-      // Stable format identifier keeps backups compatible across the rename.
-      format: 'stratus-workspace',
-      version: 1,
-      project: withWorkflowHistory(this.project),
+  /** The committed metadata revision, which changes with every save. */
+  get savedRevision() {
+    return this.revision;
+  }
+  /**
+   * Streams a version 1 NDJSON archive to `sink` in bounded chunks: the
+   * header, every original sample column, then a completion record. Returns
+   * the archive's size in bytes. `limit` caps it for in-memory downloads.
+   */
+  async writeBackup(sink: ByteSink, limit = Infinity) {
+    const out = new ChunkedWriter(
+      sink,
+      limit,
+      'This workspace exceeds the 128 MiB archive limit. Nothing was downloaded.',
+    );
+    const project = this.project;
+    let chunks = 0;
+    const total = project.sources.reduce(
+      (sum, source) => sum + source.chunks * (source.channels.length + 1),
+      0,
+    );
+    const header = JSON.stringify({
+      format: ARCHIVE_FORMAT,
+      version: ARCHIVE_VERSION,
+      app: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      schema: WORKSPACE_SCHEMA_VERSION,
+      project: withWorkflowHistory(project),
     });
-    for (const source of this.project.sources)
+    // JSON turns NaN and Infinity into null: write only metadata that restores.
+    try {
+      validateWorkspace((JSON.parse(header) as { project: unknown }).project);
+    } catch (error) {
+      throw new Error(
+        `This workspace cannot be backed up because its saved metadata is invalid: ${error instanceof Error ? error.message : String(error)} Nothing was saved.`,
+      );
+    }
+    await out.write(header + '\n');
+    for (const source of project.sources)
       for (let index = 0; index < source.chunks; index++)
         for (const column of [
           'time',
@@ -529,35 +578,66 @@ export class SignalEngine {
         ]) {
           this.check();
           const data = await this.column(source.id, index, column);
-          append({
-            sourceId: source.id,
-            index,
-            column,
-            data: Array.from(data, (value) =>
-              Number.isFinite(value) ? value : null,
-            ),
-          });
+          await out.write(
+            JSON.stringify({
+              sourceId: source.id,
+              index,
+              column,
+              data: Array.from(data, (value) =>
+                Number.isFinite(value) ? value : null,
+              ),
+            }) + '\n',
+          );
           chunks++;
+          if (chunks % 64 === 0) {
+            const percent = Math.round((chunks / total) * 100);
+            this.progress(`Writing workspace backup… ${percent}%`, percent);
+          }
         }
-    append({ complete: true, chunks });
+    await out.write(JSON.stringify({ complete: true, chunks }) + '\n');
+    await out.flush();
+    return out.bytes;
+  }
+  async backupWorkspace() {
+    const parts: BlobPart[] = [];
+    await this.writeBackup((bytes) => {
+      parts.push(bytes as Uint8Array<ArrayBuffer>);
+    }, ARCHIVE_LIMIT);
     return new Blob(parts, { type: 'application/x-stratus-workspace' });
   }
-  async restoreWorkspace(file: File) {
+  /**
+   * Restores a backup from a Blob (browser, 128 MiB) or a native byte stream
+   * (no size limit). Every record is validated and staged under fresh source
+   * IDs; the workspace is replaced in one commit only after the archive is
+   * complete, and the prior workspace stays available through Undo.
+   */
+  async restoreWorkspace(file: Blob | ReadableStream<Uint8Array>) {
     let next: Project | undefined;
     const sourceMapping = new Map<string, string>(),
       seen = new Set<string>();
     const previousTimes = new Map<string, number>();
     let completed = false;
     try {
+      let expected = 0;
       for await (const value of archiveLines(file)) {
         this.check();
+        if (expected && seen.size % 64 === 63) {
+          const percent = Math.min(
+            99,
+            Math.round((seen.size / expected) * 100),
+          );
+          this.progress(`Restoring workspace backup… ${percent}%`, percent);
+        }
         if (!value || typeof value !== 'object' || completed)
           throw new Error('Invalid or extra archive records.');
         const record = value as Record<string, unknown>;
         if (!next) {
-          if (record.format !== 'stratus-workspace' || record.version !== 1)
-            throw new Error('Choose a supported Stratum workspace backup.');
+          checkArchiveHeader(record);
           next = validateWorkspace(record.project);
+          expected = next.sources.reduce(
+            (sum, source) => sum + source.chunks * (source.channels.length + 1),
+            0,
+          );
           next.sources.forEach((source) => sourceMapping.set(source.id, uid()));
           for (const id of sourceMapping.values())
             await this.trackImport(id, true);
@@ -624,15 +704,7 @@ export class SignalEngine {
         await done;
         seen.add(key);
       }
-      if (
-        !next ||
-        !completed ||
-        seen.size !==
-          next.sources.reduce(
-            (sum, source) => sum + source.chunks * (source.channels.length + 1),
-            0,
-          )
-      )
+      if (!next || !completed || seen.size !== expected)
         throw new Error('The archive is truncated or missing samples.');
       await this.save(
         remapProject(next, sourceMapping),
@@ -2566,7 +2638,8 @@ export class SignalEngine {
   }
   /**
    * Remove derived indexes and checkpoints that no current, Undo or Redo
-   * signal uses. Caller must hold the shared workspace writer lock.
+   * signal uses, and every artifact of another `derived-vN` cache version.
+   * Caller must hold the shared workspace writer lock.
    */
   async pruneDerivedIndexes() {
     const live = new Set<string>();
@@ -2587,7 +2660,7 @@ export class SignalEngine {
       this.db
         .transaction('chunks')
         .objectStore('chunks')
-        .getAllKeys(IDBKeyRange.bound([DERIVED], [DERIVED.replace(/:$/, ';')])),
+        .getAllKeys(IDBKeyRange.bound([DERIVED_ANY], [`${DERIVED_ANY}\uffff`])),
     );
     const stale = keys.filter(
       (key) =>
@@ -4086,14 +4159,22 @@ export class SignalEngine {
       }
     return { rows, hasMore: false };
   }
-  async exportSamples(ids: string[]) {
+  /**
+   * Streams evaluated samples as CSV to `sink` in bounded chunks and returns
+   * the size in bytes. `limit` caps it for in-memory downloads.
+   */
+  async writeSamples(ids: string[], sink: ByteSink, limit = Infinity) {
     const { csvText } = await import('./workflow-delivery');
     const { WorkflowIndex } = await import('./workflow-history');
     const index = new WorkflowIndex(this.project);
-    const parts: BlobPart[] = [
+    const out = new ChunkedWriter(
+      sink,
+      limit,
+      'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
+    );
+    await out.write(
       'Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value\r\n',
-    ];
-    let exportBytes = 0;
+    );
     for (const id of new Set(ids)) {
       const node = this.find(id);
       const source = this.project.sources.find(
@@ -4131,15 +4212,22 @@ export class SignalEngine {
           lines.push(
             `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}\r\n`,
           );
-        const part = lines.join('');
-        exportBytes += new TextEncoder().encode(part).length;
-        if (exportBytes > EXPORT_LIMIT)
-          throw new Error(
-            'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
-          );
-        parts.push(part);
+        await out.write(lines.join(''));
+        this.check();
       }
     }
+    await out.flush();
+    return out.bytes;
+  }
+  async exportSamples(ids: string[]) {
+    const parts: BlobPart[] = [];
+    await this.writeSamples(
+      ids,
+      (bytes) => {
+        parts.push(bytes as Uint8Array<ArrayBuffer>);
+      },
+      EXPORT_LIMIT,
+    );
     return new Blob(parts, { type: 'text/csv;charset=utf-8' });
   }
   async exportSummary(ids: string[]) {

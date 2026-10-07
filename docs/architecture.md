@@ -234,9 +234,10 @@ still apply. Obsolete plot and sample-page inspections are coalesced in separate
 lanes; cancellation includes queued mutations and exports. On-disk summary
 pyramids and a native columnar store remain scale work.
 
-Version 1 workspace archives are capped at 128 MiB and evaluated samples CSV at
-64 MiB. Both still accumulate a bounded output Blob; they are not native streaming
-exports. Larger recordings can exceed these limits. Reports are printable HTML
+In the browser, version 1 workspace archives are capped at 128 MiB and evaluated
+samples CSV at 64 MiB, because each becomes one download Blob. The desktop app
+streams both to native files in bounded chunks (and restores from a stream) with
+no size limit; see the desktop bridge in `AGENTS.md`. Reports are printable HTML
 snapshots; multi-gigabyte throughput has not been certified.
 
 The workbench includes fifteen selectable operations plus explicit power and BSFC.

@@ -16,8 +16,24 @@ type StoredDraft = {
   report: ReportDocument;
 };
 
+/**
+ * The stored draft was written by a newer Stratum. It is left untouched:
+ * callers must not save over it.
+ */
+export class NewerReportDraftError extends Error {
+  constructor() {
+    super(
+      'The report draft on this device was saved by a newer version of Stratum. It is kept unchanged; update Stratum to continue it.',
+    );
+    this.name = 'NewerReportDraftError';
+  }
+}
+
 export type ReportDraftStore = {
-  /** The saved draft, or null when none is stored or it cannot be read. */
+  /**
+   * The saved draft, or null when none is stored or it cannot be read.
+   * Rejects with `NewerReportDraftError` for a newer draft or database.
+   */
   load: () => Promise<ReportDocument | null>;
   save: (report: ReportDocument) => Promise<void>;
   clear: () => Promise<void>;
@@ -29,8 +45,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const finite = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value);
 
-/** Validates a stored draft, filling block fields added since it was saved. */
+/**
+ * Validates a stored draft, filling block fields added since it was saved.
+ * Throws `NewerReportDraftError` for a draft from a newer Stratum.
+ */
 export function restoreReportDraft(value: unknown): ReportDocument | null {
+  if (
+    isRecord(value) &&
+    typeof value.version === 'number' &&
+    value.version > VERSION
+  )
+    throw new NewerReportDraftError();
   if (!isRecord(value) || value.version !== VERSION) return null;
   const report = value.report;
   if (
@@ -104,7 +129,12 @@ export function openReportDraftStore(
         db.onversionchange = () => db.close();
         resolve(db);
       };
-      opening.onerror = () => reject(opening.error);
+      opening.onerror = () =>
+        reject(
+          opening.error?.name === 'VersionError'
+            ? new NewerReportDraftError()
+            : opening.error,
+        );
       opening.onblocked = () =>
         reject(new Error('Report drafts are locked by another window.'));
     });

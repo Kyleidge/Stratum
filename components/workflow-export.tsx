@@ -21,6 +21,11 @@ import type {
   Project,
 } from '@/lib/signal-types';
 import type { WorkflowStep } from '@/lib/workflow-types';
+import {
+  desktopBridge,
+  fileErrorMessage,
+  streamToNativeFile,
+} from '@/lib/desktop-bridge';
 
 type Props = {
   open: boolean;
@@ -29,9 +34,13 @@ type Props = {
   viewedId?: string;
   checkedIds: string[];
   step?: WorkflowStep;
-  request: (message: EngineRequest) => Promise<EngineResponse>;
+  request: (
+    message: EngineRequest,
+    transfer?: Transferable[],
+  ) => Promise<EngineResponse>;
   cancel: () => void;
-  onSaved: (filename: string) => void;
+  /** `saved` is true when a native file was written, not a download. */
+  onSaved: (filename: string, saved?: boolean) => void;
 };
 
 type Scope = 'viewed' | 'checked' | 'step';
@@ -139,6 +148,24 @@ function ExportForm({
     setError('');
     cancelled.current = false;
     try {
+      const bridge = desktopBridge();
+      if (bridge && kind === 'samples') {
+        // Desktop: stream straight to the chosen file, with no size limit.
+        const file = await bridge.saveFile({
+          kind: 'csv',
+          defaultName: filename,
+          title: 'Export samples CSV',
+        });
+        if (!file) return;
+        await streamToNativeFile(bridge, file, request, (stream) => ({
+          type: 'export-samples',
+          ids,
+          stream,
+        }));
+        onSaved(file.name, true);
+        onOpenChange(false);
+        return;
+      }
       let blob: Blob;
       if (kind === 'values')
         blob = new Blob([valuesCsv(project, ids)], {
@@ -176,9 +203,7 @@ function ExportForm({
       setError(
         cancelled.current
           ? 'Export cancelled. No file was downloaded.'
-          : caught instanceof Error
-            ? caught.message
-            : 'Export failed. Try again.',
+          : fileErrorMessage(caught, 'Export failed. Try again.'),
       );
     } finally {
       setBusy(false);
@@ -250,7 +275,10 @@ function ExportForm({
               onChange={(value) => setFormat(value as Format)}
             >
               Time and value of every sample, exactly as evaluated. Missing
-              samples stay blank. Up to 64 MiB per file.
+              samples stay blank.{' '}
+              {desktopBridge()
+                ? 'Written straight to disk, with no size limit.'
+                : 'Up to 64 MiB per file in the browser.'}
             </Choice>
             <Choice
               name="export-format"
@@ -321,7 +349,11 @@ function ExportForm({
           onClick={() => void download()}
         >
           <Download size={16} />
-          {busy ? 'Preparing file…' : 'Download file'}
+          {busy
+            ? 'Preparing file…'
+            : kind === 'samples' && desktopBridge()
+              ? 'Save file…'
+              : 'Download file'}
         </button>
       </div>
     </div>

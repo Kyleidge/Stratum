@@ -28,6 +28,10 @@ else {
       <Workbench />
     </WorkflowErrorBoundary>,
   );
+  if (params.has('backup-smoke'))
+    void import('./backup-ui-smoke').then(({ backupUiSmoke }) =>
+      backupUiSmoke(),
+    );
   if (params.has('ui-smoke'))
     void import('./workflow-ui-smoke').then(({ workflowUiSmoke }) =>
       workflowUiSmoke(),

@@ -333,7 +333,12 @@ export async function workflowUiSmoke() {
     await click('Export data…');
     if (options?.scope) await pick('export-scope', options.scope);
     if (options?.report) await pick('export-format', 'report');
-    await click('Download file', await dialog());
+    // Samples CSV goes through the native Save dialog on the desktop.
+    const exportDialog = await dialog();
+    await click(
+      button('Save file…', exportDialog) ? 'Save file…' : 'Download file',
+      exportDialog,
+    );
     await until(
       () => !document.querySelector('[role="dialog"]'),
       'download prepared',
@@ -1950,12 +1955,12 @@ export async function workflowUiSmoke() {
     );
     await click('Workspace');
     managementModal = await dialog();
-    await click('Download workspace backup', managementModal);
+    await click('Save workspace backup…', managementModal);
     await until(
       () =>
         managementModal
           .querySelector('output')
-          ?.textContent?.includes('Backup download prepared'),
+          ?.textContent?.includes('Backup saved to'),
       'workspace backup',
     );
     const transfer = new DataTransfer();
@@ -2154,7 +2159,7 @@ export async function workflowUiSmoke() {
         },
       }),
     );
-    await click('Download file', await dialog());
+    await click('Save file…', await dialog());
     await click('Cancel export', await dialog());
     assert(
       resolveExport && cancelledExport,

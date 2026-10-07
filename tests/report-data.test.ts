@@ -14,6 +14,7 @@ import { createBlock } from '../lib/report-mockup';
 import { formatReportValue } from '../lib/report-format';
 import { reportSnapshotStates } from '../lib/report-data';
 import {
+  NewerReportDraftError,
   openReportDraftStore,
   restoreReportDraft,
 } from '../lib/report-draft-store';
@@ -478,7 +479,12 @@ void test('report drafts persist in their own device-local database and reject i
     report: { ...report, pages: [{ id: 'p', blocks: [partial] }] },
   });
   assert.equal(upgraded?.pages[0].blocks[0].fontSize, 13);
-  assert.equal(restoreReportDraft({ version: 2, report }), null);
+  // A newer draft is refused, never read as empty, so it is not overwritten.
+  assert.throws(
+    () => restoreReportDraft({ version: 2, report }),
+    NewerReportDraftError,
+  );
+  assert.equal(restoreReportDraft({ version: '2', report }), null);
   assert.equal(
     restoreReportDraft({ version: 1, report: { ...report, pages: [] } }),
     null,
@@ -512,4 +518,46 @@ void test('export file names say which recording, scope and kind they hold', asy
     exportFileName(engine.project, [a.channels[0]], 'x/y: "z"', 'report'),
     'Logger A · x_y_ _z_ · summary.html',
   );
+});
+
+void test('report drafts from a newer Stratum are kept and never overwritten', async () => {
+  const name = `report-drafts-${crypto.randomUUID()}`;
+  const open = (version?: number) =>
+    new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name, version);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('drafts'))
+          request.result.createObjectStore('drafts');
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  const newer = { version: 2, savedAt: 'later', report: { future: true } };
+  const db = await open(1);
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('drafts', 'readwrite');
+    tx.objectStore('drafts').put(newer, 'current');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  const store = openReportDraftStore(name);
+  await assert.rejects(store.load(), NewerReportDraftError);
+  store.close();
+  // A database upgraded by a newer Stratum is refused the same way.
+  (await open(2)).close();
+  const later = openReportDraftStore(name);
+  await assert.rejects(later.load(), NewerReportDraftError);
+  later.close();
+  const check = await open();
+  const kept = await new Promise<unknown>((resolve, reject) => {
+    const request = check
+      .transaction('drafts')
+      .objectStore('drafts')
+      .get('current');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  check.close();
+  assert.deepEqual(kept, newer);
 });

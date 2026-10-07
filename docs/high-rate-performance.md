@@ -151,11 +151,11 @@ make partial index publication look like a completed import.
 
 ### 4. Address large-recording delivery and rate limits
 
-- Samples CSV is capped at 64 MiB and workspace archives at 128 MiB of serialized
-  output. These limits are independent of import capacity. Large imported files
-  can therefore exceed available delivery paths. Stream exports and archives to
-  disk with bounded buffers, atomic completion and cancellation before increasing
-  limits. The baseline benchmark does not time export or archive creation.
+- In the browser, samples CSV is capped at 64 MiB and workspace archives at
+  128 MiB of serialized output. The desktop app streams both to disk with
+  bounded buffers, atomic completion (temporary file, then rename) and
+  cancellation, with no size limit. The baseline benchmark does not time export
+  or archive creation.
 - Both the unary resampling operation and uniform comparison grids currently cap
   output rate at 10,000 Hz. Importing 100 kHz works, but constructing a uniform
   100 kHz output grid is rejected. Replace a blanket rate cap with explicit output

@@ -34,8 +34,11 @@ export function useSignalEngine(
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [status, setStatus] = useState('Opening local workspace…');
+  // The committed revision, so native auto-backups can tell when it changed.
+  const [revision, setRevision] = useState<number>();
   const request = useCallback(
-    (message: EngineRequest) =>
+    /** `transfer` hands over streams (native file transfers) to the worker. */
+    (message: EngineRequest, transfer: Transferable[] = []) =>
       new Promise<EngineResponse>((resolve, reject) => {
         if (!worker.current) {
           reject(new Error('The signal engine is not ready.'));
@@ -44,7 +47,7 @@ export function useSignalEngine(
         const requestId = ++serial.current;
         pending.current.set(requestId, { resolve, reject });
         try {
-          worker.current.postMessage({ ...message, requestId });
+          worker.current.postMessage({ ...message, requestId }, transfer);
         } catch {
           pending.current.delete(requestId);
           reject(new Error('The worker is unavailable. Reload the workspace.'));
@@ -103,6 +106,7 @@ export function useSignalEngine(
             history.replaceState(history.state, '', startupUrl);
           }
           setProject(response.project);
+          setRevision(response.revision);
           setCanUndo(!!response.canUndo);
           setCanRedo(!!response.canRedo);
           setUndoLabel(response.undoLabel);
@@ -124,15 +128,20 @@ export function useSignalEngine(
       waiting.clear();
     };
   }, [request, initialization]);
-  async function mutate(message: EngineRequest, label: string) {
+  async function mutate(
+    message: EngineRequest,
+    label: string,
+    transfer?: Transferable[],
+  ) {
     setBusy(true);
     setError('');
     setStatus(label);
     try {
-      const response = await request(message);
+      const response = await request(message, transfer);
       if (response.type !== 'project')
         throw new Error('Unexpected engine response.');
       setProject(response.project);
+      setRevision(response.revision);
       setCanUndo(!!response.canUndo);
       setCanRedo(!!response.canRedo);
       setUndoLabel(response.undoLabel);
@@ -172,6 +181,7 @@ export function useSignalEngine(
           if (response.type !== 'project')
             throw new Error('Unexpected engine response.');
           setProject(response.project);
+          setRevision(response.revision);
           setCanUndo(!!response.canUndo);
           setCanRedo(!!response.canRedo);
           setUndoLabel(response.undoLabel);
@@ -204,6 +214,7 @@ export function useSignalEngine(
   }
   return {
     project,
+    revision,
     ready,
     canUndo,
     canRedo,

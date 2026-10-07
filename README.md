@@ -30,11 +30,18 @@ Stratum keeps the original desktop profile, storage keys and internal origin so
 existing workspaces, Undo/Redo and saved plots remain available after the rename.
 New workspace backups use `.stratum`; existing `.stratus` backups still restore.
 The archive format and version are unchanged.
+[File format stability](docs/file-format-stability.md) states what each saved
+format promises across versions.
 
-Create a portable desktop build with `pnpm desktop:package`. On Windows, launch
-`build/releases/Stratum-win32-x64/Stratum.exe`. Keep the entire output folder
-alongside the executable. Packaging on macOS/Linux produces the corresponding
-native bundle. Packages are unsigned development builds.
+Stratum 1.0 is released for Windows as a per-user installer that updates
+itself (see [releasing](docs/releasing.md) and the [changelog](CHANGELOG.md)).
+`pnpm desktop:package` builds it locally: on Windows,
+`build/releases/Stratum-Setup-<version>.exe` and an unpacked
+`build/releases/win-unpacked/Stratum.exe`; on macOS/Linux, an unpacked folder
+for that platform. Local builds are unsigned unless signing credentials are set.
+
+Stratum is released under the [MIT licence](LICENSE); **Help → Third-party
+notices** lists the bundled open-source packages.
 
 ## Explore
 
@@ -298,16 +305,22 @@ Times must be strictly increasing; empty signal cells remain missing. Imports
 are processed locally in chunks and saved in IndexedDB. An empty workspace offers
 CSV import or an explicit example recording; examples are never inserted automatically.
 
-Use **Workspace → Download workspace backup** to save original samples, recipes,
-names, results and history in a versioned `.stratum` archive. Restore validates
-the entire archive before replacing the workspace; the prior workspace remains
-available through Undo. Keep backups outside the app's profile. Clearing local
-storage deletes the local workspace and its Undo history.
+Use **Workspace → Save workspace backup…** (the browser build: **Download
+workspace backup**) to save original samples, recipes, names, results and
+history in a versioned `.stratum` archive. Restore validates the entire archive
+before replacing the workspace; the prior workspace remains available through
+Undo. Keep backups outside the app's profile. Clearing local storage deletes the
+local workspace and its Undo history.
 
-Archive version 1 is limited to **128 MiB**; evaluated samples CSV is limited to
-**64 MiB per file**. These exports prepare local downloads; they do not claim
-that a file has finished saving. For larger exports, use shorter segments or
-fewer signals. Export data's quick HTML summaries are standalone HTML snapshots
+The desktop app writes backups and evaluated samples CSV straight to the file
+chosen in a Save dialog, in bounded chunks, with no size limit; a failed or
+cancelled save leaves no partial file. In the Workspace dialog, **Automatic
+backups** writes a timestamped backup to a folder you choose when Stratum
+closes and every 30 minutes while there are changes, keeping the newest 10. A
+failed automatic backup is reported in the app, including at the next launch.
+In the browser, archives are limited to **128 MiB** and samples CSV to **64 MiB
+per file**; these prepare downloads and do not claim a file finished saving.
+For larger browser exports, use shorter segments or fewer signals. Export data's quick HTML summaries are standalone HTML snapshots
 of the chosen outputs and their contributing history; use **Reports** for an
 arranged multipage PDF.
 

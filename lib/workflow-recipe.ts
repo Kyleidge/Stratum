@@ -1115,12 +1115,29 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   };
 }
 
+const newerWorkflow = (version: number) =>
+  `This workflow was made by a newer Stratum (version ${version}). Update Stratum to open it.`;
+
+/**
+ * The top-level `version:` of a workflow file, read line by line so a newer
+ * file that this YAML subset cannot parse is still recognised as newer.
+ */
+function declaredVersion(text: string): number | undefined {
+  if (!/^format:[ \t]*['"]?stratum-workflow['"]?[ \t]*(#.*)?$/m.test(text))
+    return undefined;
+  const match = text.match(/^version:[ \t]*([0-9]{1,9})[ \t]*(#.*)?$/m);
+  return match ? Number(match[1]) : undefined;
+}
+
 /** Parse and validate a workflow file. Errors name the offending line. */
 export function parseWorkflow(text: string): WorkflowRecipe {
   let document;
   try {
     document = parseYaml(text);
   } catch (error) {
+    const version = declaredVersion(text);
+    if (version !== undefined && version > WORKFLOW_VERSION)
+      throw new WorkflowFileError(newerWorkflow(version));
     if (error instanceof YamlError)
       throw new WorkflowFileError(
         error.message.replace(/^Line \d+: /, ''),
@@ -1138,11 +1155,7 @@ export function parseWorkflow(text: string): WorkflowRecipe {
   const version = root.version;
   if (typeof version !== 'number' || !Number.isSafeInteger(version))
     reader.fail('The workflow needs a whole-number version.', root);
-  if (version > WORKFLOW_VERSION)
-    reader.fail(
-      `This workflow was made by a newer Stratum (version ${version}). Update Stratum to open it.`,
-      root,
-    );
+  if (version > WORKFLOW_VERSION) reader.fail(newerWorkflow(version), root);
   if (version < 1) reader.fail('Unsupported workflow version.', root);
   reader.keys(
     root,

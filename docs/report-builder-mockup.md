@@ -10,7 +10,9 @@ own IndexedDB database (`stratum-report-drafts`, `lib/report-draft-store.ts`),
 separate from the signal engine's storage and not part of workspace backups.
 Reopening the application restores it. The header shows **Saved on this
 device**, **Saving on this device…** or, when the browser refuses the write,
-**Not saved: this device’s storage is unavailable**. In a browser, leaving the
+**Not saved: this device’s storage is unavailable**. A draft saved by a newer
+Stratum is kept unchanged: the header shows **Not saved: the saved draft is
+from a newer Stratum** and edits are not saved. In a browser, leaving the
 page while a save is pending or has failed asks for confirmation; the desktop
 app starts the pending write instead, because Electron would silently keep the
 window open. Report Undo/Redo stays session-only (40 edits). The standalone

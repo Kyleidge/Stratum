@@ -180,10 +180,34 @@ There are no server API routes or cloud signal uploads.
   `lib/zip-store.ts` packages PDFs. `lib/eol-example.ts` generates
   `examples/eol-rig` (`pnpm examples:eol`); tests check the committed copies match.
 - `lib/workspace-archive.ts` validates versioned NDJSON workspace backups before
-  publication. Restore stages original columns under fresh source IDs and commits
-  metadata atomically, preserving the prior workspace for Undo. Archives are
-  limited to 128 MiB; samples CSV to 64 MiB. Never publish partial archives or
-  delete published/Undo/Redo source chunks during import recovery.
+  publication (`ARCHIVE_VERSION`, `checkArchiveHeader`; optional header `app`,
+  `createdAt`, `schema`). Restore stages original columns under fresh source IDs
+  and commits metadata atomically, preserving the prior workspace for Undo.
+  `SignalEngine.writeBackup`/`writeSamples` stream through a `ByteSink` via
+  `ChunkedWriter` (1 MiB chunks, each write awaited); `archiveLines` reads a
+  Blob or byte stream one record at a time (32 MiB per record). Browser Blobs
+  keep the 128 MiB archive and 64 MiB samples CSV limits; native streams have
+  none. A backup validates its own metadata first. Never publish partial
+  archives or delete published/Undo/Redo source chunks during import recovery.
+- Desktop bridge: `desktop/preload.cjs` (sandboxed CommonJS, requires only
+  'electron') exposes `window.stratumDesktop`; `desktop/files.mjs` registers
+  the IPC handlers (only the top-level `stratus://app` frame may call them).
+  The renderer never names a path: it gets opaque handles for files chosen in
+  native dialogs or for the auto-backup folder. Writes go to a hidden
+  `.partial` file, flushed and renamed on finish; abort or a closed page
+  deletes it. `lib/desktop-bridge.ts` is the typed, feature-detected client:
+  it transfers a `WritableStream`/`ReadableStream` to the worker
+  (`backup-workspace`/`export-samples` with `stream`, `restore-workspace` with
+  a stream; reply `written`). Without the bridge the browser keeps downloads
+  and file inputs. Automatic backups (`components/desktop-auto-backup.tsx`,
+  Workspace dialog): main stores settings in userData `desktop-settings.json`,
+  tracks the committed `revision` the renderer reports, and asks for a backup
+  on window close (progress dialog, 15 s start / 10 min cap, a second close
+  offers Quit without backup) and every 30 minutes while changed. Files are
+  `Stratum-backup-<local time>.stratum`; `desktop/backup-files.mjs` rotates to
+  the newest 10 and removes stale partials. Failures are shown in the app and
+  once at the next launch. Smoke runs (`--smoke`, `--ui-smoke`,
+  `--backup-smoke`; temporary profile only) answer dialogs from `outputs/`.
 - `components/workflow-list.tsx`: render disclosure rows only while open, with
   30-item pages. Keep large lineage and checked-input lists bounded in the DOM.
 - `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
@@ -320,6 +344,13 @@ There are no server API routes or cloud signal uploads.
   `import.meta.url` unsuitable for constructing browser worker URLs.
 - `desktop/`: Electron shell and a separate Vite renderer build that shares the
   workbench. Native windows load bundled assets using a restricted custom scheme.
+  `menu.mjs` is the application menu (Edit items never register accelerators,
+  so workbench shortcuts reach the page); `updater.mjs` wraps electron-updater
+  (installed Windows copies only, never dev or smoke runs); `notices.mjs`
+  writes `dist-desktop/THIRD_PARTY_NOTICES.txt` during `desktop:build`;
+  `package.mjs` stages a minimal app for electron-builder. Icons come from
+  `desktop/icons/stratum.svg` (`pnpm desktop:icons`). Releases (Windows NSIS,
+  `.github/workflows/release.yml`, signing, update feed): `docs/releasing.md`.
 - `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
   (surfaces, ink 1–3, primary, status, kind and series colours), defined once
   per theme under `:root[data-theme]`. Stylesheets and components use only
@@ -373,8 +404,13 @@ Run commands from the repository root:
 - `pnpm desktop:report-workspace-smoke`, `desktop:report-plot-smoke` and
   `desktop:report-smoke`: after the desktop build, check the integrated Reports
   workspace, saved plot captures and the report editor in hidden windows.
-- `pnpm desktop:package`: create a portable app under build/releases/ for the
-  current operating system. This is an unsigned development package.
+- `pnpm desktop:backup-smoke`: after the desktop build, save and restore a
+  backup through the native bridge, reject an invalid one, write an automatic
+  backup, then close the window and verify the close-time backup.
+- `pnpm desktop:package`: package with electron-builder under build/releases/:
+  on Windows the NSIS installer and `win-unpacked`, elsewhere an unpacked app
+  (`--dir` for unpacked only). Unsigned unless signing secrets are set; tagged
+  releases publish through `.github/workflows/release.yml` (`docs/releasing.md`).
 
 The first install can require pnpm approval for esbuild, sharp, and workerd native
 build scripts. Use `pnpm approve-builds` to review pending scripts; do not disable
@@ -458,6 +494,10 @@ and `tests/high-rate.test.ts`.
 - Keep Cloudflare server code compatible with Workers and ESM.
 - Keep Wrangler logs and Miniflare state project-local, as configured in Vite.
 - Preserve existing app behavior and dependencies unless the task needs a change.
+- Persisted formats follow `docs/file-format-stability.md`: read every older
+  version, refuse newer ones without writing, and bump `WORKFLOW_VERSION`,
+  `WORKSPACE_SCHEMA_VERSION`, the backup or draft version, or a cache key
+  version as it describes.
 
 ## Git workflow
 
