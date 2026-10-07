@@ -12,6 +12,7 @@ import { validateWorkflowRecords } from './workflow-checks';
 import { validTriggerNoise } from './segmentation';
 import { compileFormula } from './formula';
 import { unitConversion } from './units';
+import { belowNyquist } from './signal-filters';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
 import {
   BINDABLE_DERIVE,
@@ -308,7 +309,13 @@ export function validateWorkspace(value: unknown): Project {
         (['smooth', 'median'].includes(node.operation) &&
           !Number.isInteger(parameter)) ||
         (['exponential', 'low-pass', 'high-pass'].includes(node.operation) &&
-          parameter <= 0)
+          parameter <= 0) ||
+        (['butterworth-low', 'butterworth-high'].includes(node.operation) &&
+          !(
+            parameter > 0 &&
+            Number.isFinite(node.parameters.rate) &&
+            belowNyquist(parameter, node.parameters.rate)
+          ))
       )
         throw new Error('Invalid filter parameters.');
       if (

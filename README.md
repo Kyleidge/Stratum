@@ -167,6 +167,8 @@ constant scaling, offsets, absolute value, **Formula** and **Convert units**.
   are available. You set the output unit; it is never inferred. Missing
   samples and non-finite results stay missing. Expressions are parsed, never
   run as code.
+- **Filters** add second-order **Butterworth** low- and high-pass filters,
+  twice as steep as the RC filters (see [filters](docs/filters.md)).
 - **Convert units** converts between units of one quantity (torque, speed,
   temperature, pressure, power, flow and more) with exact factors, such as
   lbf·ft to N·m or °F to °C. The input's unit must be one Stratum knows. Each checked input is A; choose

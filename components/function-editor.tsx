@@ -16,6 +16,7 @@ import {
   parameterHint,
   parameterScale,
   rangeMidpoint,
+  roundSignificant,
 } from '@/lib/parameter-scale';
 import { VALUE_TAGS, valueReference } from '@/lib/plot-scratchpad';
 import type { WorkflowIndex } from '@/lib/workflow-history';
@@ -240,17 +241,6 @@ export default function FunctionEditor({
       unitError = message(caught, 'Incompatible units.');
     }
   }
-  const changeOperation = (next: string) => {
-    setOperation(next);
-    setParameter(
-      String(
-        SIGNAL_FUNCTIONS.find((item) => item.operation === next)
-          ?.defaultValue ?? 0,
-      ),
-    );
-    setError('');
-  };
-
   // The previewed input's full-range plot feeds the value chart, slider
   // scales and hints.
   const [inputPlot, setInputPlot] = useState<{
@@ -281,6 +271,22 @@ export default function FunctionEditor({
   const plot = inputPlot?.id === previewId ? inputPlot.plot : undefined;
   const plotError = inputPlot?.id === previewId ? inputPlot.error : undefined;
   const context = parameterContext(plot?.summary);
+  const changeOperation = (next: string) => {
+    setOperation(next);
+    const fallback =
+      SIGNAL_FUNCTIONS.find((item) => item.operation === next)?.defaultValue ??
+      0;
+    // A Butterworth default must sit below this input's Nyquist frequency.
+    const rate = context.interval ? 1 / context.interval : undefined;
+    setParameter(
+      String(
+        next.startsWith('butterworth') && rate && fallback >= rate * 0.45
+          ? roundSignificant(rate / 10, 2)
+          : fallback,
+      ),
+    );
+    setError('');
+  };
   const previewNode = index.nodes.get(previewId);
   const settings = valueSettings(
     index,

@@ -43,7 +43,15 @@ const groups = [
   {
     name: 'Filters',
     icon: SlidersHorizontal,
-    operations: ['smooth', 'median', 'exponential', 'low-pass', 'high-pass'],
+    operations: [
+      'smooth',
+      'median',
+      'exponential',
+      'low-pass',
+      'high-pass',
+      'butterworth-low',
+      'butterworth-high',
+    ],
   },
   {
     name: 'Time',
@@ -73,6 +81,8 @@ const OPERATION_ICONS: Partial<Record<string, LucideIcon>> = {
   exponential: ChartSpline,
   'low-pass': ChartNoAxesColumnDecreasing,
   'high-pass': ChartNoAxesColumnIncreasing,
+  'butterworth-low': ChartNoAxesColumnDecreasing,
+  'butterworth-high': ChartNoAxesColumnIncreasing,
   'zero-time': TimerReset,
   'time-shift': MoveHorizontal,
   resample: ChartScatter,

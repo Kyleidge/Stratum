@@ -8,7 +8,12 @@ import { executeTime } from './time-executor';
 import { compileFormula } from './formula';
 import { yieldEngine } from './engine-yield';
 import { parentWindow } from './signal-range';
-import { ExponentialSmoother, RcFilter, RollingMedian } from './signal-filters';
+import {
+  ButterworthFilter,
+  ExponentialSmoother,
+  RcFilter,
+  RollingMedian,
+} from './signal-filters';
 import type { SignalGraph } from './signal-graph';
 import type { Point, SeriesChunk, SignalNode } from './signal-types';
 
@@ -32,6 +37,8 @@ export const CHECKPOINTED = new Set([
   'exponential',
   'low-pass',
   'high-pass',
+  'butterworth-low',
+  'butterworth-high',
   'integral',
   'resample',
 ]);
@@ -225,6 +232,15 @@ export async function* executeSignal(
       node.operation === 'low-pass' || node.operation === 'high-pass'
         ? new RcFilter(node.parameters.value, node.operation)
         : undefined;
+    const butterworth =
+      node.operation === 'butterworth-low' ||
+      node.operation === 'butterworth-high'
+        ? new ButterworthFilter(
+            node.parameters.value,
+            node.parameters.rate,
+            node.operation === 'butterworth-low' ? 'low-pass' : 'high-pass',
+          )
+        : undefined;
     const origin = graph.ranges.get(node.parents[0])![0];
     let previous: Point | undefined;
     let integrated = 0;
@@ -328,6 +344,11 @@ export async function* executeSignal(
             checkpoints![state + 1],
             checkpoints![state + 2],
           );
+          butterworth?.restore(
+            checkpoints![state],
+            checkpoints![state + 1],
+            checkpoints![state + 2],
+          );
           if (node.operation === 'integral') integrated = checkpoints![state];
           if (node.operation === 'resample') gridIndex = checkpoints![state];
           if (oldTimes.length) previous = [oldTimes.at(-1)!, oldValues.at(-1)!];
@@ -364,9 +385,11 @@ export async function* executeSignal(
           ? [exponential.state()]
           : rc
             ? rc.state()
-            : node.operation === 'integral'
-              ? [integrated]
-              : [gridIndex];
+            : butterworth
+              ? butterworth.state()
+              : node.operation === 'integral'
+                ? [integrated]
+                : [gridIndex];
       saved.push(time, consumed, state[0] ?? 0, state[1] ?? 0, state[2] ?? 0);
     };
     while (chunk) {
@@ -451,6 +474,10 @@ export async function* executeSignal(
             case 'low-pass':
             case 'high-pass':
               value = rc!.next(t, input);
+              break;
+            case 'butterworth-low':
+            case 'butterworth-high':
+              value = butterworth!.next(t, input);
               break;
             case 'scale':
               value *= node.parameters.value;

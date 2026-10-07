@@ -164,11 +164,15 @@ export function parameterScale(
         })),
       };
     case 'low-pass':
-    case 'high-pass': {
+    case 'high-pass':
+    case 'butterworth-low':
+    case 'butterworth-high': {
+      // Butterworth cutoffs must stay below Nyquist; RC cutoffs may not.
+      const top = operation.startsWith('butterworth') ? 0.45 : 0.5;
       const scale = rate
         ? {
             min: roundSignificant(rate / 10000, 2),
-            max: roundSignificant(rate / 2, 3),
+            max: roundSignificant(rate * top, 3),
           }
         : { min: 0.001, max: 1000 };
       return {
@@ -367,6 +371,12 @@ export function parameterHint(
       return value === 1
         ? 'α = 1 leaves the signal unchanged.'
         : `Time constant ≈ ${formatDuration(-interval / Math.log(1 - value))}.`;
+    case 'butterworth-low':
+    case 'butterworth-high':
+      if (value <= 0) return undefined;
+      return rate && value >= rate / 2
+        ? `Must be below Nyquist (${formatQuantity(rate / 2)} Hz) for this input.`
+        : `−3 dB at ${formatQuantity(value)} Hz, −40 dB a decade ${operation === 'butterworth-low' ? 'above' : 'below'}.${rate ? ` Nyquist ${formatQuantity(rate / 2)} Hz.` : ''}`;
     case 'low-pass':
     case 'high-pass': {
       if (value <= 0) return undefined;

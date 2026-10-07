@@ -81,6 +81,7 @@ import {
 } from './workflow-types';
 import { ValueAccumulator } from './value-statistics';
 import { compileFormula } from './formula';
+import { belowNyquist } from './signal-filters';
 import { unitConversion } from './units';
 import {
   BINDABLE_DERIVE,
@@ -2730,7 +2731,13 @@ export class SignalEngine {
         throw new Error(
           'Smoothing factor must be greater than 0 and at most 1.',
         );
-      if ((operation === 'low-pass' || operation === 'high-pass') && value <= 0)
+      if (
+        (operation === 'low-pass' ||
+          operation === 'high-pass' ||
+          operation === 'butterworth-low' ||
+          operation === 'butterworth-high') &&
+        value <= 0
+      )
         throw new Error('Cutoff frequency must be greater than 0 Hz.');
       if (operation === 'resample' && (value < 0.01 || value > 10000))
         throw new Error('Sample rate must be 0.01–10,000 Hz.');
@@ -2748,6 +2755,8 @@ export class SignalEngine {
         exponential: 'Exponentially smoothed',
         'low-pass': 'Low-pass filtered',
         'high-pass': 'High-pass filtered',
+        'butterworth-low': 'Butterworth low-pass',
+        'butterworth-high': 'Butterworth high-pass',
         scale: 'Scaled',
         offset: 'Offset',
         absolute: 'Absolute',
@@ -2780,6 +2789,26 @@ export class SignalEngine {
         n.bindings = {
           value: { valueId: bound.valueId, factor: bound.factor },
         };
+      if (operation === 'butterworth-low' || operation === 'butterworth-high') {
+        // The nominal rate is the median interval of the first samples.
+        const first = await this.evaluate(parentId).next();
+        const t = first.value?.time;
+        const steps: number[] = [];
+        for (let i = 1; i < (t?.length ?? 0); i++)
+          steps.push(t![i] - t![i - 1]);
+        steps.sort((a, b) => a - b);
+        const interval = steps[Math.floor(steps.length / 2)];
+        if (!(interval > 0))
+          throw new Error(
+            'This filter needs at least two samples at a regular interval.',
+          );
+        const rate = 1 / interval;
+        if (!belowNyquist(value, rate))
+          throw new Error(
+            `The cutoff must be below half the sample rate (${Number((rate / 2).toPrecision(4))} Hz).`,
+          );
+        n.parameters.rate = rate;
+      }
       if (operation === 'resample') {
         const first = await this.evaluate(parentId).next();
         const t = first.value?.time;

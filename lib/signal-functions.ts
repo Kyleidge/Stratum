@@ -155,6 +155,28 @@ export const FUNCTIONS: FunctionSpec[] = [
     min: 0,
   },
   {
+    operation: 'butterworth-low',
+    name: 'Butterworth low-pass',
+    category: 'Filtering',
+    description:
+      'A second-order Butterworth low-pass: flat below the cutoff and falling 40 dB per decade above it, twice as steep as the RC filter. Needs a regular sample interval; gaps and irregular intervals restart it. Starts at the input value.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 5,
+    unit: 'Hz',
+    min: 0,
+  },
+  {
+    operation: 'butterworth-high',
+    name: 'Butterworth high-pass',
+    category: 'Filtering',
+    description:
+      'A second-order Butterworth high-pass: removes slow changes and DC offset, falling 40 dB per decade below the cutoff. Needs a regular sample interval; gaps and irregular intervals restart it. Starts at zero.',
+    parameter: 'Cutoff frequency',
+    defaultValue: 1,
+    unit: 'Hz',
+    min: 0,
+  },
+  {
     operation: 'scale',
     name: 'Scale signal',
     category: 'Calculation',

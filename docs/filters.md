@@ -17,6 +17,8 @@ filtered signal retains the preceding filter history.
 | Exponential smoothing | `0 < alpha ≤ 1`         | `y = alpha × x + (1 − alpha) × previous_y`. Smaller alpha smooths more; alpha of 1 preserves values. |
 | Low-pass RC filter    | Positive cutoff in Hz   | Attenuates fast changes. Starts at the first input value.                                            |
 | High-pass RC filter   | Positive cutoff in Hz   | Attenuates slow changes and DC offset. Starts at zero.                                               |
+| Butterworth low-pass  | Cutoff below Nyquist    | Second order: flat passband, −3 dB at the cutoff, −40 dB per decade above it. Starts at the input.   |
+| Butterworth high-pass | Cutoff below Nyquist    | Second order: removes slow changes and DC offset, −40 dB per decade below the cutoff. Starts at 0.   |
 
 Window filters use available samples during startup. Missing samples occupy a
 window position but are excluded from the statistic; a missing input can therefore
@@ -35,6 +37,17 @@ The cutoff is the analog RC parameter; the discrete response approximates it bes
 when the sample rate is well above the cutoff. These are first-order causal
 filters, so they introduce phase shift and do not provide a sharp frequency
 boundary. Exponential smoothing uses samples rather than elapsed time.
+
+Butterworth filters are second-order sections designed with the bilinear
+transform (cutoff prewarped, Q = 1/√2), so the cutoff is exact at −3 dB. They
+assume a regular sample interval: the nominal rate is the median interval of
+the input's first samples, recorded with the step, and the cutoff must be
+below half that rate. A missing sample, or an interval more than 1 % away from
+the nominal one (such as a timestamp gap), restarts the filter at the next
+sample in its steady state. Like every filter here they are causal, so they
+delay the signal; for zero-phase smoothing use the anti-alias filter in
+**Compare & align** (see [time bases](time-bases.md)). Apply a filter twice
+for a steeper, fourth-order response.
 
 No additional packages or stored numeric columns are needed. Median filtering
 keeps at most 1,001 values plus a sorted window; recursive filters keep constant

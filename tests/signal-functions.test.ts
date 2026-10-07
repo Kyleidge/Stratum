@@ -45,6 +45,19 @@ const expected: Partial<
     parameter: 1 / (2 * Math.PI),
     points: values([0, 3, 4.5, -5.75]),
   },
+  // From an independent direct-form-I recurrence at 0.1 Hz, 1 Hz sampling.
+  'butterworth-low': {
+    parameter: 0.1,
+    points: values([
+      -2, -1.5952683566655685, 0.0815269504299142, 1.9659079718000503,
+    ]),
+  },
+  'butterworth-high': {
+    parameter: 0.1,
+    points: values([
+      0, 3.833673150954134, 4.381813664651283, -10.631020372331482,
+    ]),
+  },
   scale: { parameter: 2, points: values([-4, 8, 20, -12]) },
   offset: { parameter: 3, points: values([1, 7, 13, -3]) },
   absolute: { parameter: 0, points: values([2, 4, 10, 6]) },
@@ -337,6 +350,8 @@ void test('every exposed single-input function produces independently calculated
         ).length,
         1,
       );
+      // Butterworth defaults assume faster sampling than this 1 Hz signal.
+      if (spec.operation.startsWith('butterworth')) continue;
       const withDefault = await engine.derive(
         source.channels[0],
         spec.operation,

@@ -29,6 +29,8 @@ export const operationLabels: Record<Operation, string> = {
   bsfc: 'Specific fuel consumption',
   formula: 'Formula',
   convert: 'Convert units',
+  'butterworth-low': 'Butterworth low-pass',
+  'butterworth-high': 'Butterworth high-pass',
 };
 export function operationDetail(node: SignalNode): string {
   const value = node.parameters.value;

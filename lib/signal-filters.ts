@@ -129,3 +129,97 @@ export class RcFilter {
     this.value = value;
   }
 }
+
+/**
+ * Whether a cutoff is below the Nyquist frequency. An estimated rate is
+ * rounded, so a cutoff within a millionth of Nyquist counts as at Nyquist.
+ */
+export const belowNyquist = (cutoff: number, rate: number) =>
+  cutoff < (rate / 2) * (1 - 1e-6);
+
+/**
+ * Second-order Butterworth coefficients (bilinear transform with
+ * prewarping, Q = 1/√2) for a cutoff below the Nyquist frequency.
+ */
+export function butterworth(
+  cutoff: number,
+  rate: number,
+  mode: 'low-pass' | 'high-pass',
+): { b: [number, number, number]; a: [number, number] } {
+  if (!(cutoff > 0) || !(rate > 0) || !belowNyquist(cutoff, rate))
+    throw new Error(
+      'The cutoff must be above 0 Hz and below half the sample rate.',
+    );
+  const w = (2 * Math.PI * cutoff) / rate;
+  const cos = Math.cos(w);
+  const alpha = Math.sin(w) / Math.SQRT2;
+  const a0 = 1 + alpha;
+  const edge = mode === 'low-pass' ? (1 - cos) / 2 : (1 + cos) / 2;
+  const middle = mode === 'low-pass' ? 1 - cos : -(1 + cos);
+  return {
+    b: [edge / a0, middle / a0, edge / a0],
+    a: [(-2 * cos) / a0, (1 - alpha) / a0],
+  };
+}
+
+// A second-order Butterworth section in transposed direct form II for a
+// regular sample interval. It starts in the steady state of its first input
+// (low-pass: that input; high-pass: zero). A missing input, or an interval
+// more than 1 % from the nominal one, restarts it at the next finite sample.
+export class ButterworthFilter {
+  private readonly b: [number, number, number];
+  private readonly a: [number, number];
+  private readonly interval: number;
+  private previousTime = NaN;
+  private s1 = 0;
+  private s2 = 0;
+  constructor(
+    cutoff: number,
+    rate: number,
+    private mode: 'low-pass' | 'high-pass',
+  ) {
+    ({ b: this.b, a: this.a } = butterworth(cutoff, rate, mode));
+    this.interval = 1 / rate;
+  }
+
+  next(time: number, input: number): number {
+    if (!Number.isFinite(input)) {
+      this.previousTime = NaN;
+      return NaN;
+    }
+    const [b0, b1, b2] = this.b;
+    const [a1, a2] = this.a;
+    const dt = time - this.previousTime;
+    const restart =
+      !Number.isFinite(this.previousTime) ||
+      Math.abs(dt - this.interval) > this.interval * 0.01;
+    if (restart) {
+      // Steady state for a constant input equal to this one.
+      if (this.mode === 'low-pass') {
+        this.s2 = (b2 - a2) * input;
+        this.s1 = (b1 - a1) * input + this.s2;
+      } else {
+        this.s2 = b2 * input;
+        this.s1 = b1 * input + this.s2;
+      }
+    }
+    // In steady state the output is exactly the input (low-pass) or zero.
+    const output = restart
+      ? this.mode === 'low-pass'
+        ? input
+        : 0
+      : b0 * input + this.s1;
+    this.s1 = b1 * input - a1 * output + this.s2;
+    this.s2 = b2 * input - a2 * output;
+    this.previousTime = time;
+    return output;
+  }
+  state(): [previousTime: number, s1: number, s2: number] {
+    return [this.previousTime, this.s1, this.s2];
+  }
+  restore(previousTime: number, s1: number, s2: number) {
+    this.previousTime = previousTime;
+    this.s1 = s1;
+    this.s2 = s2;
+  }
+}

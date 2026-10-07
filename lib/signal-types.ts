@@ -36,7 +36,9 @@ export type Operation =
   | 'power'
   | 'bsfc'
   | 'formula'
-  | 'convert';
+  | 'convert'
+  | 'butterworth-low'
+  | 'butterworth-high';
 export type SignalNode = {
   timeReference?: import('./time-types').TimeReference;
   timeRecipe?: import('./time-types').TimeRecipe;

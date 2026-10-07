@@ -126,6 +126,8 @@ async function derivedSet(engine: SignalEngine, x: string, y: string) {
     exponential: await derive(x, 'exponential', 0.05),
     'low-pass': await derive(x, 'low-pass', 200),
     'high-pass': await derive(x, 'high-pass', 50),
+    'butterworth low': await derive(x, 'butterworth-low', 200),
+    'butterworth high': await derive(x, 'butterworth-high', 50),
     derivative: await derive(x, 'derivative', 0),
     integral: await derive(x, 'integral', 0),
     'resample 9 kHz': await derive(x, 'resample', 9000),
