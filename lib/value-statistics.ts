@@ -51,6 +51,8 @@ export class ValueAccumulator {
       this.crossings = new CrossingDetector({
         edge: this.parameters.edge === -1 ? 'falling' : 'rising',
         threshold: this.parameters.threshold!,
+        hysteresis: this.parameters.hysteresis,
+        debounce: this.parameters.debounce,
       });
   }
   add(time: number, value: number) {

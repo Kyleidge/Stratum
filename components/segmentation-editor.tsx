@@ -57,6 +57,9 @@ type TriggerForm = {
   edge: 'rising' | 'falling';
   threshold: string;
   offset: string;
+  /** Optional noise rejection; blank means none. */
+  hysteresis?: string;
+  debounce?: string;
   /** Threshold and offset taken from values instead of typed numbers. */
   bound?: Partial<Record<'threshold' | 'offset', BindingDraft>>;
 };
@@ -222,6 +225,8 @@ export default function SegmentationEditor({
       edge: trigger.edge,
       threshold: String(trigger.threshold),
       offset: String(trigger.offset),
+      ...(trigger.hysteresis ? { hysteresis: String(trigger.hysteresis) } : {}),
+      ...(trigger.debounce ? { debounce: String(trigger.debounce) } : {}),
       ...(Object.keys(bound).length ? { bound } : {}),
     };
   };
@@ -410,11 +415,23 @@ export default function SegmentationEditor({
           bindings[`${side}.${name}`] = binding;
           return 0;
         };
+        const noise = (name: 'hysteresis' | 'debounce') => {
+          const text = form[name]?.trim();
+          if (!text) return {};
+          const value = number(text);
+          if (value < 0)
+            throw new Error(
+              `The ${side} ${name} must be zero or more, or blank.`,
+            );
+          return value > 0 ? { [name]: value } : {};
+        };
         return {
           signalId: form.signalId,
           edge: form.edge,
           threshold: setting('threshold'),
           offset: setting('offset'),
+          ...noise('hysteresis'),
+          ...noise('debounce'),
         };
       };
       return {
@@ -548,6 +565,12 @@ export default function SegmentationEditor({
     Number(windowEnd) > Number(windowStart)
       ? [Number(windowStart), Number(windowEnd)]
       : undefined;
+  const savedNoise = !!(
+    savedTriggers &&
+    [savedTriggers.start, savedTriggers.end].some(
+      (trigger) => trigger.hysteresis || trigger.debounce,
+    )
+  );
   function triggerEditor(
     label: string,
     trigger: TriggerForm,
@@ -649,6 +672,33 @@ export default function SegmentationEditor({
               onChange={(offset) => update({ ...trigger, offset })}
             />
           </div>
+        )}
+        {workflowMode && (
+          <details
+            className="segment-noise"
+            // Constant per dialog: open when the saved trigger used it.
+            open={savedNoise}
+          >
+            <summary>Ignore chatter</summary>
+            <div className="segment-field-pair">
+              <Numeric
+                label={`${label} hysteresis`}
+                value={trigger.hysteresis ?? ''}
+                unit={unit}
+                onChange={(hysteresis) => update({ ...trigger, hysteresis })}
+              />
+              <Numeric
+                label={`${label} debounce`}
+                value={trigger.debounce ?? ''}
+                onChange={(debounce) => update({ ...trigger, debounce })}
+              />
+            </div>
+            <p className="input-hint">
+              Hysteresis: after a crossing, the signal must return this far past
+              the threshold before the next one counts. Debounce: a crossing
+              counts only if the signal stays crossed this long.
+            </p>
+          </details>
         )}
       </fieldset>
     );

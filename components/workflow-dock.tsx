@@ -123,7 +123,13 @@ function segmentationRows(
   const rows: Row[] = [];
   if (definition.method === 'triggers') {
     const trigger = (item: typeof definition.start): Row[1] => {
-      const text = `${signal(item.signalId)} ${item.edge === 'rising' ? 'rises through' : 'falls through'} ${formatValue(item.threshold, 4)}${item.offset ? `, then ${signedSeconds(item.offset)}` : ''}`;
+      const noise = [
+        ...(item.hysteresis
+          ? [`hysteresis ${formatValue(item.hysteresis, 4)}`]
+          : []),
+        ...(item.debounce ? [`held ${seconds(item.debounce)}`] : []),
+      ];
+      const text = `${signal(item.signalId)} ${item.edge === 'rising' ? 'rises through' : 'falls through'} ${formatValue(item.threshold, 4)}${noise.length ? ` (${noise.join(', ')})` : ''}${item.offset ? `, then ${signedSeconds(item.offset)}` : ''}`;
       return <span title={text}>{text}</span>;
     };
     rows.push(['Method', 'Start and end triggers']);

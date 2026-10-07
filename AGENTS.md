@@ -305,7 +305,9 @@ There are no server API routes or cloud signal uploads.
   evaluation, segmentation, and samples/summary exports. `signal-math.ts` holds numerical
   helpers; `signal-types.ts` defines the domain and worker protocol.
 - `lib/segmentation.ts`: stateful generic threshold crossings. No hidden smoothing
-  or engine-ramp heuristics. Pair crossings before applying offsets; retain
+  or engine-ramp heuristics. Optional hysteresis (re-arm distance) and
+  debounce (seconds held) reject chatter; at zero the detector must equal the
+  adjacent-sample rule (`tests/trigger-noise.test.ts`). Pair crossings before applying offsets; retain
   source-time provenance and translate derived output axes. Segmentation creates
   crops only; engineering metrics are a separate explicit operation.
 - `lib/signal.worker.ts`: serialized processing away from the UI thread, coordinated

@@ -183,7 +183,11 @@ settings, and any other setting is rejected:
 - `value-at`: `time`, seconds from the input's start (default 0).
 - `time-above`, `time-below`: `threshold`, in the input's unit (required).
 - `first-crossing`, `crossing-count`: `threshold` (required) and `edge`,
-  `rising` (the default) or `falling`.
+  `rising` (the default) or `falling`, plus optional `hysteresis` (in the
+  input's unit) and `debounce` (seconds).
+
+Triggers also accept optional `hysteresis` and `debounce`, with the same
+meaning as in the Segment dialog's **Ignore chatter** section.
 
 ```yaml
 - id: spin-up

@@ -3,7 +3,7 @@ import type { TimeAnchor, TimeRecipe, TimeSettings } from './time-types';
 import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
 import { arithmeticUnit } from './signal-arithmetic';
 import { SignalGraph } from './signal-graph';
-import { CrossingDetector } from './segmentation';
+import { CrossingDetector, validTriggerNoise } from './segmentation';
 import type { SeriesChunk } from './signal-types';
 
 /** A UI/segmentation scope, never an imported recording or persisted source. */
@@ -117,7 +117,8 @@ export function validateTimeSettings(settings: TimeSettings) {
             !anchor.trigger ||
             !['rising', 'falling'].includes(anchor.trigger.edge) ||
             !Number.isSafeInteger(anchor.occurrence) ||
-            anchor.occurrence < 1
+            anchor.occurrence < 1 ||
+            !validTriggerNoise(anchor.trigger)
           )
             throw new Error('Choose an edge and positive event occurrence.');
           finite(anchor.trigger.threshold, anchor.trigger.offset);

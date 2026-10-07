@@ -129,7 +129,8 @@ four tabs:
 Time average weights by valid elapsed time and excludes missing intervals.
 Every value excludes missing samples, and no interval spans a gap. Times are
 seconds measured from the input's start, so they stay meaningful for
-segments. Crossings use the same detection as segmentation triggers.
+segments. Crossings use the same detection as segmentation triggers, including
+optional hysteresis and debounce.
 Thresholds start at the middle of the input's range. Plots draw a time or
 count at the level it refers to, such as the threshold, labelled with the
 result.
@@ -165,7 +166,10 @@ they are no longer offered for new operations.
 
 **Segment** uses method cards for time ranges, regular windows and signal
 triggers, with separate settings and scope panels. Switching methods retains
-the entered settings and clears any outdated interval preview. **Calculate
+the entered settings and clears any outdated interval preview. Each trigger's
+**Ignore chatter** section sets hysteresis (how far the signal must return
+past the threshold before another crossing counts) and debounce (how long it
+must stay crossed). **Calculate
 value** offers cards in Level, Spread, Time and Events tabs, each with a short
 explanation of how its result is calculated.
 

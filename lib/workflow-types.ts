@@ -22,7 +22,8 @@ export type ValueOperation =
 
 /**
  * Numeric settings of a value calculation, by name: `threshold` (input unit),
- * `edge` (1 rising, −1 falling) and `time` (seconds from the input's start).
+ * `edge` (1 rising, −1 falling), `time` (seconds from the input's start), and
+ * the crossing detector's optional `hysteresis` and `debounce`.
  */
 export type ValueParameters = Record<string, number>;
 
@@ -202,7 +203,12 @@ export type ValueStatistics = {
 export type ValueGroup = 'Level' | 'Spread' | 'Time' | 'Events';
 /** What a value measures, which decides its unit. */
 export type ValueResult = 'level' | 'area' | 'time' | 'count';
-export type ValueParameter = 'threshold' | 'edge' | 'time';
+export type ValueParameter =
+  | 'threshold'
+  | 'edge'
+  | 'time'
+  | 'hysteresis'
+  | 'debounce';
 export type ValueFunctionSpec = {
   operation: ValueOperation;
   name: string;
@@ -363,7 +369,7 @@ export const VALUE_FUNCTIONS: ValueFunctionSpec[] = [
     group: 'Events',
     result: 'time',
     tag: 't×',
-    parameters: ['threshold', 'edge'],
+    parameters: ['threshold', 'edge', 'hysteresis', 'debounce'],
     description:
       "Seconds from the input's start to the first rising or falling crossing of a threshold, as segmentation triggers detect it. Unavailable when it never crosses.",
   },
@@ -373,9 +379,9 @@ export const VALUE_FUNCTIONS: ValueFunctionSpec[] = [
     group: 'Events',
     result: 'count',
     tag: '#×',
-    parameters: ['threshold', 'edge'],
+    parameters: ['threshold', 'edge', 'hysteresis', 'debounce'],
     description:
-      'The number of rising or falling crossings of a threshold. Missing samples break adjacency, so a gap never counts as a crossing.',
+      'The number of rising or falling crossings of a threshold. Missing samples break adjacency, so a gap never counts as a crossing. Hysteresis and debounce ignore chatter around the threshold.',
   },
 ];
 
@@ -411,6 +417,14 @@ export function valueParameters(
       if (edge !== 1 && edge !== -1)
         throw new Error('Choose a rising or falling edge.');
       result.edge = edge;
+    } else if (name === 'hysteresis' || name === 'debounce') {
+      // Optional noise settings: zero is the default and is not stored.
+      if (value === undefined || value === 0) continue;
+      if (!Number.isFinite(value) || value < 0)
+        throw new Error(
+          `${name === 'hysteresis' ? 'Hysteresis' : 'Debounce'} must be zero or positive.`,
+        );
+      result[name] = value;
     } else if (name === 'time') {
       const time = value ?? 0;
       if (!Number.isFinite(time) || time < 0)

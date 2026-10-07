@@ -815,6 +815,9 @@ type ValueForm = {
   threshold?: string;
   edge: 1 | -1;
   time: string;
+  /** Optional crossing noise settings; blank means none. */
+  hysteresis: string;
+  debounce: string;
   /** Settings taken from values instead of typed numbers. */
   bindings: Partial<Record<'threshold' | 'time', BindingDraft>>;
 };
@@ -829,6 +832,10 @@ function initialValueForm(
       : {}),
     edge: parameters?.edge === -1 ? -1 : 1,
     time: bindings?.time ? '0' : String(parameters?.time ?? 0),
+    hysteresis:
+      parameters?.hysteresis !== undefined ? String(parameters.hysteresis) : '',
+    debounce:
+      parameters?.debounce !== undefined ? String(parameters.debounce) : '',
     bindings: {
       ...(bindings?.threshold
         ? { threshold: draftFromBinding(index, bindings.threshold) }
@@ -858,6 +865,18 @@ function valueSettings(
   for (const name of needed) {
     if (name === 'edge') {
       parameters.edge = form.edge;
+      continue;
+    }
+    if (name === 'hysteresis' || name === 'debounce') {
+      const text = form[name];
+      if (!text.trim()) continue;
+      const number = Number(text);
+      if (!Number.isFinite(number) || number < 0)
+        return {
+          threshold,
+          waiting: `Enter a ${name} of zero or more, or leave it blank.`,
+        };
+      if (number > 0) parameters[name] = number;
       continue;
     }
     const draft = form.bindings[name as 'threshold' | 'time'];
@@ -983,6 +1002,26 @@ function ValueSettings({
             onChange={(next) => onChange({ ...form, threshold: next })}
           />
         </ParameterSetting>
+      )}
+      {parameters.includes('hysteresis') && (
+        <ParameterControl
+          label="Hysteresis"
+          value={form.hysteresis}
+          unit={unit}
+          hint="Optional. After a crossing, the signal must return this far past the threshold before another counts."
+          disabled={disabled}
+          onChange={(hysteresis) => onChange({ ...form, hysteresis })}
+        />
+      )}
+      {parameters.includes('debounce') && (
+        <ParameterControl
+          label="Debounce"
+          value={form.debounce}
+          unit="s"
+          hint="Optional. A crossing counts only if the signal stays crossed for this long."
+          disabled={disabled}
+          onChange={(debounce) => onChange({ ...form, debounce })}
+        />
       )}
       {parameters.includes('time') && (
         <ParameterSetting label="Time from start" {...bind('time')}>

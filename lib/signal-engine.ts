@@ -121,7 +121,7 @@ import type {
   FunctionSettings,
   FunctionRun,
 } from './region-types';
-import { CrossingDetector } from './segmentation';
+import { CrossingDetector, validTriggerNoise } from './segmentation';
 import type { TriggerEvent } from './segmentation';
 import type {
   Chunk,
@@ -3162,6 +3162,10 @@ export class SignalEngine {
           )
             throw new Error(
               'Each trigger needs an edge, finite threshold, and finite time offset.',
+            );
+          if (!validTriggerNoise(trigger))
+            throw new Error(
+              'Trigger hysteresis and debounce must be zero or positive.',
             );
         }
         if (

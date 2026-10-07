@@ -99,6 +99,13 @@ export type EdgeTrigger = {
   edge: 'rising' | 'falling';
   threshold: number;
   offset: number;
+  /**
+   * Re-arm distance in the signal's unit: after a crossing, the signal must
+   * return past threshold ∓ hysteresis before the next one counts.
+   */
+  hysteresis?: number;
+  /** Seconds the signal must stay crossed before a crossing counts. */
+  debounce?: number;
 };
 export type SegmentationDefinition = (
   | {

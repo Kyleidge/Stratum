@@ -4761,6 +4761,14 @@ body:has(.workflow-dialog[data-open]) [data-slot='alert-dialog-overlay'] {
   color: var(--muted-foreground);
   font-size: var(--text-sm);
 }
+.segment-noise summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
+.segment-noise[open] summary {
+  margin-bottom: 6px;
+}
 .workflow-segmentation-editor .segment-edge-toggle.value-binding-mode {
   display: flex;
 }

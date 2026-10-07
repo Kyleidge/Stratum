@@ -1,7 +1,7 @@
 import { FUNCTIONS } from './signal-functions';
 import { isBinaryOperation } from './signal-arithmetic';
 import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
-import { BINDABLE_DERIVE } from './value-bindings';
+import { BINDABLE_DERIVE, BINDABLE_VALUE } from './value-bindings';
 import type {
   CheckDefinition,
   ParameterBindings,
@@ -322,7 +322,21 @@ function readTrigger(
   bind?: (setting: 'threshold' | 'offset', binding: ValueBinding) => void,
 ): EdgeTrigger {
   const map = reader.map(value, context);
-  reader.keys(map, ['signal', 'edge', 'threshold', 'offset'], context);
+  reader.keys(
+    map,
+    ['signal', 'edge', 'threshold', 'offset', 'hysteresis', 'debounce'],
+    context,
+  );
+  const noise = (setting: 'hysteresis' | 'debounce') => {
+    const read = reader.optionalNumber(
+      map[setting],
+      `${context} ${setting}`,
+      map,
+    );
+    if (read !== undefined && read < 0)
+      reader.fail(`${context} ${setting} cannot be negative.`, map);
+    return read ? { [setting]: read } : {};
+  };
   const number = (setting: 'threshold' | 'offset', fallback?: number) => {
     const raw = map[setting];
     if (raw === undefined || raw === null) {
@@ -348,6 +362,8 @@ function readTrigger(
     ),
     threshold: number('threshold'),
     offset: number('offset', 0),
+    ...noise('hysteresis'),
+    ...noise('debounce'),
   };
 }
 
@@ -943,7 +959,9 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
             : 1;
         continue;
       }
-      const setting = reader.setting(body[name], `${context} ${name}`, body);
+      const setting = BINDABLE_VALUE[name]
+        ? reader.setting(body[name], `${context} ${name}`, body)
+        : reader.number(body[name], `${context} ${name}`, body);
       // A bound setting holds 0 until a run resolves its value.
       raw[name] = typeof setting === 'number' ? setting : 0;
       if (typeof setting !== 'number') bindings[name] = setting;
@@ -1225,6 +1243,8 @@ function triggerYaml(
       : trigger.offset
         ? { offset: trigger.offset }
         : {}),
+    ...(trigger.hysteresis ? { hysteresis: trigger.hysteresis } : {}),
+    ...(trigger.debounce ? { debounce: trigger.debounce } : {}),
   };
 }
 
@@ -1279,6 +1299,8 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
             ? { edge: parameters.edge === -1 ? 'falling' : 'rising' }
             : {}),
           ...setting('time'),
+          ...setting('hysteresis'),
+          ...setting('debounce'),
         },
       ];
     }

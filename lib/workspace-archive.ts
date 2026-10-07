@@ -9,6 +9,7 @@ import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
 import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
+import { validTriggerNoise } from './segmentation';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
 import {
   BINDABLE_DERIVE,
@@ -567,7 +568,8 @@ export function validateWorkspace(value: unknown): Project {
             nodes.get(trigger.signalId)?.sourceId !== sourceId ||
             !['rising', 'falling'].includes(trigger.edge) ||
             !Number.isFinite(trigger.threshold) ||
-            !Number.isFinite(trigger.offset),
+            !Number.isFinite(trigger.offset) ||
+            !validTriggerNoise(trigger),
         )
       )
         throw new Error('Invalid saved triggers.');
