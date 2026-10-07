@@ -2160,6 +2160,9 @@ export async function workflowUiSmoke() {
       }),
     );
     await click('Save file…', await dialog());
+    // On the desktop the request follows the native Save dialog; cancel only
+    // once it is queued, which is the case this check covers.
+    await until(() => resolveExport, 'queued export request');
     await click('Cancel export', await dialog());
     assert(
       resolveExport && cancelledExport,
