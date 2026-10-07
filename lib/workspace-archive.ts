@@ -41,6 +41,37 @@ function validValueSettings(value: ScalarValue): boolean {
   }
 }
 
+/**
+ * The backup format this version writes and the newest it reads. Raise it
+ * when a newer Stratum's backups hold anything this one would reject or lose
+ * (docs/file-format-stability.md).
+ */
+export const ARCHIVE_VERSION = 1;
+/** The header's format name keeps its pre-rename spelling. */
+export const ARCHIVE_FORMAT = 'stratus-workspace';
+
+/**
+ * Checks an archive's first record before anything is staged: the format, then
+ * the version, naming a newer backup rather than guessing at it.
+ */
+export function checkArchiveHeader(record: Record<string, unknown>) {
+  if (record.format !== ARCHIVE_FORMAT)
+    throw new Error(
+      'This file is not a Stratum workspace backup. Choose a .stratum file made with Save workspace backup (or Download workspace backup in the browser).',
+    );
+  const version = record.version;
+  if (
+    typeof version === 'number' &&
+    Number.isSafeInteger(version) &&
+    version > ARCHIVE_VERSION
+  )
+    throw new Error(
+      `This backup was made by a newer version of Stratum (backup format ${version}). Update Stratum to restore it. Your current workspace is unchanged.`,
+    );
+  if (version !== ARCHIVE_VERSION)
+    throw new Error("This workspace backup's version is not supported.");
+}
+
 /** Browser backups and downloads build one Blob, so they stay capped. */
 export const ARCHIVE_LIMIT = 128 * 1024 * 1024;
 export const EXPORT_LIMIT = 64 * 1024 * 1024;

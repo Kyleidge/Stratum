@@ -264,9 +264,12 @@ plot layouts and Undo/Redo history are excluded. **Restore workspace backup**
 replaces the current workspace after confirmation; Undo can recover the prior one.
 
 Desktop and browser workspaces have separate local storage. Use a backup to move
-your analysis between them or to another computer. Backups support up to
-**128 MiB**; Samples CSV supports **64 MiB** per file. For a larger sample export,
-choose fewer signals or shorter segments. The **?** button in the top bar opens
+your analysis between them or to another computer. The desktop app saves
+backups and Samples CSV through a Save dialog with no size limit, and
+**Automatic backups** in the Workspace dialog keeps the newest 10 backups in a
+folder you choose. In the browser, backups support up to **128 MiB** and Samples
+CSV **64 MiB** per file; for a larger sample export, choose fewer signals or
+shorter segments. The **?** button in the top bar opens
 the guide, with **Getting started**, **Concepts**, **Shortcuts** and **Batch**
 tabs. The sun or moon button switches between light and dark themes.
 

@@ -63,8 +63,11 @@ export function registerDesktopFiles({ test } = {}) {
   const settingsPath = join(app.getPath('userData'), 'desktop-settings.json');
   let settings = { autoBackup: { folder: null } };
   const loaded = readJson(settingsPath, settings).then((value) => {
-    if (value && typeof value === 'object' && value.autoBackup)
+    if (value && typeof value === 'object' && value.autoBackup) {
       settings = value;
+      if (typeof settings.autoBackup.folder !== 'string')
+        settings.autoBackup.folder = null;
+    }
   });
   let saving = Promise.resolve();
   const persist = () =>
@@ -168,7 +171,7 @@ export function registerDesktopFiles({ test } = {}) {
       const result = await dialog.showSaveDialog(parent(event), {
         title: typeof options.title === 'string' ? options.title : undefined,
         defaultPath: join(
-          auto().lastDirectory ?? app.getPath('documents'),
+          settings.lastDirectory ?? app.getPath('documents'),
           name,
         ),
         filters: kind.filters,
@@ -177,7 +180,7 @@ export function registerDesktopFiles({ test } = {}) {
       if (result.canceled || !result.filePath) return null;
       path = result.filePath;
       if (!extname(path)) path += `.${kind.extension}`;
-      auto().lastDirectory = dirname(path);
+      settings.lastDirectory = dirname(path);
       void persist();
     }
     return openWrite(event.sender.id, path);
@@ -202,13 +205,13 @@ export function registerDesktopFiles({ test } = {}) {
     } else {
       const result = await dialog.showOpenDialog(parent(event), {
         title: typeof options.title === 'string' ? options.title : undefined,
-        defaultPath: auto().lastDirectory ?? app.getPath('documents'),
+        defaultPath: settings.lastDirectory ?? app.getPath('documents'),
         filters: kind.openFilters,
         properties: ['openFile'],
       });
       if (result.canceled || !result.filePaths[0]) return null;
       path = result.filePaths[0];
-      auto().lastDirectory = dirname(path);
+      settings.lastDirectory = dirname(path);
       void persist();
     }
     const file = await open(path, 'r');

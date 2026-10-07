@@ -65,10 +65,14 @@ import {
   remapProject,
 } from './workflow-lifecycle';
 import type { WorkflowCommand } from './workflow-lifecycle';
+import { APP_VERSION } from './app-version';
 import {
+  ARCHIVE_FORMAT,
   ARCHIVE_LIMIT,
+  ARCHIVE_VERSION,
   EXPORT_LIMIT,
   ChunkedWriter,
+  checkArchiveHeader,
   archiveLines,
   validateWorkspace,
   type ByteSink,
@@ -549,14 +553,23 @@ export class SignalEngine {
       (sum, source) => sum + source.chunks * (source.channels.length + 1),
       0,
     );
-    await out.write(
-      JSON.stringify({
-        // Stable format identifier keeps backups compatible across the rename.
-        format: 'stratus-workspace',
-        version: 1,
-        project: withWorkflowHistory(project),
-      }) + '\n',
-    );
+    const header = JSON.stringify({
+      format: ARCHIVE_FORMAT,
+      version: ARCHIVE_VERSION,
+      app: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      schema: WORKSPACE_SCHEMA_VERSION,
+      project: withWorkflowHistory(project),
+    });
+    // JSON turns NaN and Infinity into null: write only metadata that restores.
+    try {
+      validateWorkspace((JSON.parse(header) as { project: unknown }).project);
+    } catch (error) {
+      throw new Error(
+        `This workspace cannot be backed up because its saved metadata is invalid: ${error instanceof Error ? error.message : String(error)} Nothing was saved.`,
+      );
+    }
+    await out.write(header + '\n');
     for (const source of project.sources)
       for (let index = 0; index < source.chunks; index++)
         for (const column of [
@@ -619,8 +632,7 @@ export class SignalEngine {
           throw new Error('Invalid or extra archive records.');
         const record = value as Record<string, unknown>;
         if (!next) {
-          if (record.format !== 'stratus-workspace' || record.version !== 1)
-            throw new Error('Choose a supported Stratum workspace backup.');
+          checkArchiveHeader(record);
           next = validateWorkspace(record.project);
           expected = next.sources.reduce(
             (sum, source) => sum + source.chunks * (source.channels.length + 1),

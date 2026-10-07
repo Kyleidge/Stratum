@@ -63,8 +63,11 @@ Full-repository lint retains the 19 starter issues listed below.
 
 - This is a local application; browser and desktop profiles have separate storage.
   Clearing a profile also removes Undo history. Keep independent workspace backups.
-- Archives have a 128 MiB limit; samples CSV has a 64 MiB limit per file. Native
-  streaming backups/exports and historical raw-storage compaction are not included.
+- The desktop app streams backups, restores and samples CSV through native file
+  dialogs with bounded memory and no size limit, and can write automatic
+  backups (on close and every 30 minutes while changed, newest 10 kept). The
+  browser build keeps the 128 MiB archive and 64 MiB samples CSV limits.
+  Historical raw-storage compaction is not included.
 - Cold plots and high-offset sample pages can scan substantial data. There is no
   persistent plot pyramid and no certified multi-gigabyte performance target.
 - HTML reports are output snapshots, not editable report templates. Current export

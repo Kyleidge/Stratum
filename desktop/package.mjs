@@ -21,10 +21,18 @@ await cp(
   `${staging}/dist-desktop`,
   { recursive: true },
 );
-await copyFile(
-  fileURLToPath(new URL('./main.mjs', import.meta.url)),
-  `${staging}/desktop/main.mjs`,
-);
+// The main process, its file bridge and the sandboxed preload.
+for (const file of [
+  'main.mjs',
+  'files.mjs',
+  'backup-files.mjs',
+  'backup-smoke.mjs',
+  'preload.cjs',
+])
+  await copyFile(
+    fileURLToPath(new URL(`./${file}`, import.meta.url)),
+    `${staging}/desktop/${file}`,
+  );
 await writeFile(
   `${staging}/package.json`,
   JSON.stringify({
