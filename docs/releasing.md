@@ -2,48 +2,42 @@
 
 Stratum ships as a Windows (x64) desktop app: an NSIS installer that installs
 for the current user, adds Start-menu and desktop shortcuts and an
-uninstaller, and updates itself from a public releases feed. The source
-repository stays private.
+uninstaller, and updates itself from this public repository's GitHub
+releases.
 
 ## One-time setup
 
-Create these before the first release. Nothing in this repository creates
-them.
+The update feed needs no setup: the Release workflow publishes to this
+repository with its own `GITHUB_TOKEN`, and installed apps read the releases
+anonymously, so no token is ever embedded in the app. The repository must stay
+public for that; a private one would need a token in every installed copy.
 
-1. **A public releases repository**, by default `Kyleidge/stratum-releases`.
-   It holds only release assets (installer, blockmap and `latest.yml`), never
-   source. Initialise it with a README so it has a default branch for release
-   tags. Installed apps read its releases anonymously, so no token is ever
-   embedded in the app.
-2. **A publishing token** stored as the `RELEASES_TOKEN` Actions secret in
-   this (source) repository: a fine-grained personal access token limited to
-   the releases repository with **Contents: read and write**. Rotate it before
-   it expires.
-3. **Optional: code signing.** Unsigned installers work, but Windows
-   SmartScreen warns about them until they build reputation. Choose one:
-   - **Azure Trusted Signing** (usually the cheaper option, a monthly
-     subscription without a hardware token). Create a Trusted Signing account
-     and certificate profile, and an Entra ID app registration with the
-     _Trusted Signing Certificate Profile Signer_ role. Then add the secrets
-     `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`, and the
-     repository variables `AZURE_SIGNING_ENDPOINT` (for example
-     `https://weu.codesigning.azure.net`), `AZURE_SIGNING_ACCOUNT`,
-     `AZURE_SIGNING_PROFILE` and `AZURE_SIGNING_PUBLISHER` (the certificate's
-     subject common name, exactly).
-   - **A code-signing certificate file** (`.pfx`) from a certificate
-     authority: add the secrets `CSC_LINK` (the file base64-encoded, or an
-     HTTPS URL) and `CSC_KEY_PASSWORD`. Certificates issued on hardware tokens
-     cannot be used from a hosted runner.
+**Optional: code signing.** Unsigned installers work, but Windows
+SmartScreen warns about them until they build reputation. Choose one:
 
-   Without these secrets the build is unsigned; nothing else changes. Keep a
-   release line on one signing identity: electron-updater checks that an
-   update is signed by the same publisher as the installed app.
+- **Azure Trusted Signing** (usually the cheaper option, a monthly
+  subscription without a hardware token). Create a Trusted Signing account
+  and certificate profile, and an Entra ID app registration with the
+  _Trusted Signing Certificate Profile Signer_ role. Then add the secrets
+  `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`, and the
+  repository variables `AZURE_SIGNING_ENDPOINT` (for example
+  `https://weu.codesigning.azure.net`), `AZURE_SIGNING_ACCOUNT`,
+  `AZURE_SIGNING_PROFILE` and `AZURE_SIGNING_PUBLISHER` (the certificate's
+  subject common name, exactly).
+- **A code-signing certificate file** (`.pfx`) from a certificate
+  authority: add the secrets `CSC_LINK` (the file base64-encoded, or an
+  HTTPS URL) and `CSC_KEY_PASSWORD`. Certificates issued on hardware tokens
+  cannot be used from a hosted runner.
+
+Without these secrets the build is unsigned; nothing else changes. Keep a
+release line on one signing identity: electron-updater checks that an
+update is signed by the same publisher as the installed app.
 
 ## Cut a release
 
 1. Update `version` in `package.json` and move the `CHANGELOG.md` entry from
    "Unreleased" to the release date. Commit to `main`.
-2. Tag the commit and push the tag:
+2. Tag the commit with `v` and that version, and push the tag:
 
    ```powershell
    git tag v1.0.0
@@ -55,10 +49,25 @@ them.
    `node desktop/package.mjs --publish`. It fails if the tag does not match
    `package.json`.
 4. electron-builder uploads `Stratum-Setup-<version>.exe`, its `.blockmap`
-   and `latest.yml` to a **draft** release in the releases repository. Check
-   the draft (install it on a clean Windows account), add release notes from
-   the changelog, and publish it. Installed copies only see published
-   releases.
+   and `latest.yml` to a **draft** release in this repository. Check the
+   draft (install it on a clean Windows account), add release notes from the
+   changelog, and publish it. Installed copies only see published releases.
+
+### Beta releases
+
+Test builds use a `beta` prerelease version, such as `1.1.0-beta.1` (tag
+`v1.1.0-beta.1`). The workflow marks their drafts as prereleases; keep that
+box ticked when publishing. Then:
+
+- Stable installs never see betas: they read only GitHub's latest full
+  release.
+- A beta install updates to the newest published release, beta or stable,
+  so testers move on to `1.1.0` when it ships.
+
+Use `beta` (or `alpha`) only. electron-updater treats any other name, such as
+`preview`, as a separate channel whose installs never move to a stable
+release. Number betas below the release they lead to: `1.1.0-beta.1` comes
+before `1.1.0`.
 
 Pull requests that touch packaging files and manual runs (**Run workflow**)
 build the installer without publishing and
@@ -96,9 +105,8 @@ or origin without a migration. Uninstalling keeps the folder.
 ## Update feed
 
 The feed is fixed at packaging time in `resources/app-update.yml`.
-`desktop/package.mjs` uses a GitHub provider on `Kyleidge/stratum-releases`
-unless these environment variables (repository variables in CI) say
-otherwise:
+`desktop/package.mjs` uses a GitHub provider on `Kyleidge/Stratum` unless
+these environment variables (repository variables in CI) say otherwise:
 
 | Variable               | Effect                                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------------------ |
@@ -106,8 +114,11 @@ otherwise:
 | `STRATUM_UPDATE_REPO`  | Name of the releases repository                                                            |
 | `STRATUM_UPDATE_URL`   | Use a generic HTTPS folder instead (upload the installer, blockmap and `latest.yml` there) |
 
-Do not point the feed at the private source repository: reading it would
-require a token inside every installed copy.
+A feed in another GitHub repository also needs a `RELEASES_TOKEN` Actions
+secret: a fine-grained token limited to that repository with **Contents: read
+and write**. The workflow then can't mark beta drafts there as prereleases, so
+tick the box yourself. Never point the feed at a private repository: reading it
+would require a token inside every installed copy.
 
 At run time (`desktop/updater.mjs`) the installed app checks quietly ten
 seconds after startup and from **Help → Check for updates…**, downloads in the

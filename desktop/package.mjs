@@ -95,9 +95,9 @@ async function stage() {
 }
 
 /**
- * The update feed baked into resources/app-update.yml. The source repository
- * is private, so installed apps read a public, releases-only repository (or
- * any static HTTPS folder) and never need a token.
+ * The update feed baked into resources/app-update.yml: the public source
+ * repository's GitHub releases (or another repository or static HTTPS folder),
+ * which installed apps read anonymously, never with a token.
  */
 function updateFeed() {
   if (env.STRATUM_UPDATE_URL)
@@ -105,7 +105,7 @@ function updateFeed() {
   return {
     provider: 'github',
     owner: env.STRATUM_UPDATE_OWNER || 'Kyleidge',
-    repo: env.STRATUM_UPDATE_REPO || 'stratum-releases',
+    repo: env.STRATUM_UPDATE_REPO || 'Stratum',
     // Uploads land in a draft release; publishing it releases the update.
     releaseType: 'draft',
   };
