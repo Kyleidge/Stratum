@@ -209,6 +209,9 @@
 .workflow-type[data-type='value']::before {
   background: var(--kind-value);
 }
+.workflow-type[data-type='segment']::before {
+  background: var(--kind-segment);
+}
 
 /* Dock: outputs, exact samples and saved settings of the selection */
 .plot-output-dock {

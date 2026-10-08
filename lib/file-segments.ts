@@ -109,8 +109,11 @@ export function segmentWithin(
   return false;
 }
 
-/** "12.5–40 s" for a segment's interval. */
-export function segmentInterval(segment: Pick<FileSegment, 'start' | 'end'>) {
-  const short = (value: number) => String(Number(value.toFixed(3)));
+/** "12.5–40 s" for a segment's interval, to `digits` decimals at most. */
+export function segmentInterval(
+  segment: Pick<FileSegment, 'start' | 'end'>,
+  digits = 3,
+) {
+  const short = (value: number) => String(Number(value.toFixed(digits)));
   return `${short(segment.start)}–${short(segment.end)} s`;
 }

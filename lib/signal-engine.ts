@@ -3449,8 +3449,13 @@ export class SignalEngine {
           : { id, ...new Envelope(view[0], view[1]).finish() },
       );
     }
+    // The candidate is shown with the signals it crops and its segment.
     return {
-      node,
+      node: {
+        ...node,
+        parents: node.parents.map((id) => visibleInput(graph.nodes, id)),
+        segmentId: signalSegment(graph.nodes, node.parents[0]),
+      },
       plot: { id: node.id, ...envelope.finish() },
       inputs,
       domain,

@@ -181,6 +181,8 @@ export default function FunctionEditor({
   );
   const [secondaryId, setSecondaryId] = useState(editor.secondaryId ?? '');
   const [within, setWithin] = useState(editor.within);
+  // Within segments, the value preview can focus any input and segment pair.
+  const [previewSegment, setPreviewSegment] = useState<string>();
   const [previewId, setPreviewId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
   // An untouched threshold follows the previewed input's range midpoint.
@@ -417,7 +419,13 @@ export default function FunctionEditor({
     : values
       ? `Create ${within ? 'up to ' : ''}${formatCount(count, 'value')}`
       : `Create ${within ? 'up to ' : ''}${formatCount(count, 'derived signal')}`;
-  const focused = statistics.get(previewId);
+  const focused =
+    (within &&
+      statistics.items.find(
+        (item) =>
+          item.inputId === previewId && item.segmentId === previewSegment,
+      )) ||
+    statistics.get(previewId);
   const summary = values
     ? `${formatCount(count, 'value')}${
         focused && valueSpec
@@ -495,7 +503,7 @@ export default function FunctionEditor({
               />
               {values && (
                 <p className="value-output-hint">
-                  One result per input,{' '}
+                  One result per input{within ? ' in each segment' : ''},{' '}
                   {valueSpec?.result === 'level'
                     ? 'in its original unit'
                     : valueSpec?.result === 'area'
@@ -685,7 +693,11 @@ export default function FunctionEditor({
                 previewId={previewId}
                 plot={plot}
                 plotError={plotError}
-                onPreview={setPreviewId}
+                onPreview={(id, segmentId) => {
+                  setPreviewId(id);
+                  setPreviewSegment(segmentId);
+                }}
+                focused={focused}
                 within={!!within}
               />
             ) : (
@@ -1278,6 +1290,7 @@ function ValuePreview({
   plot,
   plotError,
   onPreview,
+  focused,
   within,
 }: {
   ids: string[];
@@ -1288,12 +1301,13 @@ function ValuePreview({
   previewId: string;
   plot?: Plot;
   plotError?: string;
-  onPreview: (id: string) => void;
+  onPreview: (id: string, segmentId?: string) => void;
+  /** The statistics shown on the plot (an input in one segment). */
+  focused?: ValueStatistics;
   /** Rows are input and segment pairs; the plot shows the focused segment. */
   within?: boolean;
 }) {
   const node = index.nodes.get(previewId);
-  const focused = statistics.get(previewId);
   const value = focused ? statisticValue(focused, operation) : null;
   const time = focused ? statisticTime(focused, operation) : undefined;
   const spec = findValueSpec(operation);
@@ -1430,7 +1444,7 @@ function ValuePreview({
                       type="button"
                       className="value-preview-row"
                       aria-pressed={item === focused}
-                      onClick={() => onPreview(item.inputId)}
+                      onClick={() => onPreview(item.inputId, item.segmentId)}
                     >
                       {index.segmentLabel(item.segmentId ?? '')} ·{' '}
                       {index.label(item.inputId)}
@@ -1553,6 +1567,11 @@ function DerivedPreview({
         ) : (
           <span className="operation-preview-subject">
             {index.label(inputId)}
+          </span>
+        )}
+        {shown?.node.segmentId && (
+          <span className="operation-preview-subject">
+            within {index.segmentLabel(shown.node.segmentId)}
           </span>
         )}
         {preview.busy && <PreviewBusy />}
