@@ -39,7 +39,9 @@ export function workflowRows(
       (id) =>
         (!contributingOutputs || contributingOutputs.has(id)) &&
         (outputKind === 'all' ||
-          (outputKind === 'values') === index.values.has(id)),
+          (outputKind === 'values'
+            ? index.values.has(id)
+            : index.nodes.has(id))),
     );
     // Type filters show only steps that produced a matching output.
     if (outputKind !== 'all' && !candidates.length) continue;

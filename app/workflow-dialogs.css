@@ -785,3 +785,49 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Within: the entire signal, all segments of a step, or chosen ones */
+.within-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.within-control .input-hint {
+  margin: 0;
+}
+.within-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 2px;
+}
+.within-segments .segment-checkbox {
+  margin: 4px 0;
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+}
+.within-segment-list > summary {
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.within-segment-list ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+.within-segment-list .segment-checkbox {
+  min-height: 24px;
+  margin: 0;
+}
+.within-segment-list .segment-checkbox small {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.segment-scope-grid .within-control {
+  margin: 0;
+}

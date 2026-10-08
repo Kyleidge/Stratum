@@ -10,19 +10,20 @@ Severity: **P0** blocks or misleads most users, **P1** significant friction,
 
 ## Glossary (one name per concept)
 
-| Concept                                                      | Use                                                                | Avoid                                     |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------- |
-| One History entry (an invocation)                            | **step**                                                           | operation, invocation (in UI copy)        |
-| Re-open a step's editor to make a new step from its settings | **New version…**                                                   | Duplicate, Repeat with new settings       |
-| CSV/HTML download dialog                                     | **Export data…**                                                   | Export / report, Inspect / export         |
-| Send a capture to the PDF editor                             | **Add to report**                                                  | Report (as a verb)                        |
-| The two workspaces                                           | **Data** · **Reports** (switch label "Data Inspector" in tooltips) | unlabeled icons                           |
-| Inputs that Derive/Segment/Value will use                    | **Apply to** (pill), **Input** (table column)                      | Use, processing scope                     |
-| The imported file                                            | **recording**; its columns are **original signals**                | originals (alone)                         |
-| The demo                                                     | **example recording**                                              | example workflow                          |
-| A saved `.stratum.yaml`                                      | **workflow**                                                       | recipe (in UI copy)                       |
-| Value step names                                             | describe the result ("Average product per run")                    | "Compare…"                                |
-| Right-hand panel                                             | **Details**                                                        | Inspector (ambiguous with Data Inspector) |
+| Concept                                                      | Use                                                                 | Avoid                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------- |
+| One History entry (an invocation)                            | **step**                                                            | operation, invocation (in UI copy)        |
+| Re-open a step's editor to make a new step from its settings | **New version…**                                                    | Duplicate, Repeat with new settings       |
+| CSV/HTML download dialog                                     | **Export data…**                                                    | Export / report, Inspect / export         |
+| Send a capture to the PDF editor                             | **Add to report**                                                   | Report (as a verb)                        |
+| The two workspaces                                           | **Data** · **Reports** (switch label "Data Inspector" in tooltips)  | unlabeled icons                           |
+| Inputs that Derive/Segment/Value will use                    | **Apply to** (pill), **Input** (table column)                       | Use, processing scope                     |
+| The imported file                                            | **recording**; its columns are **original signals**                 | originals (alone)                         |
+| The demo                                                     | **example recording**                                               | example workflow                          |
+| A saved `.stratum.yaml`                                      | **workflow**                                                        | recipe (in UI copy)                       |
+| Value step names                                             | describe the result ("Average product per run")                     | "Compare…"                                |
+| A time interval of a recording found by Segment              | **segment**; a step's scope is **Within** (Entire signal, segments) | segment signal, crop, region (in UI copy) |
+| Right-hand panel                                             | **Details**                                                         | Inspector (ambiguous with Data Inspector) |
 
 Counts always agree in number: use `formatCount` from `lib/format-count.ts`
 (`1 signal`, `3 signals`).

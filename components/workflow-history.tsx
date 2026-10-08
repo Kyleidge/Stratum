@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
 import { formatCount } from '@/lib/format-count';
+import { segmentInterval } from '@/lib/file-segments';
 import {
   stepInputs,
   stepName,
@@ -176,6 +177,14 @@ export default function WorkflowHistory({
     if (selectedOwner) next.delete(selectedOwner);
     return next;
   }, [collapsed, selectedOwner, focusedStepId, outputsCollapsed]);
+  /** A row's second column: a signal's or value's unit, a segment's times. */
+  const outputDetail = (id: string) => {
+    const segment = index.segments.get(id)?.segment;
+    // A compact interval; Details and the Outputs table give exact times.
+    return segment
+      ? segmentInterval(segment, 1)
+      : (index.nodes.get(id)?.unit ?? index.values.get(id)?.unit ?? '');
+  };
   const rows = useMemo(
     () =>
       workflowRows(
@@ -512,15 +521,20 @@ export default function WorkflowHistory({
                 ? 'value'
                 : counted.length && counted.every((id) => index.nodes.has(id))
                   ? 'signal'
-                  : 'output',
+                  : counted.length &&
+                      counted.every((id) => index.segments.has(id))
+                    ? 'segment'
+                    : 'output',
             );
             const Icon =
               row.kind === 'output'
                 ? index.values.has(row.outputId!)
                   ? Hash
-                  : index.nodes.get(row.outputId!)?.operation === 'raw'
-                    ? LockKeyhole
-                    : Waves
+                  : index.segments.has(row.outputId!)
+                    ? Scissors
+                    : index.nodes.get(row.outputId!)?.operation === 'raw'
+                      ? LockKeyhole
+                      : Waves
                 : step.kind === 'value'
                   ? Hash
                   : step.kind === 'segment' || step.kind === 'regions'
@@ -610,7 +624,7 @@ export default function WorkflowHistory({
                   row.kind === 'step'
                     ? `${row.label} · ${outputCount}${inputSteps.length ? ` · from ${inputSteps.slice(0, 3).join(', ')}${inputSteps.length > 3 ? ' and more' : ''}` : ''}`
                     : row.outputId
-                      ? `${row.label} · ${index.kind(row.outputId)} · ${index.nodes.get(row.outputId)?.unit ?? index.values.get(row.outputId)?.unit ?? ''}${single ? ` · step ${reference} ${stepName(step)}` : ''}`
+                      ? `${row.label} · ${index.kind(row.outputId)} · ${outputDetail(row.outputId)}${single ? ` · step ${reference} ${stepName(step)}` : ''}`
                       : row.label
                 }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
                 data-wrap={
@@ -748,7 +762,7 @@ export default function WorkflowHistory({
                     ) : (
                       <Icon
                         size={14}
-                        className={`workflow-icon ${index.values.has(row.outputId!) ? 'value' : index.nodes.get(row.outputId!)?.operation === 'raw' ? 'import' : 'derive'}`}
+                        className={`workflow-icon ${index.values.has(row.outputId!) ? 'value' : index.segments.has(row.outputId!) ? 'segment' : index.nodes.get(row.outputId!)?.operation === 'raw' ? 'import' : 'derive'}`}
                       />
                     )}
                     {flagged && <StatusIcon status={flagged} size={12} />}
@@ -766,9 +780,7 @@ export default function WorkflowHistory({
                       <small>
                         {row.kind === 'step'
                           ? `${(step.revision ?? 1) > 1 ? `v${step.revision} · ` : ''}${outputCount}`
-                          : (index.nodes.get(row.outputId!)?.unit ??
-                            index.values.get(row.outputId!)?.unit ??
-                            '')}
+                          : outputDetail(row.outputId!)}
                       </small>
                     </span>
                     {checkState !== undefined && (

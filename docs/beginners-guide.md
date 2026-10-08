@@ -113,23 +113,25 @@ each checked signal.
 
 <!-- pagebreak -->
 
-## 3. Keep a useful time interval
+## 3. Find a useful time interval
 
-A segment is a derived signal covering part of its input. You can process it
-further or segment it again.
+A segment is a time interval of the whole recording, such as one test run. It
+is not a signal: later steps choose to work **Within** it, and every signal of
+the recording can be measured there.
 
-With the new smoothed output selected, choose **Segment > Time ranges**.
-Click **Add exact range** and set **Start (s)** to **10** and **End (s)** to
-**50**. The segment preview below updates automatically.
+Choose **Segment > Time ranges**. Click **Add exact range** and set
+**Start (s)** to **10** and **End (s)** to **50**. The segment preview below
+updates automatically.
 
 ![The Segment signals dialog showing a highlighted 10-50 second interval, exact range fields and a one-segment preview.](images/beginners-guide/02-segment.png)
 
 _Figure 3. The shaded band and exact fields describe the same interval. The
 preview confirms one segment from 10 s to 50 s, with no clipped intervals._
 
-Check **Segment target** and the preview boundaries, then choose
-**Create signal segments**. Select the new segment in History for the next
-step.
+Check the preview boundaries, then choose **Create segments**. Select the new
+segment in History: the plot shades it over the recording and zooms to it.
+**Within** in the same dialog finds segments inside earlier ones, such as
+10-second windows within each run.
 
 You can also drag across the plot with **Draw ranges**, or move and resize a
 range with **Adjust ranges**. **Windows** splits at regular intervals: drag the
@@ -142,10 +144,12 @@ Time ranges while learning the workflow.
 
 ## 4. Turn a signal into a value
 
-Select the segment you just created. Choose **Value > Time average**, review
-the input, then choose **Create 1 value**. Each calculation card already shows
-its result for the input, and the preview draws the selected value over the
-signal.
+Check the box beside the smoothed signal in History, select the segment you
+just created, then choose **Value > Time average**. **Within** already names
+your segment and **Applies to** the smoothed signal; choose **Create 1 value**.
+Each calculation card already shows its result, and the preview draws the
+selected value over the signal in that segment. With **Within** set to all
+segments of a step, Value gives one result per segment.
 
 ![The Calculate values dialog showing Time average, Sample average, Minimum and Maximum, with Time average selected.](images/beginners-guide/03-value.png)
 
@@ -214,8 +218,8 @@ signals from different recordings.
   lanes; **Stacked** gives each trace a panel; **Y axes** overlays different
   units on independent scales. Open the trace list below a plot to show, hide
   or edit individual traces.
-- Drag signals onto a plot to add them. Dragging a segment adds all sibling
-  segments from its step; **Add signals** lets you choose individual members.
+- Drag signals onto a plot to add them; **Add signals** lets you choose
+  individual members. Selecting a segment shades it over its recording.
 - Use the plot toolbar's **Export** menu to save an SVG or PNG image of the plot.
 
 Named plot layouts are saved on this device, separately from workflow history

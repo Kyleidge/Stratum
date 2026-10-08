@@ -348,18 +348,27 @@ export default function SegmentationEditor({
   const [minimum, setMinimum] = useState(
     String(savedTriggers?.minimumDuration ?? 0),
   );
+  // Nested ranges and windows start at each parent's start.
   const [ranges, setRanges] = useState(
     saved?.method === 'ranges'
       ? saved.ranges.map((range) => range.join(', ')).join('\n')
-      : rangePlot
-        ? ''
-        : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
+      : nested
+        ? `0, ${seconds(Math.min(longestParent, 5) || 1)}`
+        : rangePlot
+          ? ''
+          : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
   );
   const [windowStart, setWindowStart] = useState(
-    String(savedWindows?.start ?? defaultRange?.[0] ?? source.start),
+    String(
+      savedWindows?.start ?? (nested ? 0 : (defaultRange?.[0] ?? source.start)),
+    ),
   );
   const [windowEnd, setWindowEnd] = useState(
-    String(savedWindows?.end ?? defaultRange?.[1] ?? source.end),
+    savedWindows
+      ? String(savedWindows.end)
+      : nested
+        ? seconds(longestParent || 1)
+        : String(defaultRange?.[1] ?? source.end),
   );
   const [duration, setDuration] = useState(
     String(savedWindows?.duration ?? 30),
@@ -903,7 +912,9 @@ export default function SegmentationEditor({
               {methods.find((item) => item.value === method)!.label}
             </strong>
             <span className="segment-time-reference">
-              {source.id === '' ? 'Workspace time' : 'Recording time'} · seconds
+              {nested && method !== 'triggers'
+                ? 'Seconds from each parent’s start'
+                : `${source.id === '' ? 'Workspace time' : 'Recording time'} · seconds`}
             </span>
           </div>
         )}

@@ -267,14 +267,25 @@ function SelectionDetails({
     selection.kind === 'step'
       ? index.steps.get(selection.id)
       : index.owner.get(selection.id);
+  const segmentEntry =
+    selection.kind === 'output' ? index.segments.get(selection.id) : undefined;
+  // The segment a signal or value was made within, and a step's scope.
+  const withinSegment = node?.segmentId ?? value?.segmentId;
+  const scope = selection.kind === 'step' ? step?.within : undefined;
+  const scopeStep = scope
+    ? [...index.steps.values()].find(
+        (item) => item.segmentSetId === scope.setId,
+      )
+    : undefined;
   const signalId = node?.id ?? value?.inputId;
   const range = signalId ? graph.ranges.get(signalId) : undefined;
   const time = signalId ? graph.timeReferences.get(signalId) : undefined;
+  // A step's segments are shown under Within, not as inputs.
   const inputs =
     selection.kind === 'output'
       ? index.inputs(selection.id)
       : step
-        ? stepInputs(step)
+        ? stepInputs(step).filter((id) => !index.segments.has(id))
         : [];
   const sourceIds = new Set(lineage.originals.map((item) => item.sourceId));
   if (step?.kind === 'import' && step.sourceId) sourceIds.add(step.sourceId);
@@ -344,13 +355,15 @@ function SelectionDetails({
   const kind = selection.kind === 'output' ? index.kind(selection.id) : '';
   const kindKey = value
     ? 'value'
-    : node?.operation === 'raw'
-      ? 'original'
-      : node
-        ? 'derived'
-        : step
-          ? stepKindClass(step)
-          : 'derive';
+    : segmentEntry
+      ? 'segment'
+      : node?.operation === 'raw'
+        ? 'original'
+        : node
+          ? 'derived'
+          : step
+            ? stepKindClass(step)
+            : 'derive';
   const editable = !!step && !['import', 'regions'].includes(step.kind);
   // The selection's own operation closes the chain as its current step.
   const chain =
@@ -363,10 +376,11 @@ function SelectionDetails({
         lineage.outputIds.has(id) ||
         (selection.kind === 'output' && id === selection.id),
     );
+    const noun = item.segmentSetId ? 'segment' : 'output';
     return item.id === step?.id && selection.kind === 'step'
-      ? formatCount(item.outputIds.length, 'output')
+      ? formatCount(item.outputIds.length, noun)
       : ids.length === item.outputIds.length && ids.length > 1
-        ? `All ${ids.length.toLocaleString()} outputs`
+        ? `All ${ids.length.toLocaleString()} ${noun}s`
         : ids
             .slice(0, 3)
             .map((id) => index.label(id))
@@ -495,6 +509,120 @@ function SelectionDetails({
                   title={`${range[0]}–${range[1]} s`}
                 >
                   {formatValue(range[0], 3)}–{formatValue(range[1], 3)} s
+                </dd>
+              </div>
+            )}
+            {segmentEntry && (
+              <>
+                <div>
+                  <dt>Start</dt>
+                  <dd className="workflow-property-number">
+                    {formatValue(segmentEntry.segment.start, 3)} s
+                  </dd>
+                </div>
+                <div>
+                  <dt>End</dt>
+                  <dd
+                    className="workflow-property-number"
+                    title={
+                      segmentEntry.segment.endInclusive
+                        ? 'Includes the sample at its end (a recording or parent end).'
+                        : 'Excludes the sample at its end, so adjacent segments never share one.'
+                    }
+                  >
+                    {formatValue(segmentEntry.segment.end, 3)} s
+                    {segmentEntry.segment.endInclusive ? ' (incl.)' : ''}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Duration</dt>
+                  <dd className="workflow-property-number">
+                    {formatValue(
+                      segmentEntry.segment.end - segmentEntry.segment.start,
+                      3,
+                    )}{' '}
+                    s
+                  </dd>
+                </div>
+                <div>
+                  <dt>Time</dt>
+                  <dd>
+                    {segmentEntry.set.sourceId
+                      ? 'Recording time'
+                      : 'Workspace time'}
+                  </dd>
+                </div>
+                {segmentEntry.segment.boundary.startTrigger !== undefined && (
+                  <div>
+                    <dt>Crossings</dt>
+                    <dd className="workflow-property-number">
+                      {formatValue(
+                        segmentEntry.segment.boundary.startTrigger,
+                        3,
+                      )}{' '}
+                      and{' '}
+                      {formatValue(
+                        segmentEntry.segment.boundary.endTrigger ??
+                          segmentEntry.segment.end,
+                        3,
+                      )}{' '}
+                      s
+                    </dd>
+                  </div>
+                )}
+                {segmentEntry.segment.boundary.clipped && (
+                  <div>
+                    <dt>Clipped</dt>
+                    <dd className="workflow-property-number">
+                      Requested{' '}
+                      {formatValue(
+                        segmentEntry.segment.boundary.requestedStart,
+                        3,
+                      )}
+                      –
+                      {formatValue(
+                        segmentEntry.segment.boundary.requestedEnd,
+                        3,
+                      )}{' '}
+                      s
+                    </dd>
+                  </div>
+                )}
+              </>
+            )}
+            {withinSegment && (
+              <div>
+                <dt>Within</dt>
+                <dd>
+                  <button
+                    className="workflow-property-link"
+                    onClick={() => onFollow(withinSegment)}
+                    title={index.label(withinSegment)}
+                  >
+                    {index.segmentLabel(withinSegment)}
+                  </button>
+                </dd>
+              </div>
+            )}
+            {scope && (
+              <div>
+                <dt>Within</dt>
+                <dd>
+                  {scopeStep ? (
+                    <button
+                      className="workflow-property-link"
+                      onClick={() => onStep(scopeStep.id)}
+                      title={`${reference(scopeStep)} ${stepName(scopeStep)}`}
+                    >
+                      {scope.segmentIds
+                        ? scope.segmentIds.length === 1
+                          ? index.segmentLabel(scope.segmentIds[0])
+                          : `${formatCount(scope.segmentIds.length, 'segment')} of ${reference(scopeStep)}`
+                        : `All segments of ${reference(scopeStep)}`}
+                    </button>
+                  ) : (
+                    'Unavailable segments'
+                  )}
                 </dd>
               </div>
             )}

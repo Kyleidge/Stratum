@@ -101,7 +101,7 @@ export default function WithinControl({
   const picked = new Set(value?.segmentIds ?? []);
   return (
     <div className="within-control">
-      <label className="region-field">
+      <div className="region-field">
         <span>Within</span>
         <Select
           value={value?.setId ?? ''}
@@ -123,7 +123,7 @@ export default function WithinControl({
             ))}
           </SelectContent>
         </Select>
-      </label>
+      </div>
       {chosen && value && (
         <div className="within-segments">
           <label className="segment-checkbox" htmlFor={allId}>

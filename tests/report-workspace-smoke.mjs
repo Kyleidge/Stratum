@@ -475,71 +475,92 @@ void app
     await setField('Height', 240);
 
     // Carry the actual history row's drag payload through the workspace switch.
-    await click('Data Inspector', '.workflow-workspaces');
-    await evaluate(() => {
-      const row = [
-        ...document.querySelectorAll('[role="treeitem"][data-kind="output"]'),
-      ].find((item) => item.title === 'Run 1 · Torque × speed');
-      if (!row) throw new Error('Missing the individual run history row');
-      const transfer = new DataTransfer();
-      row.dispatchEvent(
-        new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }),
+    const dropHistoryRow = async (title) => {
+      await click('Data Inspector', '.workflow-workspaces');
+      // History mounts only the rows in view; search brings this one there.
+      await setField('Search workflow', title);
+      await evaluate((title) => {
+        const row = [
+          ...document.querySelectorAll('[role="treeitem"][data-kind="output"]'),
+        ].find((item) => item.title === title);
+        if (!row)
+          throw new Error(
+            'Missing the history row ' +
+              title +
+              ': ' +
+              [...document.querySelectorAll('[role="treeitem"]')]
+                .map((item) => item.title)
+                .join(' / '),
+          );
+        const transfer = new DataTransfer();
+        row.dispatchEvent(
+          new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }),
+        );
+        globalThis.reportSmokeDrag = transfer;
+        const reports = [
+          ...document.querySelectorAll('.workflow-workspaces button'),
+        ].find((button) => button.textContent.trim() === 'Reports');
+        reports.dispatchEvent(
+          new DragEvent('dragover', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: transfer,
+          }),
+        );
+      }, title);
+      await waitFor(
+        reportsVisible,
+        'Dragging over Reports did not open the report workspace',
       );
-      globalThis.reportSmokeDrag = transfer;
-      const reports = [
-        ...document.querySelectorAll('.workflow-workspaces button'),
-      ].find((button) => button.textContent.trim() === 'Reports');
-      reports.dispatchEvent(
-        new DragEvent('dragover', {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer: transfer,
-        }),
-      );
-    });
-    await waitFor(
-      reportsVisible,
-      'Dragging over Reports did not open the report workspace',
+      await evaluate(() => {
+        const paper = document.querySelector('.rb-paper');
+        const box = paper.getBoundingClientRect();
+        const scale = box.width / parseFloat(paper.style.width);
+        paper.dispatchEvent(
+          new DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: globalThis.reportSmokeDrag,
+            clientX: box.left + 48 * scale,
+            clientY: box.top + 320 * scale,
+          }),
+        );
+        delete globalThis.reportSmokeDrag;
+      });
+    };
+    // A segment is a time interval, not data: dropping one adds nothing.
+    await dropHistoryRow('Run 1');
+    await pause(300);
+    assert.equal(
+      await blockCount(),
+      1,
+      'A dropped segment must not add a report block',
     );
-    await evaluate(() => {
-      const paper = document.querySelector('.rb-paper');
-      const box = paper.getBoundingClientRect();
-      const scale = box.width / parseFloat(paper.style.width);
-      paper.dispatchEvent(
-        new DragEvent('drop', {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer: globalThis.reportSmokeDrag,
-          clientX: box.left + 48 * scale,
-          clientY: box.top + 320 * scale,
-        }),
-      );
-      delete globalThis.reportSmokeDrag;
-    });
+    // One value of a three-value step is captured without its siblings.
+    await dropHistoryRow('Run 2 · Average product');
     await waitFor(
       () => document.querySelectorAll('.rb-paper .rb-block').length === 2,
       'Individual history member drop did not add one exact snapshot',
     );
     assert.ok(
-      await evaluate(
-        () =>
+      await evaluate(() => {
+        const paper = document.querySelector('.rb-paper').textContent;
+        return (
           document
             .querySelector('.rb-source-info')
             ?.textContent.includes('1 source output') &&
-          document
-            .querySelector('.rb-paper')
-            .textContent.includes('Run 1 · Torque × speed') &&
-          !document
-            .querySelector('.rb-paper')
-            .textContent.includes('Run 2 · Torque × speed'),
-      ),
-      'Dropped segment must exclude sibling segments',
+          paper.includes('Run 2 · Average product') &&
+          !paper.includes('Run 1 · Average product') &&
+          !paper.includes('Run 3 · Average product')
+        );
+      }),
+      'A dropped value must exclude the other values of its step',
     );
     assert.equal(
       await evaluate(
         () => document.querySelector('[aria-label="Height"]').value,
       ),
-      '320',
+      '166',
       'The inspector must show the newly selected block dimensions',
     );
     await setField('Height', 240);
@@ -550,7 +571,7 @@ void app
             .height,
       ),
       '240px',
-      'Signal snapshot dimensions must remain editable',
+      'Value snapshot dimensions must remain editable',
     );
     await click('Text', '.rb-quick-insert');
     await setField('Text content', 'Measured results — reviewed locally');
@@ -651,7 +672,7 @@ void app
       ).toPNG(),
     );
     process.stdout.write(
-      'Report workspace passed: real signal and scalar capture, exact membership, saved/displayed plots, history drag/drop, shared theme, formatting, draft + undo retention, isolated shortcuts, immutable engine metadata, and two-page PDF export.\n',
+      'Report workspace passed: real signal and scalar capture, exact membership, saved/displayed plots, history drag/drop (a value without its siblings, a segment adding nothing), shared theme, formatting, draft + undo retention, isolated shortcuts, immutable engine metadata, and two-page PDF export.\n',
     );
     clearTimeout(timeout);
     window.destroy();
