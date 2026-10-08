@@ -1,6 +1,7 @@
 # Builds the Windows installer. A `v*` tag (matching package.json's version)
-# also publishes the installer, its blockmap and latest.yml to the public
-# releases feed that installed copies update from. Pull requests touching
+# also publishes the installer, its blockmap and latest.yml to a draft release
+# of this public repository, the feed installed copies update from; a beta
+# version (v1.1.0-beta.1) makes a prerelease draft. Pull requests touching
 # packaging and manual runs only build, uploading the installer as a workflow
 # artifact. See docs/releasing.md.
 name: Release
@@ -30,6 +31,10 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 45
+    # Publishing creates the draft release. Fork pull requests still get a
+    # read-only token, and only tag pushes pass a token to the packager.
+    permissions:
+      contents: write
     env:
       PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
@@ -57,8 +62,8 @@ jobs:
         shell: bash
         run: node desktop/package.mjs $([ "$PUBLISH" = true ] && echo --publish)
         env:
-          # Publishing token for the releases repository (contents: write).
-          GH_TOKEN: ${{ env.PUBLISH == 'true' && secrets.RELEASES_TOKEN || '' }}
+          # RELEASES_TOKEN only when the feed is another repository.
+          GH_TOKEN: ${{ env.PUBLISH == 'true' && (secrets.RELEASES_TOKEN || github.token) || '' }}
           # Optional feed overrides (repository variables).
           STRATUM_UPDATE_OWNER: ${{ vars.STRATUM_UPDATE_OWNER }}
           STRATUM_UPDATE_REPO: ${{ vars.STRATUM_UPDATE_REPO }}
@@ -73,6 +78,14 @@ jobs:
           AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+      # electron-builder can't create a draft that is also a prerelease, and a
+      # beta published as a full release would reach every stable install.
+      - name: Mark a prerelease draft as a prerelease
+        if: env.PUBLISH == 'true' && contains(github.ref_name, '-') && !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
+        shell: bash
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v7
         with:
           name: stratum-windows-installer
