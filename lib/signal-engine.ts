@@ -975,6 +975,17 @@ export class SignalEngine {
         });
         continue;
       }
+      // A file segment is a time interval: its duration, never samples.
+      const segment = index.segments.get(id)?.segment;
+      if (segment) {
+        outputs.push({
+          id,
+          label: index.label(id),
+          unit: 's',
+          interval: { start: segment.start, end: segment.end },
+        });
+        continue;
+      }
       const node = this.find(id);
       let stats = statistics.get(id);
       if (!stats) {
@@ -995,6 +1006,9 @@ export class SignalEngine {
     step: WorkflowStep,
     statistics?: Map<string, OutputStatistics>,
   ): Promise<Project> {
+    // Segment steps take count and duration checks only.
+    if (step.segmentSetId && step.checks?.length)
+      validateChecks(step.checks, 'segments');
     const results = step.checks?.length
       ? evaluateChecks(step.checks, await this.checkOutputs(step, statistics))
       : undefined;
@@ -1120,6 +1134,12 @@ export class SignalEngine {
       const context: BindContext = {
         resolve,
         sourceOf: (id) => this.find(id).sourceId,
+        sourceId: source.id,
+        segmentSet: (id) => {
+          const set = segmentEntries(this.project).get(id)?.set;
+          if (!set) throw new Error('These segments no longer exist.');
+          return { id: set.id, sourceId: set.sourceId };
+        },
         clockStart: (id) => this.bounds(id)[0] - this.axisOffset(id),
         recordingStart: source.start,
         newId: uid,
@@ -1183,15 +1203,27 @@ export class SignalEngine {
         outputs.set(step.id, created.outputIds);
         stepMap[step.id] = created.id;
         const index = new WorkflowIndex(this.project);
+        // `{input}` names the signal chosen (never a hidden segment crop);
+        // `{segment}` the segment an output was made within.
         const names = outputLabels(
           step,
           created.outputIds.length,
           itemId,
           (position) => {
             const id = created.outputIds[position];
-            const parent =
-              index.nodes.get(id)?.parents[0] ?? index.values.get(id)?.inputId;
+            const node = index.nodes.get(id);
+            const parent = node
+              ? node.parents[0] && visibleInput(index.nodes, node.parents[0])
+              : index.values.get(id)?.inputId;
             return parent ? index.label(parent) : '';
+          },
+          (position) => {
+            const id = created.outputIds[position];
+            const segment =
+              index.nodes.get(id)?.segmentId ??
+              index.values.get(id)?.segmentId ??
+              index.segments.get(id)?.segment.parentId;
+            return segment ? index.segmentLabel(segment) : '';
           },
         );
         const tagged: WorkflowStep = {

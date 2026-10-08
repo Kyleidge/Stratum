@@ -15,6 +15,7 @@ import type {
   Operation,
   SegmentationDefinition,
   SegmentationScope,
+  SegmentScope,
 } from './signal-types';
 import type { TimeAnchor, TimeSettings } from './time-types';
 import type { WorkflowCommand } from './workflow-lifecycle';
@@ -33,7 +34,12 @@ import {
 } from './workflow-report-template';
 
 export const WORKFLOW_FORMAT = 'stratum-workflow';
-export const WORKFLOW_VERSION = 1;
+/**
+ * Version 2: `segment` steps find file segments (time intervals of the whole
+ * recording) and `within` scopes derive, value and nested segment steps to
+ * them. Version 1 files keep their meaning: a `segment` step crops signals.
+ */
+export const WORKFLOW_VERSION = 2;
 export const WORKFLOW_EXTENSION = '.stratum.yaml';
 export const MAX_RECIPE_STEPS = 500;
 
@@ -43,6 +49,11 @@ export const MAX_RECIPE_STEPS = 500;
  */
 export type RecipeRef = string;
 export type TimeOrigin = 'recording' | 'recording-start' | 'input-start';
+/**
+ * Version 2 `within`: segments of one segment step, as `sweeps` (all of
+ * them, however many) or positions such as `sweeps[2]`.
+ */
+export type RecipeWithin = RecipeRef[];
 /** ID fields hold references until a run binds them. */
 export type RecipeOperation =
   | {
@@ -57,9 +68,21 @@ export type RecipeOperation =
       unit?: string;
       /** A formula; `signals` holds each letter's references. */
       formula?: { expression: string; signals?: Record<string, RecipeRef[]> };
+      within?: RecipeWithin;
     }
   | {
+      /** Version 2: finds file segments, time intervals of the recording. */
       kind: 'segment';
+      definition: SegmentationDefinition;
+      /** Nested: ranges and windows are seconds from each parent's start. */
+      within?: RecipeWithin;
+      /** Workspace ranges and windows: the signal whose time axis they use. */
+      reference?: RecipeRef;
+      timeOrigin: TimeOrigin;
+    }
+  | {
+      /** Version 1 only: a segment step that crops its input signals. */
+      kind: 'crop-segment';
       inputs: RecipeRef[];
       definition: SegmentationDefinition;
       independently: boolean;
@@ -73,12 +96,16 @@ export type RecipeOperation =
       /** Bound settings hold 0 until a run resolves `bindings`. */
       parameters?: ValueParameters;
       bindings?: ParameterBindings;
+      within?: RecipeWithin;
     }
   | { kind: 'time'; settings: TimeSettings };
 export type RecipeStep = {
   id: string;
   name?: string;
-  /** One label per output; `{n}`, `{input}` and `{item}` are replaced. */
+  /**
+   * One label per output; `{n}`, `{input}`, `{segment}` and `{item}` are
+   * replaced.
+   */
   outputs?: string | (string | null)[];
   checks?: CheckDefinition[];
   onFail: 'continue' | 'stop';
@@ -86,6 +113,8 @@ export type RecipeStep = {
 };
 export type RecipeChannel = { alias: string; name: string; unit?: string };
 export type WorkflowRecipe = {
+  /** The format version the steps were read with (1 or 2). */
+  version: number;
   name: string;
   revision?: string;
   description?: string;
@@ -131,7 +160,7 @@ export const slug = (text: string) =>
 /** References to value steps whose results set this step's settings. */
 export function bindingRefs(operation: RecipeOperation): RecipeRef[] {
   const bindings =
-    operation.kind === 'segment'
+    operation.kind === 'segment' || operation.kind === 'crop-segment'
       ? operation.definition.bindings
       : operation.kind === 'time'
         ? undefined
@@ -139,7 +168,17 @@ export function bindingRefs(operation: RecipeOperation): RecipeRef[] {
   return Object.values(bindings ?? {}).flatMap((binding) => binding.valueIds);
 }
 
-function refsOf(operation: RecipeOperation): RecipeRef[] {
+/** References to the segment step a version 2 step works within. */
+export function withinRefs(operation: RecipeOperation): RecipeRef[] {
+  return operation.kind === 'derive' ||
+    operation.kind === 'value' ||
+    operation.kind === 'segment'
+    ? (operation.within ?? [])
+    : [];
+}
+
+/** References a step reads as signals: inputs, triggers and references. */
+export function signalRefs(operation: RecipeOperation): RecipeRef[] {
   const triggers = (definition: SegmentationDefinition) =>
     definition.method === 'triggers'
       ? [definition.start.signalId, definition.end.signalId]
@@ -150,16 +189,16 @@ function refsOf(operation: RecipeOperation): RecipeRef[] {
         ...operation.inputs,
         ...(operation.with ? [operation.with] : []),
         ...Object.values(operation.formula?.signals ?? {}).flat(),
-        ...bindingRefs(operation),
       ];
     case 'segment':
       return [
-        ...operation.inputs,
         ...triggers(operation.definition),
-        ...bindingRefs(operation),
+        ...(operation.reference ? [operation.reference] : []),
       ];
+    case 'crop-segment':
+      return [...operation.inputs, ...triggers(operation.definition)];
     case 'value':
-      return [...operation.inputs, ...bindingRefs(operation)];
+      return [...operation.inputs];
     case 'time': {
       const settings = operation.settings;
       if (settings.kind === 'align')
@@ -179,9 +218,13 @@ function refsOf(operation: RecipeOperation): RecipeRef[] {
   }
 }
 
-/** Every reference in a step, including triggers and second inputs. */
+/** Every reference in a step: signals, value settings and `within`. */
 export function stepRefs(step: RecipeStep): RecipeRef[] {
-  return refsOf(step.operation);
+  return [
+    ...signalRefs(step.operation),
+    ...bindingRefs(step.operation),
+    ...withinRefs(step.operation),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -373,26 +416,12 @@ function readTrigger(
   };
 }
 
-function readSegment(
+/** A segment step's method (ranges, windows or triggers) and boundary. */
+function readDefinition(
   reader: Reader,
   map: YamlMap,
   context: string,
-): RecipeOperation {
-  reader.keys(
-    map,
-    [
-      'input',
-      'inputs',
-      'ranges',
-      'windows',
-      'triggers',
-      'boundary',
-      'independently',
-      'scope',
-      'time-origin',
-    ],
-    context,
-  );
+): SegmentationDefinition {
   const methods = ['ranges', 'windows', 'triggers'].filter(
     (key) => map[key] !== undefined,
   );
@@ -505,6 +534,31 @@ function readSegment(
       ...(Object.keys(bindings).length ? { bindings } : {}),
     };
   }
+  return definition;
+}
+
+/** Version 1: a segment step that crops its input signals. */
+function readCropSegment(
+  reader: Reader,
+  map: YamlMap,
+  context: string,
+): RecipeOperation {
+  reader.keys(
+    map,
+    [
+      'input',
+      'inputs',
+      'ranges',
+      'windows',
+      'triggers',
+      'boundary',
+      'independently',
+      'scope',
+      'time-origin',
+    ],
+    context,
+  );
+  const definition = readDefinition(reader, map, context);
   const timeOrigin = reader.choice(
     map['time-origin'],
     ['recording', 'recording-start', 'input-start'],
@@ -528,7 +582,7 @@ function readSegment(
           map,
         );
   return {
-    kind: 'segment',
+    kind: 'crop-segment',
     inputs: readInputs(reader, map, context),
     definition,
     independently: reader.boolean(
@@ -538,6 +592,114 @@ function readSegment(
       map,
     ),
     ...(scope ? { scope } : {}),
+    timeOrigin,
+  };
+}
+
+/**
+ * `within`: one segment step's segments, as `sweeps` (all of them) or
+ * positions such as `sweeps[2]` or `[sweeps[1], sweeps[3]]`.
+ */
+function readWithin(
+  reader: Reader,
+  value: YamlValue | undefined,
+  context: string,
+  at: object,
+): RecipeWithin {
+  const refs = reader.refs(value, `${context} within`, at);
+  const parsed = refs.map((ref) => parseRef(ref));
+  if (parsed.some((ref) => ref.name !== parsed[0].name))
+    reader.fail(
+      `${context} within must choose segments of one segment step.`,
+      at,
+    );
+  if (parsed.length > 1 && parsed.some((ref) => ref.position === undefined))
+    reader.fail(
+      `${context} within: use ${parsed[0].name} for every segment, or list positions such as [${parsed[0].name}[1], ${parsed[0].name}[3]].`,
+      at,
+    );
+  if (new Set(refs).size !== refs.length)
+    reader.fail(`${context} within lists a segment twice.`, at);
+  return refs;
+}
+
+/** Settings a version 1 segment step had, which segments no longer take. */
+const CROP_SETTINGS = ['input', 'inputs', 'independently', 'scope'];
+
+/**
+ * Version 2: a segment step that finds file segments, time intervals of the
+ * whole recording (or of a workspace time axis), never signals.
+ */
+function readFileSegment(
+  reader: Reader,
+  map: YamlMap,
+  context: string,
+): RecipeOperation {
+  for (const key of CROP_SETTINGS)
+    if (map[key] !== undefined)
+      reader.fail(
+        `${context}: segment steps take no "${key}" in workflow version 2. Segments are time intervals of the whole recording; later steps choose them with within.`,
+        map,
+      );
+  reader.keys(
+    map,
+    [
+      'ranges',
+      'windows',
+      'triggers',
+      'boundary',
+      'within',
+      'reference',
+      'time-origin',
+    ],
+    context,
+  );
+  const definition = readDefinition(reader, map, context);
+  const within =
+    map.within === undefined || map.within === null
+      ? undefined
+      : readWithin(reader, map.within, context, map);
+  const reference =
+    map.reference === undefined || map.reference === null
+      ? undefined
+      : reader.ref(map.reference, `${context} reference`, map);
+  if (reference && definition.method === 'triggers')
+    reader.fail(
+      `${context}: reference applies to ranges and windows; triggers use their signal's time axis.`,
+      map,
+    );
+  if (within && map['time-origin'] !== undefined)
+    reader.fail(
+      `${context}: time-origin cannot be used with within. Ranges and windows within segments are seconds from each segment's start.`,
+      map,
+    );
+  const timeOrigin = reader.choice(
+    map['time-origin'],
+    ['recording', 'recording-start', 'input-start'],
+    `${context} time-origin`,
+    'recording',
+    map,
+  );
+  if (definition.method === 'triggers' && timeOrigin !== 'recording')
+    reader.fail(
+      `${context}: time-origin applies to ranges and windows; trigger offsets are already relative.`,
+      map,
+    );
+  if (timeOrigin === 'input-start' && !reference)
+    reader.fail(
+      `${context}: input-start measures from the reference signal's start, so it needs a reference. Use recording-start to measure from the recording's start.`,
+      map,
+    );
+  if (timeOrigin === 'recording-start' && reference)
+    reader.fail(
+      `${context}: a workspace time axis has no recording start. Use input-start to measure from the reference signal's start.`,
+      map,
+    );
+  return {
+    kind: 'segment',
+    definition,
+    ...(within ? { within } : {}),
+    ...(reference ? { reference } : {}),
     timeOrigin,
   };
 }
@@ -852,12 +1014,22 @@ function readChecks(
   });
 }
 
+export type CheckTarget = 'signals' | 'values' | 'segments';
 /** Checks that make sense for a step's kind of output. */
 export function checkAllowed(
   kind: CheckDefinition['kind'],
-  outputs: 'signals' | 'values',
+  outputs: CheckTarget,
 ): boolean {
+  if (outputs === 'segments') return kind === 'count' || kind === 'duration';
   return kind === 'count' || kind === 'limits' || outputs === 'signals';
+}
+/** What a recipe step's outputs are, for its checks. */
+export function recipeCheckTarget(operation: RecipeOperation): CheckTarget {
+  return operation.kind === 'value'
+    ? 'values'
+    : operation.kind === 'segment'
+      ? 'segments'
+      : 'signals';
 }
 
 /** A formula derive: expression, unit, other signals and values by name. */
@@ -865,10 +1037,20 @@ function readFormula(
   reader: Reader,
   body: YamlMap,
   context: string,
+  extra: string[],
 ): RecipeOperation {
   reader.keys(
     body,
-    ['function', 'input', 'inputs', 'expression', 'unit', 'signals', 'values'],
+    [
+      'function',
+      'input',
+      'inputs',
+      'expression',
+      'unit',
+      'signals',
+      'values',
+      ...extra,
+    ],
     context,
   );
   const expression = reader.text(
@@ -931,7 +1113,12 @@ function readFormula(
   };
 }
 
-function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
+function readStep(
+  reader: Reader,
+  raw: YamlValue,
+  index: number,
+  version: number,
+): RecipeStep {
   const map = reader.map(raw, `Step ${index + 1}`);
   const id = map.id;
   if (typeof id !== 'string' || !SLUG.test(id))
@@ -953,11 +1140,25 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
     context,
   );
   const body = reader.map(map[present[0]], `${context} ${present[0]}`);
+  // Version 2 derive and value steps can work within segments.
+  const scoped = version >= 2 && present[0] !== 'time';
+  if (!scoped && body.within !== undefined)
+    reader.fail(
+      version < 2
+        ? `${context}: within needs workflow version 2.`
+        : `${context}: time steps cannot work within segments.`,
+      body,
+    );
+  const within = scoped ? ['within'] : [];
   let operation: RecipeOperation;
   if (present[0] === 'derive' && body.function === 'formula')
-    operation = readFormula(reader, body, context);
+    operation = readFormula(reader, body, context, within);
   else if (present[0] === 'derive' && body.function === 'convert') {
-    reader.keys(body, ['function', 'input', 'inputs', 'unit'], context);
+    reader.keys(
+      body,
+      ['function', 'input', 'inputs', 'unit', ...within],
+      context,
+    );
     operation = {
       kind: 'derive',
       operation: 'convert',
@@ -968,7 +1169,7 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   } else if (present[0] === 'derive') {
     reader.keys(
       body,
-      ['function', 'input', 'inputs', 'parameter', 'with'],
+      ['function', 'input', 'inputs', 'parameter', 'with', ...within],
       context,
     );
     const name = body.function;
@@ -1019,7 +1220,10 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
       ...(typeof setting === 'number' ? {} : { bindings: { value: setting } }),
     };
   } else if (present[0] === 'segment') {
-    operation = readSegment(reader, body, context);
+    operation =
+      version >= 2
+        ? readFileSegment(reader, body, context)
+        : readCropSegment(reader, body, context);
   } else if (present[0] === 'value') {
     const function_ = reader.choice(
       body.function,
@@ -1029,7 +1233,11 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
       body,
     );
     const settings = valueSpec(function_)?.parameters ?? [];
-    reader.keys(body, ['function', 'input', 'inputs', ...settings], context);
+    reader.keys(
+      body,
+      ['function', 'input', 'inputs', ...settings, ...within],
+      context,
+    );
     const raw: ValueParameters = {};
     const bindings: ParameterBindings = {};
     for (const name of settings) {
@@ -1071,6 +1279,12 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
       ...(Object.keys(bindings).length ? { bindings } : {}),
     };
   } else operation = readTime(reader, body, context);
+  if (
+    (operation.kind === 'derive' || operation.kind === 'value') &&
+    body.within !== undefined &&
+    body.within !== null
+  )
+    operation.within = readWithin(reader, body.within, context, body);
   let outputs: RecipeStep['outputs'];
   if (typeof map.outputs === 'string')
     outputs = reader.text(map.outputs, `${context} outputs`, 160, map);
@@ -1085,16 +1299,14 @@ function readStep(reader: Reader, raw: YamlValue, index: number): RecipeStep {
   } else if (map.outputs !== undefined && map.outputs !== null)
     reader.fail(`${context} outputs must be a name or a list of names.`, map);
   const checks = readChecks(reader, map.checks, context);
+  const target = recipeCheckTarget(operation);
   if (checks)
     for (const check of checks)
-      if (
-        !checkAllowed(
-          check.kind,
-          operation.kind === 'value' ? 'values' : 'signals',
-        )
-      )
+      if (!checkAllowed(check.kind, target))
         reader.fail(
-          `${context}: ${check.kind} checks apply to signals, not values.`,
+          target === 'segments'
+            ? `${context}: ${check.kind} checks apply to signals; segment steps take count and duration checks.`
+            : `${context}: ${check.kind} checks apply to signals, not values.`,
           map,
         );
   return {
@@ -1232,7 +1444,9 @@ export function parseWorkflow(text: string): WorkflowRecipe {
     reader.fail('The workflow needs a list of steps.', root);
   if (rawSteps.length > MAX_RECIPE_STEPS)
     reader.fail(`Workflows are limited to ${MAX_RECIPE_STEPS} steps.`, root);
-  const steps = rawSteps.map((raw, index) => readStep(reader, raw, index));
+  const steps = rawSteps.map((raw, index) =>
+    readStep(reader, raw, index, version),
+  );
   const stepAt = (index: number) => {
     const raw = rawSteps[index];
     return raw && typeof raw === 'object' ? raw : undefined;
@@ -1241,34 +1455,57 @@ export function parseWorkflow(text: string): WorkflowRecipe {
   const known = new Map<string, 'channel' | number>(
     channels.map((channel) => [channel.alias, 'channel']),
   );
+  const kindOf = (name: string) => {
+    const target = known.get(name);
+    return target === 'channel' || target === undefined
+      ? target
+      : steps[target].operation.kind;
+  };
   for (const [index, step] of steps.entries()) {
     if (known.has(step.id))
       reader.fail(`The id "${step.id}" is used more than once.`, stepAt(index));
-    const bound = new Set(bindingRefs(step.operation));
+    const at = stepAt(index);
     for (const ref of stepRefs(step)) {
       const { name, position } = parseRef(ref);
       const target = known.get(name);
       if (target === undefined)
         reader.fail(
           `Step "${step.id}" uses "${name}", which is not a channel or an earlier step.`,
-          stepAt(index),
+          at,
         );
       if (target === 'channel' && position !== undefined)
         reader.fail(
           `Step "${step.id}": channel "${name}" has one signal; remove [${position}].`,
-          stepAt(index),
+          at,
         );
-      const isValue =
-        typeof target === 'number' && steps[target].operation.kind === 'value';
-      if (bound.has(ref) && !isValue)
+    }
+    for (const ref of bindingRefs(step.operation)) {
+      const { name } = parseRef(ref);
+      if (kindOf(name) !== 'value')
         reader.fail(
           `Step "${step.id}" takes a setting from "${name}", which is not a value step.`,
-          stepAt(index),
+          at,
         );
-      if (!bound.has(ref) && isValue)
+    }
+    for (const ref of withinRefs(step.operation)) {
+      const { name } = parseRef(ref);
+      if (kindOf(name) !== 'segment')
+        reader.fail(
+          `Step "${step.id}" works within "${name}", which is not a segment step.`,
+          at,
+        );
+    }
+    for (const ref of signalRefs(step.operation)) {
+      const { name } = parseRef(ref);
+      if (kindOf(name) === 'value')
         reader.fail(
           `Step "${step.id}" cannot process values from "${name}"; use signals.`,
-          stepAt(index),
+          at,
+        );
+      if (kindOf(name) === 'segment')
+        reader.fail(
+          `Step "${step.id}" uses "${name}" as a signal, but segments are time intervals, not signals; use within: ${name}.`,
+          at,
         );
     }
     known.set(step.id, index);
@@ -1293,9 +1530,15 @@ export function parseWorkflow(text: string): WorkflowRecipe {
           `The report uses "${name}", which is not a channel or step.`,
           root.report as object,
         );
+      if (kindOf(name) === 'segment')
+        reader.fail(
+          `The report uses "${name}", which finds segments; bind signals or values instead.`,
+          root.report as object,
+        );
     }
   }
   return {
+    version,
     name: reader.text(root.name, 'The workflow name', 160, root),
     ...(root.revision !== undefined && root.revision !== null
       ? { revision: reader.text(root.revision, 'revision', 60, root) }
@@ -1320,6 +1563,8 @@ export function parseWorkflow(text: string): WorkflowRecipe {
 
 const inputYaml = (refs: RecipeRef[]): YamlMap =>
   refs.length === 1 ? { input: refs[0] } : { inputs: refs };
+const withinYaml = (refs?: RecipeWithin): YamlMap =>
+  refs ? { within: refs.length === 1 ? refs[0] : refs } : {};
 
 /** A value-bound setting: `{ value: step, factor: k }`. */
 function bindingYaml(binding: ValueBinding): YamlMap {
@@ -1361,6 +1606,39 @@ function anchorYaml(anchor: TimeAnchor): YamlMap {
       : { kind: anchor.kind };
 }
 
+/** A segment step's method settings and boundary. */
+function definitionYaml(definition: SegmentationDefinition): YamlMap {
+  const method: YamlMap =
+    definition.method === 'ranges'
+      ? { ranges: definition.ranges }
+      : definition.method === 'windows'
+        ? {
+            windows: {
+              start: definition.start,
+              end: definition.end,
+              duration: definition.duration,
+              step: definition.step,
+              partial: definition.includePartial,
+            },
+          }
+        : {
+            triggers: {
+              start: triggerYaml(definition.start, {
+                threshold: definition.bindings?.['start.threshold'],
+                offset: definition.bindings?.['start.offset'],
+              }),
+              end: triggerYaml(definition.end, {
+                threshold: definition.bindings?.['end.threshold'],
+                offset: definition.bindings?.['end.offset'],
+              }),
+              ...(definition.minimumDuration
+                ? { 'minimum-duration': definition.minimumDuration }
+                : {}),
+            },
+          };
+  return { ...method, boundary: definition.boundary };
+}
+
 function operationYaml(operation: RecipeOperation): [string, YamlMap] {
   switch (operation.kind) {
     case 'derive': {
@@ -1371,6 +1649,7 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
           {
             function: 'formula',
             ...inputYaml(operation.inputs),
+            ...withinYaml(operation.within),
             expression: operation.formula.expression,
             ...(operation.unit ? { unit: operation.unit } : {}),
             ...(operation.formula.signals
@@ -1399,6 +1678,7 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
           {
             function: 'convert',
             ...inputYaml(operation.inputs),
+            ...withinYaml(operation.within),
             unit: operation.unit ?? '',
           },
         ];
@@ -1411,6 +1691,7 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
           function: operation.operation,
           ...inputYaml(operation.inputs),
           ...(operation.with ? { with: operation.with } : {}),
+          ...withinYaml(operation.within),
           ...(operation.bindings?.value
             ? { parameter: bindingYaml(operation.bindings.value) }
             : spec?.parameter && !operation.with
@@ -1433,6 +1714,7 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
         {
           function: operation.operation,
           ...inputYaml(operation.inputs),
+          ...withinYaml(operation.within),
           ...setting('threshold'),
           ...(parameters.edge !== undefined
             ? { edge: parameters.edge === -1 ? 'falling' : 'rising' }
@@ -1443,42 +1725,24 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
         },
       ];
     }
-    case 'segment': {
-      const definition = operation.definition;
-      const method: YamlMap =
-        definition.method === 'ranges'
-          ? { ranges: definition.ranges }
-          : definition.method === 'windows'
-            ? {
-                windows: {
-                  start: definition.start,
-                  end: definition.end,
-                  duration: definition.duration,
-                  step: definition.step,
-                  partial: definition.includePartial,
-                },
-              }
-            : {
-                triggers: {
-                  start: triggerYaml(definition.start, {
-                    threshold: definition.bindings?.['start.threshold'],
-                    offset: definition.bindings?.['start.offset'],
-                  }),
-                  end: triggerYaml(definition.end, {
-                    threshold: definition.bindings?.['end.threshold'],
-                    offset: definition.bindings?.['end.offset'],
-                  }),
-                  ...(definition.minimumDuration
-                    ? { 'minimum-duration': definition.minimumDuration }
-                    : {}),
-                },
-              };
+    case 'segment':
+      return [
+        'segment',
+        {
+          ...withinYaml(operation.within),
+          ...(operation.reference ? { reference: operation.reference } : {}),
+          ...definitionYaml(operation.definition),
+          ...(operation.timeOrigin !== 'recording'
+            ? { 'time-origin': operation.timeOrigin }
+            : {}),
+        },
+      ];
+    case 'crop-segment':
       return [
         'segment',
         {
           ...inputYaml(operation.inputs),
-          ...method,
-          boundary: definition.boundary,
+          ...definitionYaml(operation.definition),
           ...(operation.independently ? { independently: true } : {}),
           ...(operation.scope === 'file' ? { scope: 'file' } : {}),
           ...(operation.timeOrigin !== 'recording'
@@ -1486,7 +1750,6 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
             : {}),
         },
       ];
-    }
     case 'time': {
       const settings = operation.settings;
       let body: YamlMap;
@@ -1562,10 +1825,14 @@ function checkYaml(check: CheckDefinition): YamlMap {
   };
 }
 
+/**
+ * The canonical form of a recipe at the version it was read with, so hashes
+ * of older files never change.
+ */
 export function recipeYaml(recipe: WorkflowRecipe): YamlMap {
   return {
     format: WORKFLOW_FORMAT,
-    version: WORKFLOW_VERSION,
+    version: recipe.version,
     name: recipe.name,
     ...(recipe.revision ? { revision: recipe.revision } : {}),
     ...(recipe.description ? { description: recipe.description } : {}),
@@ -1601,15 +1868,28 @@ export function recipeYaml(recipe: WorkflowRecipe): YamlMap {
   };
 }
 
+/**
+ * The version a recipe is written as: the current one, unless it holds
+ * version 1 segment steps that crop signals, which version 2 cannot express.
+ */
+export function writtenVersion(recipe: WorkflowRecipe): number {
+  return recipe.steps.some((step) => step.operation.kind === 'crop-segment')
+    ? 1
+    : WORKFLOW_VERSION;
+}
+
 export function serializeWorkflow(recipe: WorkflowRecipe): string {
-  return stringifyYaml(recipeYaml(recipe), {
-    comments: [
-      `Stratum workflow · ${recipe.name}`,
-      'Inputs bind by CSV column name. Steps refer to channels and earlier steps',
-      'by id; step[2] is the second output of a step. Open it in Stratum with',
-      'Import → Open a workflow file…, or edit it in any text editor.',
-    ],
-  });
+  return stringifyYaml(
+    recipeYaml({ ...recipe, version: writtenVersion(recipe) }),
+    {
+      comments: [
+        `Stratum workflow · ${recipe.name}`,
+        'Inputs bind by CSV column name. Steps refer to channels and earlier steps',
+        'by id; step[2] is the second output of a step. Open it in Stratum with',
+        'Import → Open a workflow file…, or edit it in any text editor.',
+      ],
+    },
+  );
 }
 
 function canonical(value: unknown): string {
@@ -1727,6 +2007,10 @@ export type BindContext = {
   /** Output IDs of an alias or earlier step; throws BlockedReference. */
   resolve: (ref: RecipeRef) => string[];
   sourceOf: (id: string) => string;
+  /** The item's recording. */
+  sourceId: string;
+  /** The set that holds a file segment, and its recording ('' workspace). */
+  segmentSet: (segmentId: string) => { id: string; sourceId: string };
   /** Segmentation-clock start of a signal, for `input-start`. */
   clockStart: (id: string) => number;
   recordingStart: number;
@@ -1797,10 +2081,49 @@ export function stepCommand(
           ),
         }
       : {};
+  // Triggers bind their signals; fixed times move by the time origin.
+  const shifted = (
+    source: SegmentationDefinition,
+    shift: number,
+  ): SegmentationDefinition =>
+    source.method === 'triggers'
+      ? {
+          ...source,
+          start: trigger(source.start),
+          end: trigger(source.end),
+          ...bound(source.bindings),
+        }
+      : source.method === 'ranges'
+        ? {
+            ...source,
+            ranges: source.ranges.map(
+              ([start, end]) =>
+                [start + shift, end + shift] as [number, number],
+            ),
+          }
+        : {
+            ...source,
+            start: source.start + shift,
+            end: source.end + shift,
+          };
+  // `sweeps` works within every segment of a step, however many.
+  const scope = (
+    refs?: RecipeWithin,
+  ): { within: SegmentScope; sourceId: string } | undefined => {
+    if (!refs) return undefined;
+    const ids = many(refs);
+    const set = context.segmentSet(ids[0]);
+    const all = refs.length === 1 && parseRef(refs[0]).position === undefined;
+    return {
+      within: all ? { setId: set.id } : { setId: set.id, segmentIds: ids },
+      sourceId: set.sourceId,
+    };
+  };
   const operation = step.operation;
   switch (operation.kind) {
     case 'derive': {
       const inputIds = many(operation.inputs);
+      const within = scope(operation.within)?.within;
       if (operation.with)
         return {
           type: 'region-function',
@@ -1810,9 +2133,11 @@ export function stepCommand(
             parameter: operation.parameter,
             inputIds,
             secondaryIds: [one(operation.with)],
+            ...(within ? { within } : {}),
           },
         };
       return {
+        ...(within ? { within } : {}),
         type: 'derive-many',
         parentIds: inputIds,
         operation: operation.operation,
@@ -1840,8 +2165,10 @@ export function stepCommand(
           : {}),
       };
     }
-    case 'value':
+    case 'value': {
+      const within = scope(operation.within)?.within;
       return {
+        ...(within ? { within } : {}),
         type: 'calculate-values',
         inputIds: many(operation.inputs),
         operation: operation.operation,
@@ -1850,7 +2177,36 @@ export function stepCommand(
           : {}),
         ...bound(operation.bindings),
       };
+    }
     case 'segment': {
+      const nested = scope(operation.within);
+      const referenceId = operation.reference
+        ? one(operation.reference)
+        : undefined;
+      const shift =
+        operation.timeOrigin === 'recording-start'
+          ? context.recordingStart
+          : operation.timeOrigin === 'input-start' && referenceId
+            ? context.clockStart(referenceId)
+            : 0;
+      const definition = shifted(operation.definition, shift);
+      const sourceId =
+        definition.method === 'triggers'
+          ? context.sourceOf(definition.start.signalId)
+          : referenceId !== undefined
+            ? context.sourceOf(referenceId)
+            : (nested?.sourceId ?? context.sourceId);
+      return {
+        type: 'segment-set',
+        sourceId,
+        definition,
+        ...(referenceId !== undefined && sourceId === ''
+          ? { referenceId }
+          : {}),
+        ...(nested ? { within: nested.within } : {}),
+      };
+    }
+    case 'crop-segment': {
       const targetIds = many(operation.inputs);
       let shift = 0;
       if (operation.timeOrigin === 'recording-start')
@@ -1862,28 +2218,7 @@ export function stepCommand(
           );
         shift = context.clockStart(targetIds[0]);
       }
-      const source = operation.definition;
-      const definition: SegmentationDefinition =
-        source.method === 'triggers'
-          ? {
-              ...source,
-              start: trigger(source.start),
-              end: trigger(source.end),
-              ...bound(source.bindings),
-            }
-          : source.method === 'ranges'
-            ? {
-                ...source,
-                ranges: source.ranges.map(
-                  ([start, end]) =>
-                    [start + shift, end + shift] as [number, number],
-                ),
-              }
-            : {
-                ...source,
-                start: source.start + shift,
-                end: source.end + shift,
-              };
+      const definition = shifted(operation.definition, shift);
       return {
         type: 'segment',
         sourceId: context.sourceOf(targetIds[0]),
@@ -1918,18 +2253,24 @@ export function stepCommand(
   }
 }
 
-/** Labels for a step's outputs, or undefined to keep the engine's names. */
+/**
+ * Labels for a step's outputs, or undefined to keep the engine's names.
+ * `{segment}` is the segment an output was made within (for nested
+ * segments, their parent).
+ */
 export function outputLabels(
   step: RecipeStep,
   count: number,
   item: string,
   inputLabel: (position: number) => string,
+  segmentLabel: (position: number) => string = () => '',
 ): (string | undefined)[] {
   const fill = (template: string, position: number) =>
     template
       .replaceAll('{n}', String(position + 1))
       .replaceAll('{item}', item)
-      .replaceAll('{input}', inputLabel(position))
+      .replaceAll('{input}', () => inputLabel(position))
+      .replaceAll('{segment}', () => segmentLabel(position))
       .slice(0, 160)
       .trim();
   return Array.from({ length: count }, (_, position) => {
