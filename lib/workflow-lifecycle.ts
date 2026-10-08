@@ -445,29 +445,54 @@ export function followRebuiltBatches(
   command: WorkflowCommand,
   rebuilt: { old: string[]; now: string[] }[],
 ): WorkflowCommand {
+  const batches = rebuilt.map((batch) => {
+    const old = new Set(batch.old);
+    const kept = new Set(batch.now);
+    return {
+      ...batch,
+      oldSet: old,
+      gone: batch.old.filter((id) => !kept.has(id)),
+      changed:
+        batch.now.length !== batch.old.length ||
+        batch.old.some((id) => !kept.has(id)),
+    };
+  });
   const follow = (ids: string[]): string[] => {
     let list = ids;
-    for (const batch of rebuilt) {
-      const kept = new Set(batch.now);
-      const gone = batch.old.filter((id) => !kept.has(id));
-      const all = batch.old.every((id) => list.includes(id));
-      if (all && (gone.length || batch.now.length !== batch.old.length)) {
-        const old = new Set(batch.old);
-        const at = list.findIndex((id) => old.has(id));
-        const rest = list.filter((id) => !old.has(id));
+    for (const batch of batches) {
+      if (!batch.changed) continue;
+      const present = new Set(list);
+      if (batch.old.every((id) => present.has(id))) {
+        const at = list.findIndex((id) => batch.oldSet.has(id));
+        const rest = list.filter((id) => !batch.oldSet.has(id));
         list = [...rest.slice(0, at), ...batch.now, ...rest.slice(at)];
-      } else if (gone.some((id) => list.includes(id)))
+      } else if (batch.gone.some((id) => present.has(id)))
         throw new Error(
           'The new settings remove outputs that later steps use on their own. Remove or revise those steps first. Existing work is unchanged.',
         );
     }
     return list;
   };
+  // Settings taken from values follow their value batches too.
+  const bindings = (
+    items: import('./workflow-types').ParameterBindings | undefined,
+  ) =>
+    items
+      ? {
+          bindings: Object.fromEntries(
+            Object.entries(items).map(([name, binding]) => [
+              name,
+              { ...binding, valueIds: follow(binding.valueIds) },
+            ]),
+          ),
+        }
+      : {};
   switch (command.type) {
     case 'derive-many':
       return {
         ...command,
         parentIds: follow(command.parentIds),
+        ...bindings(command.bindings),
         ...(command.formula?.signals
           ? {
               formula: {
@@ -482,7 +507,11 @@ export function followRebuiltBatches(
           : {}),
       };
     case 'calculate-values':
-      return { ...command, inputIds: follow(command.inputIds) };
+      return {
+        ...command,
+        inputIds: follow(command.inputIds),
+        ...bindings(command.bindings),
+      };
     case 'region-function':
       return {
         ...command,
@@ -494,8 +523,27 @@ export function followRebuiltBatches(
             : {}),
         },
       };
-    default:
-      return command;
+    case 'segment-set':
+    case 'segment':
+      return {
+        ...command,
+        definition: {
+          ...command.definition,
+          ...bindings(command.definition.bindings),
+        },
+        ...(command.type === 'segment'
+          ? { targetIds: follow(command.targetIds) }
+          : {}),
+      };
+    case 'time-operation': {
+      const settings = structuredClone(command.settings);
+      if (settings.kind === 'align')
+        for (const group of settings.groups)
+          group.inputIds = follow(group.inputIds);
+      else if (settings.kind !== 'combine')
+        settings.inputIds = follow(settings.inputIds);
+      return { ...command, settings };
+    }
   }
 }
 

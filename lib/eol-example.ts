@@ -64,7 +64,7 @@ export const EOL_COMPONENTS: {
     serial: 'SN-24008',
     variant: 'wrong-unit',
     expected: 'error',
-    note: 'Torque logged in lbf·ft; torque steps are skipped, temperature and current still run.',
+    note: 'Torque logged in lbf·ft; torque steps are skipped, the sweeps, temperature and current still run.',
   },
 ];
 
@@ -155,12 +155,13 @@ export const EOL_WORKFLOW = `# Stratum workflow · Motor EOL test
 # by id; step[2] is the second output of a step. Open it in Stratum with
 # Import → Open a workflow file…, or edit it in any text editor.
 format: stratum-workflow
-version: 1
+version: 2
 name: Motor EOL test
 revision: '1'
 description: >-
   End-of-line test for the motor rig. Three speed sweeps are found with speed
-  triggers, then torque, temperature and current are checked against limits.
+  triggers, then torque within each sweep, temperature and current are
+  checked against limits.
 item:
   label: Serial number
   id: { from: file-name, pattern: '^(?<id>SN-[0-9]+)' }
@@ -185,44 +186,50 @@ steps:
     derive: { function: multiply, input: smoothed-torque, with: speed }
     outputs: Torque × speed
 
-  # Triggers find the sweeps wherever they occur in the recording.
+  # Triggers on speed find the sweeps wherever they occur in the recording.
+  # Segments are time intervals; later steps work within them.
   - id: sweeps
     name: Find the speed sweeps
     segment:
-      input: smoothed-torque
       triggers:
         start: { signal: speed, edge: rising, threshold: 850 }
         end: { signal: speed, edge: falling, threshold: 850 }
         minimum-duration: 20
       boundary: discard
-    outputs: Sweep {n} · Torque
+    outputs: Sweep {n}
     checks:
       - count: 3
         severity: fail
         message: The rig should record three speed sweeps.
+      - duration: { min: 35, max: 45 }
+        severity: warning
+        message: Sweeps should last about 40 s.
     on-fail: stop
 
   - id: sweep-torque
     name: Average torque by sweep
-    value: { function: time-average, input: sweeps }
-    outputs: Sweep {n} · Average torque
+    value: { function: time-average, input: smoothed-torque, within: sweeps }
+    outputs: '{segment} · Average torque'
     checks:
       - limits: { min: 78, max: 95, unit: Nm }
         severity: fail
 
+  # Windows within a segment are seconds from that segment's start.
   - id: sweep-2-halves
     name: Split sweep 2 into halves
     segment:
-      input: sweeps[2]
+      within: sweeps[2]
       windows: { start: 0, end: 40, duration: 20, step: 20, partial: false }
-      time-origin: input-start
       boundary: clip
-    outputs: [Sweep 2 · First half · Torque, Sweep 2 · Second half · Torque]
+    outputs: [Sweep 2 · First half, Sweep 2 · Second half]
 
   - id: half-peaks
     name: Peak torque within sweep 2
-    value: { function: maximum, input: sweep-2-halves }
-    outputs: Sweep 2 · Half {n} · Peak torque
+    value:
+      function: maximum
+      input: smoothed-torque
+      within: sweep-2-halves
+    outputs: '{segment} · Peak torque'
 
   - id: peak-temperature
     name: Peak winding temperature
@@ -294,7 +301,11 @@ report:
           height: 230
           text: Key results
           bind:
-            values: [sweep-torque, peak-temperature, average-current]
+            values:
+              - sweep-torque
+              - half-peaks
+              - peak-temperature
+              - average-current
         - type: table
           name: Checks
           y: 840

@@ -37,6 +37,8 @@ export type BindingContext = {
   nodes: ReadonlyMap<string, SignalNode>;
   /** Display name of a value, for messages. */
   label?: (id: string) => string;
+  /** File segments by ID, so values of enclosing segments also match. */
+  segments?: ReadonlyMap<string, { segment: { parentId?: string } }>;
 };
 
 /** The ancestry of a signal along its first inputs, nearest first. */
@@ -66,7 +68,7 @@ export function matchValue(
   inputId: string,
 ): ScalarValue {
   const label = (id: string) => context.label?.(id) ?? 'a value';
-  const candidates = binding.valueIds.map((id) => {
+  let candidates = binding.valueIds.map((id) => {
     const value = context.values.get(id);
     if (!value)
       throw new Error(
@@ -77,6 +79,32 @@ export function matchValue(
   if (!candidates.length) throw new Error('Choose a value for this setting.');
   if (candidates.length === 1) return candidates[0];
   const ancestry = chain(context.nodes, inputId);
+  // Within a segment, values of that segment come first, then values of
+  // entire signals; values of other segments never match.
+  if (candidates.some((value) => value.segmentId)) {
+    // The input's segment, then the segments that contain it, nearest first.
+    const levels: string[] = [];
+    for (
+      let segment = ancestry
+        .map((id) => context.nodes.get(id)?.segmentId)
+        .find(Boolean);
+      segment && !levels.includes(segment);
+      segment = context.segments?.get(segment)?.segment.parentId
+    )
+      levels.push(segment);
+    let same: ScalarValue[] = [];
+    for (const level of levels) {
+      same = candidates.filter((value) => value.segmentId === level);
+      if (same.length) break;
+    }
+    const entire = candidates.filter((value) => !value.segmentId);
+    candidates = same.length ? same : entire;
+    if (candidates.length === 1) return candidates[0];
+    if (!candidates.length)
+      throw new Error(
+        `None of the chosen values was calculated within the segment of ${context.label?.(inputId) ?? 'this input'}. Choose values calculated within the same segments.`,
+      );
+  }
   let best: ScalarValue[] = [];
   let distance = Infinity;
   for (const value of candidates) {

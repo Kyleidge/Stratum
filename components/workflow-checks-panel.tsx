@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   CHECK_NAMES,
+  checkTarget,
   currentResults,
   describeLimits,
   STATUS_LABELS,
@@ -92,7 +93,9 @@ export default function WorkflowChecksPanel({
   busy: boolean;
   onSave: (checks: CheckDefinition[]) => Promise<void>;
 }) {
-  const values = step.kind === 'value';
+  const target = checkTarget(step);
+  const values = target === 'values';
+  const segments = target === 'segments';
   const unit =
     index.values.get(step.outputIds[0])?.unit ??
     index.nodes.get(step.outputIds[0])?.unit ??
@@ -102,9 +105,12 @@ export default function WorkflowChecksPanel({
   const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(() => blank(unit, values));
   const [error, setError] = useState('');
+  // Segments are time intervals: their number and their durations.
   const kinds: CheckKind[] = values
     ? ['count', 'limits']
-    : ['count', 'limits', 'missing', 'duration'];
+    : segments
+      ? ['count', 'duration']
+      : ['count', 'limits', 'missing', 'duration'];
   async function save(next: CheckDefinition[]) {
     setError('');
     try {
@@ -148,7 +154,9 @@ export default function WorkflowChecksPanel({
           {kinds.map((kind) => (
             <option key={kind} value={kind}>
               {kind === 'count'
-                ? 'Number of outputs'
+                ? segments
+                  ? 'Number of segments'
+                  : 'Number of outputs'
                 : kind === 'limits'
                   ? values
                     ? 'Value limits'
@@ -190,7 +198,7 @@ export default function WorkflowChecksPanel({
       )}
       {draft.kind !== 'count' && step.outputIds.length > 1 && (
         <label>
-          <span>Outputs</span>
+          <span>{segments ? 'Segments' : 'Outputs'}</span>
           <input
             value={draft.outputs}
             placeholder="All"
@@ -260,9 +268,12 @@ export default function WorkflowChecksPanel({
       </h3>
       {!checks.length && editing === null && (
         <p className="workflow-muted">
-          No checks yet. Add limits or an expected number of outputs. Failures
-          are flagged here, in History and in batch results; without checks,
-          batch items show No checks rather than Pass.
+          No checks yet.{' '}
+          {segments
+            ? 'Add an expected number of segments or their duration.'
+            : 'Add limits or an expected number of outputs.'}{' '}
+          Failures are flagged here, in History and in batch results; without
+          checks, batch items show No checks rather than Pass.
         </p>
       )}
       <ul>

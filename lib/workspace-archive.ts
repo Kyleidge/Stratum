@@ -511,11 +511,9 @@ export function validateWorkspace(value: unknown): Project {
     ...(project.values ?? []).map((value) => value.id),
     ...fileSegments.keys(),
   ]);
+  const read = new Set(project.nodes.flatMap((node) => node.parents));
   for (const node of project.nodes)
-    if (
-      isSegmentCrop(node) &&
-      !project.nodes.some((other) => other.parents.includes(node.id))
-    )
+    if (isSegmentCrop(node) && !read.has(node.id))
       throw new Error('Invalid segment crop.');
   for (const value of project.values ?? [])
     if (
@@ -704,6 +702,7 @@ export function validateWorkspace(value: unknown): Project {
         dependencies.add(definition.end.signalId);
       } else if (fileSet.referenceId) dependencies.add(fileSet.referenceId);
     }
+    const scopeSet = new Set(step.segmentInputIds);
     for (const id of fileSet ? [] : step.outputIds) {
       if (owners.has(id))
         throw new Error('An output belongs to multiple operations.');
@@ -711,11 +710,7 @@ export function validateWorkspace(value: unknown): Project {
       const node = nodes.get(id),
         value = values.get(id);
       const segment = (node ?? value)?.segmentId;
-      if (
-        segment !== undefined &&
-        step.within &&
-        !step.segmentInputIds?.includes(segment)
-      )
+      if (segment !== undefined && step.within && !scopeSet.has(segment))
         throw new Error('An output lies outside its step’s segments.');
       if ((node ?? value)?.sourceId !== step.sourceId)
         throw new Error('Invalid output recording.');

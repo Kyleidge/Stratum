@@ -4,10 +4,12 @@ import { stepName, WorkflowIndex } from './workflow-history';
 import { savedCommand } from './workflow-lifecycle';
 import {
   slug,
+  WORKFLOW_VERSION,
   type RecipeChannel,
   type RecipeOperation,
   type RecipeRef,
   type RecipeStep,
+  type RecipeWithin,
   type TimeOrigin,
   type WorkflowRecipe,
 } from './workflow-recipe';
@@ -15,6 +17,7 @@ import type {
   EdgeTrigger,
   Project,
   SegmentationDefinition,
+  SegmentScope,
 } from './signal-types';
 import type { TimeAnchor } from './time-types';
 import type { ParameterBindings, WorkflowStep } from './workflow-types';
@@ -43,11 +46,36 @@ export type ExtractedWorkflow = {
   included: ExtractedStep[];
   skipped: { stepId: string; reason: string }[];
   warnings: { recipeStepId: string; message: string }[];
-  /** Workspace output ID → recipe reference, for converting report blocks. */
+  /**
+   * Workspace output ID → recipe reference, for converting report blocks.
+   * Segments are not listed: reports bind signals and values.
+   */
   refs: Map<string, RecipeRef>;
 };
 
 class Unexportable extends Error {}
+
+/**
+ * Whether a step works on this recording: through its inputs, or, for
+ * segments found by fixed times, because they are the recording's segments.
+ */
+function fromRecording(
+  project: Project,
+  index: WorkflowIndex,
+  step: WorkflowStep,
+  sourceId: string,
+): boolean {
+  if (
+    step.segmentSetId &&
+    project.segmentSets?.some(
+      (set) => set.id === step.segmentSetId && set.sourceId === sourceId,
+    )
+  )
+    return true;
+  return index
+    .lineage(step.outputIds)
+    .originals.some((node) => node.sourceId === sourceId);
+}
 
 /** Segmentation clock start, matching the engine's axis offsets. */
 export function clockStart(project: Project, graph: SignalGraph, id: string) {
@@ -57,6 +85,27 @@ export function clockStart(project: Project, graph: SignalGraph, id: string) {
   return node.sourceId === ''
     ? range[0]
     : range[0] - (graph.offsets.get(id) ?? 0);
+}
+
+/** Fixed ranges and windows moved by `shift` seconds. */
+function shiftTimes(
+  definition: SegmentationDefinition,
+  shift: number,
+): SegmentationDefinition {
+  if (definition.method === 'ranges')
+    return {
+      ...definition,
+      ranges: definition.ranges.map(
+        ([start, end]) => [start + shift, end + shift] as [number, number],
+      ),
+    };
+  if (definition.method === 'windows')
+    return {
+      ...definition,
+      start: definition.start + shift,
+      end: definition.end + shift,
+    };
+  return definition;
 }
 
 /** Fold numbered labels such as "Run 1", "Run 2" into "Run {n}". */
@@ -179,18 +228,71 @@ export function extractWorkflow(
       : undefined;
   const anchor = (item: TimeAnchor): TimeAnchor =>
     item.kind === 'event' ? { ...item, trigger: trigger(item.trigger) } : item;
+  // Trigger signals become references; settings taken from values hold 0.
+  const triggers = (source: SegmentationDefinition): SegmentationDefinition => {
+    const definition = structuredClone(source);
+    if (definition.method !== 'triggers') return definition;
+    const bindings = definition.bindings;
+    const placeholder = (side: 'start' | 'end', item: EdgeTrigger) => ({
+      ...trigger(item),
+      ...(bindings?.[`${side}.threshold`] ? { threshold: 0 } : {}),
+      ...(bindings?.[`${side}.offset`] ? { offset: 0 } : {}),
+    });
+    return {
+      ...definition,
+      start: placeholder('start', definition.start),
+      end: placeholder('end', definition.end),
+      ...(bindings ? { bindings: bound(bindings) } : {}),
+    };
+  };
+  // `within`: every segment of an included segment step, or positions.
+  const scope = (within: SegmentScope): RecipeWithin => {
+    const set = [...owners.entries()].find(
+      ([id]) => index.steps.get(id)?.segmentSetId === within.setId,
+    );
+    if (!set) {
+      const step = (project.workflowSteps ?? []).find(
+        (item) => item.segmentSetId === within.setId,
+      );
+      throw new Unexportable(
+        `works within “${step ? stepName(step) : 'segments'}”, which is not from this recording or an included step`,
+      );
+    }
+    const [, owner] = set;
+    const ids = within.segmentIds;
+    if (
+      !ids ||
+      (ids.length === owner.outputs.length &&
+        ids.every((id, position) => owner.outputs[position] === id))
+    )
+      return [owner.key];
+    return ids.map((id) => {
+      const position = owner.outputs.indexOf(id);
+      if (position < 0)
+        throw new Unexportable('works within a segment that no longer exists');
+      return `${owner.key}[${position + 1}]`;
+    });
+  };
 
+  // Dependencies on the recording decide eligibility; other recordings are skipped quietly.
   const candidates = (project.workflowSteps ?? [])
     .filter(
       (step) =>
         step.kind !== 'import' &&
-        (!options.stepIds || options.stepIds.has(step.id)),
+        (!options.stepIds || options.stepIds.has(step.id)) &&
+        fromRecording(project, index, step, sourceId),
     )
     .sort((a, b) => a.sequence - b.sequence);
+  // Segment steps that crop signals exist only in version 1 files; a
+  // workflow with file segments or `within` is version 2 and cannot hold them.
+  const legacy = (step: WorkflowStep) =>
+    step.kind === 'segment' && !step.segmentSetId && !!step.segmentationId;
+  const version =
+    candidates.some(legacy) &&
+    !candidates.some((step) => step.segmentSetId || step.within)
+      ? 1
+      : WORKFLOW_VERSION;
   for (const step of candidates) {
-    // Dependencies on the recording decide eligibility; other recordings are skipped quietly.
-    const originals = index.lineage(step.outputIds).originals;
-    if (!originals.some((node) => node.sourceId === sourceId)) continue;
     const snapshot = {
       channels: channels.length,
       aliases: new Map(aliases),
@@ -217,6 +319,7 @@ export function extractWorkflow(
             kind: 'derive',
             operation: command.operation,
             inputs: many(command.parentIds),
+            ...(command.within ? { within: scope(command.within) } : {}),
             // Bound, formula and conversion parameters are not numbers.
             parameter:
               command.bindings?.value ||
@@ -259,6 +362,7 @@ export function extractWorkflow(
             inputs: many(settings.inputIds),
             parameter: settings.parameter,
             ...(binary ? { with: one(settings.secondaryIds![0]) } : {}),
+            ...(settings.within ? { within: scope(settings.within) } : {}),
           };
           break;
         }
@@ -267,6 +371,7 @@ export function extractWorkflow(
             kind: 'value',
             operation: command.operation,
             inputs: many(command.inputIds),
+            ...(command.within ? { within: scope(command.within) } : {}),
             ...(command.parameters
               ? {
                   parameters: Object.fromEntries(
@@ -280,24 +385,47 @@ export function extractWorkflow(
             ...(command.bindings ? { bindings: bound(command.bindings) } : {}),
           };
           break;
+        case 'segment-set': {
+          let definition = triggers(command.definition);
+          let reference: RecipeRef | undefined;
+          if (command.referenceId) reference = one(command.referenceId);
+          // Nested ranges and windows are already relative to each parent.
+          if (definition.method !== 'triggers' && !command.within) {
+            origins = command.referenceId
+              ? ['recording', 'input-start']
+              : ['recording', 'recording-start'];
+            origin = options.timeOrigins?.[step.id] ?? 'recording';
+            if (!origins.includes(origin)) origin = 'recording';
+            definition = shiftTimes(
+              definition,
+              origin === 'recording-start'
+                ? -source.start
+                : origin === 'input-start'
+                  ? -clockStart(project, graph, command.referenceId!)
+                  : 0,
+            );
+            if (origin === 'recording')
+              warnings.push({
+                recipeStepId: key,
+                message: `“${stepName(step)}” uses fixed recording times. Every recording must have the same timing, or measure from its start instead.`,
+              });
+          }
+          operation = {
+            kind: 'segment',
+            definition,
+            ...(command.within ? { within: scope(command.within) } : {}),
+            ...(reference ? { reference } : {}),
+            timeOrigin: origin ?? 'recording',
+          };
+          break;
+        }
         case 'segment': {
-          let definition: SegmentationDefinition = structuredClone(
-            command.definition,
-          );
-          if (definition.method === 'triggers') {
-            const bindings = definition.bindings;
-            const placeholder = (side: 'start' | 'end', item: EdgeTrigger) => ({
-              ...trigger(item),
-              ...(bindings?.[`${side}.threshold`] ? { threshold: 0 } : {}),
-              ...(bindings?.[`${side}.offset`] ? { offset: 0 } : {}),
-            });
-            definition = {
-              ...definition,
-              start: placeholder('start', definition.start),
-              end: placeholder('end', definition.end),
-              ...(bindings ? { bindings: bound(bindings) } : {}),
-            };
-          } else {
+          if (version !== 1)
+            throw new Unexportable(
+              'crops signals, as segment steps did before file segments, so a workflow with file segments cannot hold it. Recreate it as a Segment step that finds segments',
+            );
+          let definition = triggers(command.definition);
+          if (definition.method !== 'triggers') {
             // Nested segments default to times measured from their own input.
             const nested =
               command.targetIds.length === 1 &&
@@ -313,29 +441,17 @@ export function extractWorkflow(
               options.timeOrigins?.[step.id] ??
               (nested ? 'input-start' : 'recording');
             if (!origins.includes(origin)) origin = 'recording';
-            const shift =
+            definition = shiftTimes(
+              definition,
               origin === 'recording-start'
                 ? -source.start
                 : origin === 'input-start'
                   ? -clockStart(project, graph, command.targetIds[0])
-                  : 0;
-            definition =
-              definition.method === 'ranges'
-                ? {
-                    ...definition,
-                    ranges: definition.ranges.map(
-                      ([start, end]) =>
-                        [start + shift, end + shift] as [number, number],
-                    ),
-                  }
-                : {
-                    ...definition,
-                    start: definition.start + shift,
-                    end: definition.end + shift,
-                  };
+                  : 0,
+            );
           }
           operation = {
-            kind: 'segment',
+            kind: 'crop-segment',
             inputs: many(command.targetIds),
             definition,
             independently: !!command.independently,
@@ -401,9 +517,10 @@ export function extractWorkflow(
       if (step.checks?.length) recipeStep.checks = structuredClone(step.checks);
       steps.push(recipeStep);
       owners.set(step.id, { key, outputs });
-      outputs.forEach((id, position) =>
-        refs.set(id, outputs.length === 1 ? key : `${key}[${position + 1}]`),
-      );
+      if (!step.segmentSetId)
+        outputs.forEach((id, position) =>
+          refs.set(id, outputs.length === 1 ? key : `${key}[${position + 1}]`),
+        );
       included.push({
         stepId: step.id,
         recipeStepId: key,
@@ -439,9 +556,13 @@ export function extractWorkflow(
       const position = ref[2];
       if (warned.has(`${ref[1]}[${position}]`)) continue;
       warned.add(`${ref[1]}[${position}]`);
+      const segments =
+        steps.find((item) => item.id === ref[1])?.operation.kind === 'segment';
       warnings.push({
         recipeStepId: step.id,
-        message: `“${named(step.id)}” uses output ${position} of “${named(ref[1])}”. Items with fewer outputs skip it; consider an output count check on “${named(ref[1])}”.`,
+        message: segments
+          ? `“${named(step.id)}” works within segment ${position} of “${named(ref[1])}”. Items with fewer segments skip it; consider a count check on “${named(ref[1])}”.`
+          : `“${named(step.id)}” uses output ${position} of “${named(ref[1])}”. Items with fewer outputs skip it; consider an output count check on “${named(ref[1])}”.`,
       });
     }
   if (!steps.length)
@@ -452,6 +573,7 @@ export function extractWorkflow(
     );
   return {
     recipe: {
+      version,
       name: options.name,
       ...(options.revision ? { revision: options.revision } : {}),
       ...(options.description ? { description: options.description } : {}),
@@ -478,10 +600,7 @@ export function recordingSteps(
   return (project.workflowSteps ?? [])
     .filter(
       (step) =>
-        step.kind !== 'import' &&
-        index
-          .lineage(step.outputIds)
-          .originals.some((node) => node.sourceId === sourceId),
+        step.kind !== 'import' && fromRecording(project, index, step, sourceId),
     )
     .sort((a, b) => a.sequence - b.sequence);
 }

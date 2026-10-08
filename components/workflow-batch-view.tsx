@@ -158,7 +158,13 @@ export default function WorkflowBatchView({
     for (const run of batch.runs)
       for (const [recipeStepId, stepId] of Object.entries(run.steps)) {
         const step = index.steps.get(stepId);
-        if (step && step.kind !== 'value' && !seen.has(recipeStepId))
+        // Segment steps find time intervals, not signals to plot.
+        if (
+          step &&
+          step.kind !== 'value' &&
+          !step.segmentSetId &&
+          !seen.has(recipeStepId)
+        )
           seen.set(recipeStepId, stepName(step));
       }
     return [...seen];

@@ -60,7 +60,7 @@ export function WorkflowWelcome({
         <li>
           <Waves size={15} aria-hidden />
           <strong>Process</strong>
-          <span>derive and segment signals</span>
+          <span>derive signals and find segments</span>
         </li>
         <li aria-hidden className="workflow-welcome-arrow">
           <ArrowRight size={14} />
@@ -92,9 +92,8 @@ export function WorkflowWelcome({
             </button>
           </h2>
           <p id="workflow-welcome-example">
-            A motor test with seven steps: smooth and multiply signals, split
-            them into runs and measure each one. A short tour explains each
-            step.
+            A motor test with seven steps: smooth and multiply signals, find its
+            runs and measure within each one. A short tour explains each step.
           </p>
           <ul className="workflow-welcome-tags" aria-label="Example contents">
             <li>1 recording</li>
@@ -185,7 +184,7 @@ export function WorkflowNextSteps({
       action: 'segment',
       label: 'Segment',
       icon: <Scissors size={14} aria-hidden />,
-      text: 'Cut signals into runs.',
+      text: 'Find runs in the recording.',
     },
     {
       action: 'value',
