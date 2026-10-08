@@ -2733,35 +2733,30 @@ export default function WorkflowWorkbench() {
                                 )}
                               </div>
                             </div>
-                            {step.kind === 'value' &&
-                              step.outputIds.some(
-                                (id) => index.values.get(id)?.segmentId,
-                              ) && (
-                                <fieldset
-                                  className="workflow-layout-toggle"
-                                  aria-label="Value layout"
+                            {step.kind === 'value' && !!step.within && (
+                              <fieldset
+                                className="workflow-layout-toggle"
+                                aria-label="Value layout"
+                              >
+                                <button
+                                  type="button"
+                                  aria-pressed={valueLayout === 'segments'}
+                                  onClick={() => setValueLayout('segments')}
                                 >
-                                  <button
-                                    type="button"
-                                    aria-pressed={valueLayout === 'segments'}
-                                    onClick={() => setValueLayout('segments')}
-                                  >
-                                    By segment
-                                  </button>
-                                  <button
-                                    type="button"
-                                    aria-pressed={valueLayout === 'list'}
-                                    onClick={() => setValueLayout('list')}
-                                  >
-                                    List
-                                  </button>
-                                </fieldset>
-                              )}
+                                  By segment
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={valueLayout === 'list'}
+                                  onClick={() => setValueLayout('list')}
+                                >
+                                  List
+                                </button>
+                              </fieldset>
+                            )}
                             {step.kind === 'value' &&
                             valueLayout === 'segments' &&
-                            step.outputIds.some(
-                              (id) => index.values.get(id)?.segmentId,
-                            ) ? (
+                            !!step.within ? (
                               <SegmentValueTable
                                 index={index}
                                 step={step}

@@ -1828,15 +1828,8 @@ export async function workflowUiSmoke() {
       'Empty input scope cannot return to the current selection.',
     );
     await contextAction(selectedHistoryRow(), 'Check only');
-    // A member within a segment plots alone; its step adds its siblings.
+    // A signal within a segment brings its siblings, to compare segments.
     await dragItem(selectedHistoryRow(), button('New plot')!);
-    await until(
-      () => document.querySelectorAll('.scratchpad-trace').length === 1,
-      'one within-segment trace',
-    );
-    const plotTarget =
-      document.querySelector<HTMLElement>('.scratchpad-canvas')!;
-    await dragItem(await stepRow(deriveChosen.ref), plotTarget);
     setValue(searchBox(), '');
     await until(
       () => document.querySelectorAll('.scratchpad-trace').length === 2,
@@ -2330,13 +2323,18 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Create 40 values', valueModal);
     await settled();
-    // Values of signals within segments open as a segment × input grid;
-    // the list pages every member.
+    // Values of signals that are each within one segment (no Within on the
+    // step) open as a list, which pages every member.
     await until(
-      () => document.querySelector('.segment-value-table'),
-      'value grid by segment',
+      () =>
+        document.querySelectorAll('.workflow-output-name').length === 30 ||
+        undefined,
+      'value list',
     );
-    await click('List');
+    assert(
+      !document.querySelector('.segment-value-table'),
+      'Only steps within segments open as a grid by segment.',
+    );
     assert(
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Value batch membership was lost.',

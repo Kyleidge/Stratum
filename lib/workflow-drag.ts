@@ -82,7 +82,11 @@ export function targetPlotOutputs(
   const owner =
     target.kind === 'output' ? index.owner.get(target.id) : undefined;
   const ids =
-    owner && (owner.kind === 'segment' || owner.timeSettings?.kind === 'crop')
+    owner &&
+    (owner.kind === 'segment' ||
+      owner.timeSettings?.kind === 'crop' ||
+      // Signals within segments come with their siblings, to compare runs.
+      (!!owner.within && owner.kind === 'derive'))
       ? owner.outputIds
       : targetOutputs(index, target);
   return ids.filter((id) => index.nodes.has(id) || index.values.has(id));
