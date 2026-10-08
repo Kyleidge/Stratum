@@ -3,8 +3,10 @@
 ## Current purpose and scope
 
 Stratum is a local desktop signal-workflow application with a Sites browser preview.
-It imports immutable CSV signals. Derivations and segments create ordinary derived
-signals, which can feed further derivations, segmentation, and scalar values.
+It imports immutable CSV signals. Derivations create ordinary derived signals,
+which can feed further derivations, segmentation, and scalar values. Segments
+are time intervals of a whole recording (not signals); Derive, Value and nested
+Segment steps work within the entire signal, one segment or all of a step's.
 The primary navigation is chronological operation history with explicit output
 membership and direct input/lineage links. Data stays local to the device.
 There are no server API routes or cloud signal uploads.
@@ -89,9 +91,25 @@ There are no server API routes or cloud signal uploads.
   sticky `.operation-footer` with a one-line summary. Create stays disabled while
   the preview reports an error. Derive and Value remember the last operation in
   localStorage; trigger thresholds default to the input's range midpoint with
-  offset 0. New segments are numbered per step (per input when segmented
-  separately) and named after the parent's display label; saved names never
-  change. Compare & align defaults to Align; its alignment preview is display-only.
+  offset 0. New segments are numbered per step ("Segment 01"; nested ones after
+  their parent, "Segment 01.02"); saved names never change. Compare & align
+  defaults to Align; its alignment preview is display-only.
+- File segments (`lib/file-segments.ts`, `docs/workflow-proposal.md`): a
+  Segment step (`segmentSetId`) stores a `SegmentSet` in `project.segmentSets`
+  whose `FileSegment`s are recording-time intervals (end excluded unless a
+  recording/parent end), never signals. `within` (`SegmentScope`: a set, or
+  chosen `segmentIds`) on Derive, Value and Segment steps, chosen with
+  `components/within-control.tsx`; steps record `within` and
+  `segmentInputIds` (impact, lineage, Used by, ordering). Values within read
+  the signal as it is there; derived outputs within read hidden
+  `internal` crops (with `segmentId`) so running state restarts per segment.
+  Never show hidden crops: `visibleInput` names the signal they read, and
+  outputs carry `segmentId`. Edit maps outputs by key (`segmentOutputKeys`:
+  segment place within its parent, or input + segment), so the segment count
+  may change; `followRebuiltBatches` lets later steps that used a whole
+  rebuilt batch follow it. Old crop-segment steps (`segmentationId`) still
+  open, edit and replay. Active shades segments over the signals that found
+  them (`ActivePlot.bands`/`focus`) and zooms to a selected one.
 - First run: `components/workflow-welcome.tsx` is the empty state and the
   post-import next-steps strip; `components/example-tour.tsx` only changes the
   selection and stores dismissal under `stratum-example-tour-v1`;
@@ -149,7 +167,8 @@ There are no server API routes or cloud signal uploads.
   unlabeled older entries read "last change". After Undo/Redo the affected step
   stays selected while it exists.
 - `lib/workflow-example.ts`: deterministic motor-test data and a seven-step
-  original → smoothing → multiplication → run segments → values → nested segments → values
+  original → smoothing → multiplication → run segments (speed triggers) →
+  values within the runs → nested segments within Run 2 → values within them
   example built with normal engine commands. `workflowExample` publishes it as
   one undoable action. Refresh only replaces the selected synthetic source, keeps
   imported recordings, and retains old source columns for Undo. Staged imports

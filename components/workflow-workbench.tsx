@@ -614,6 +614,12 @@ export default function WorkflowWorkbench() {
   /** Captures `ids` into the report; only a drop on Reports switches to it. */
   function addToReport(ids: string[], open = false) {
     const editor = report.current;
+    if (!ids.length && !engine.busy) {
+      setNotice(
+        'Segments are time intervals, not results. Add the signals or values made within them instead.',
+      );
+      return;
+    }
     if (!ids.length || engine.busy || !engine.ready || !editor) return;
     if (open) openReports();
     setDetailPanel(undefined);

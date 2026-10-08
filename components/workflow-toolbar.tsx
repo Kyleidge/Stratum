@@ -77,7 +77,7 @@ const creationActions = [
     label: 'Segment',
     short: 'Segment',
     Icon: Scissors,
-    hint: 'Split signals by ranges, windows or triggers.',
+    hint: 'Find time intervals of the recording by ranges, windows or triggers.',
   },
   {
     id: 'value',
