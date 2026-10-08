@@ -166,13 +166,36 @@ async function createWindow() {
             assert.equal(samples.length, 1, 'Missing samples CSV download');
             const sampleLines = contents(samples[0]).trim().split('\r\n');
             assert.ok(sampleLines.length > 2);
+            // The derived signal within Segment 01 (12–51 s) exports only
+            // its samples there.
             for (const line of sampleLines.slice(1)) {
               const time = Number(line.split(',').at(-2));
               assert.ok(
-                time >= 15 && time <= 20,
-                'Nested export time outside selected signal',
+                time >= 11.99 && time <= 51.01,
+                'Export time outside the signal’s segment',
               );
             }
+            // A Segment step exports a table of its segments' exact times.
+            const segments = named(' · segments.csv');
+            assert.equal(segments.length, 1, 'Missing segments CSV download');
+            const segmentRows = contents(segments[0])
+              .trim()
+              .split('\r\n')
+              .slice(1)
+              .map((line) => line.split(','));
+            assert.deepEqual(
+              segmentRows.map((row) => Math.round(Number(row[1]))),
+              [12, 70, 128],
+              'Segments CSV must list every segment of the step',
+            );
+            assert.ok(
+              segmentRows.every(
+                (row) =>
+                  Math.abs(Number(row[3]) - 39) < 0.01 &&
+                  Math.abs(Number(row[2]) - Number(row[1]) - 39) < 0.01,
+              ),
+              'Segments CSV must hold exact start, end and duration',
+            );
             const reports = named(' · summary.html');
             assert.equal(reports.length, 1, 'Missing HTML summary download');
             assert.ok(
@@ -188,7 +211,7 @@ async function createWindow() {
             assert.ok(header.project.workflowSteps.length >= 9);
             assert.equal(JSON.parse(archive.at(-1)).complete, true);
             process.stdout.write(
-              'Native downloads verified: exact one-value and 40-value scopes, nested samples and standalone report.\n',
+              'Native downloads verified: exact one-value and 40-value scopes, segment times, samples within a segment and standalone report.\n',
             );
           } catch (error) {
             process.stderr.write(
@@ -247,7 +270,7 @@ async function createWindow() {
           );
           await window.webContents.executeJavaScript(`
             [...document.querySelectorAll('[role="treeitem"][data-kind="output"]')]
-              .find(row => row.title.includes('15–20 s'))?.click()
+              .find(row => row.title === 'Segment 01 · Motor speed · Scaled')?.click()
           `);
           await new Promise((resolve) => setTimeout(resolve, 300));
           writeFileSync(
