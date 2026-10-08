@@ -28,14 +28,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import WithinControl, { type WithinOption } from './within-control';
 import type {
   Segment,
   SegmentationDefinition,
   SegmentationPlan,
   SegmentationScope,
   SegmentationOperation,
-  SegmentScope,
   SignalNode,
   Source,
   EngineRequest,
@@ -86,24 +84,17 @@ type Props = {
   valueIndex?: WorkflowIndex;
   /** The sequence of the step being edited; later values are not offered. */
   valueBefore?: number;
-  /**
-   * File segments: the step finds time intervals of the whole recording.
-   * `options` are earlier Segment steps to search within (nesting).
-   */
-  fileSegments?: { options: WithinOption[]; within?: SegmentScope };
   onPreview: (
     definition: SegmentationDefinition,
     targets: string[],
     independently: boolean,
     scope: SegmentationScope,
-    within?: SegmentScope,
   ) => Promise<SegmentationPlan>;
   onCreate: (
     definition: SegmentationDefinition,
     targets: string[],
     independently: boolean,
     scope: SegmentationScope,
-    within?: SegmentScope,
   ) => Promise<void>;
 };
 
@@ -211,21 +202,10 @@ export default function SegmentationEditor({
   signalLabel,
   valueIndex,
   valueBefore,
-  fileSegments,
   onPreview,
   onCreate,
 }: Props) {
   const partialId = useId();
-  const [within, setWithin] = useState(fileSegments?.within);
-  const parents = fileSegments?.options.find(
-    (option) => option.set.id === within?.setId,
-  )?.set.segments;
-  // Nested ranges and windows are seconds from each parent's start.
-  const nested = !!within;
-  const longestParent = Math.max(
-    0,
-    ...(parents ?? []).map((segment) => segment.end - segment.start),
-  );
   const saved = savedOperation?.definition;
   const savedTriggers = saved?.method === 'triggers' ? saved : undefined;
   const savedWindows = saved?.method === 'windows' ? saved : undefined;
@@ -404,7 +384,6 @@ export default function SegmentationEditor({
     target,
     selectedIds,
     selectionKind,
-    within,
   ]);
   const currentPreview = preview?.key === key ? preview : undefined;
   const plan = currentPreview?.plan;
@@ -489,49 +468,13 @@ export default function SegmentationEditor({
       : target === 'file'
         ? source.channels
         : [target];
-  function request(): [
-    SegmentationDefinition,
-    string[],
-    boolean,
-    SegmentationScope,
-    SegmentScope | undefined,
-  ] {
-    if (fileSegments)
-      return [definition(), selectedIds, false, 'signals', within];
+  function request() {
     const independently =
       target === 'selection' &&
       targets.length > 1 &&
       (savedOperation?.independently ?? selectionKind === 'collection');
     const scope: SegmentationScope = target === 'file' ? 'file' : 'signals';
-    return [definition(), targets, independently, scope, undefined];
-  }
-  function changeWithin(next?: SegmentScope) {
-    const wasNested = nested;
-    setWithin(next);
-    setError('');
-    if (!!next === wasNested) return;
-    // Switching between absolute and parent-relative times resets the times.
-    const longest = next
-      ? Math.max(
-          0,
-          ...(fileSegments?.options
-            .find((option) => option.set.id === next.setId)
-            ?.set.segments.map((segment) => segment.end - segment.start) ?? []),
-        )
-      : 0;
-    if (next) {
-      setRanges(`0, ${seconds(Math.min(longest, 5) || 1)}`);
-      setWindowStart('0');
-      setWindowEnd(seconds(longest || 1));
-    } else {
-      setRanges(
-        rangePlot
-          ? ''
-          : `${defaultRange?.[0] ?? source.start}, ${defaultRange?.[1] ?? Math.min(source.end, source.start + 30)}`,
-      );
-      setWindowStart(String(defaultRange?.[0] ?? source.start));
-      setWindowEnd(String(defaultRange?.[1] ?? source.end));
-    }
+    return [definition(), targets, independently, scope] as const;
   }
   async function run(previewOnly: boolean) {
     setError('');
@@ -790,13 +733,7 @@ export default function SegmentationEditor({
       </div>
     );
   }
-  const scopeHint = fileSegments ? (
-    <p className="input-hint segmentation-scope-hint">
-      {nested
-        ? 'Searches each parent segment separately. Ranges and windows are seconds from each parent’s start; triggers use recording time.'
-        : 'Segments are time intervals of the whole recording, not signals. Choose them later with Within when you derive signals or calculate values.'}
-    </p>
-  ) : (
+  const scopeHint = (
     <p className="input-hint segmentation-scope-hint">
       {target === 'file'
         ? 'Each interval becomes a file segment containing every original signal, with shared start and end boundaries.'
@@ -809,27 +746,20 @@ export default function SegmentationEditor({
   );
   const createLabel =
     applyLabel ??
-    (fileSegments
-      ? 'Create segments'
-      : savedOperation
-        ? 'Create revised segments'
-        : target === 'file'
-          ? 'Create file segments'
-          : 'Create signal segments');
+    (savedOperation
+      ? 'Create revised segments'
+      : target === 'file'
+        ? 'Create file segments'
+        : 'Create signal segments');
   // Segment numbers restart per member when members are segmented separately,
   // matching the names the engine gives new segments.
   const planNumbers = new Map<string, number>();
   const rangeNumbers =
     plan?.ranges.map((range) => {
-      const key = range.parentId ?? range.inputId ?? '';
-      const number = (planNumbers.get(key) ?? 0) + 1;
-      planNumbers.set(key, number);
+      const number = (planNumbers.get(range.inputId ?? '') ?? 0) + 1;
+      planNumbers.set(range.inputId ?? '', number);
       return number;
     }) ?? [];
-  const parentName = (id?: string) =>
-    id
-      ? `${valueIndex?.segmentLabel(id) ?? parents?.find((segment) => segment.id === id)?.name ?? 'Segment'}.`
-      : '';
   const clipped = plan?.ranges.filter((range) => range.clipped).length ?? 0;
   const blocked = invalidRanges
     ? 'Add a valid time range to create segments.'
@@ -946,7 +876,7 @@ export default function SegmentationEditor({
           </>
         )}
         {method === 'ranges' &&
-          (rangePlot && !nested ? (
+          (rangePlot ? (
             <TimeRangePicker
               graph={rangePlot.graph}
               label={signalLabel}
@@ -965,11 +895,9 @@ export default function SegmentationEditor({
           ) : (
             <>
               <label className="field-label" htmlFor="segment-ranges">
-                {nested
-                  ? 'Start, end · seconds from each parent’s start, one range per line'
-                  : workflowMode
-                    ? 'Start, end · one range per line'
-                    : 'Start, end — seconds, one range per line'}
+                {workflowMode
+                  ? 'Start, end · one range per line'
+                  : 'Start, end — seconds, one range per line'}
               </label>
               <Textarea
                 id="segment-ranges"
@@ -979,15 +907,13 @@ export default function SegmentationEditor({
                 onChange={(event) => setRanges(event.target.value)}
               />
               <p className="input-hint">
-                {nested
-                  ? `Parent segments last up to ${seconds(longestParent)} s. Overlapping intervals are allowed.`
-                  : 'Use recording time. Overlapping intervals are allowed.'}
+                Use recording time. Overlapping intervals are allowed.
               </p>
             </>
           ))}
         {method === 'windows' && (
           <>
-            {rangePlot && !nested && (
+            {rangePlot && (
               <SegmentPlot
                 graph={rangePlot.graph}
                 request={rangePlot.request}
@@ -1014,12 +940,12 @@ export default function SegmentationEditor({
             )}
             <div className="segment-field-pair">
               <Numeric
-                label={nested ? 'From (after parent start)' : 'Range start'}
+                label="Range start"
                 value={windowStart}
                 onChange={setWindowStart}
               />
               <Numeric
-                label={nested ? 'To (after parent start)' : 'Range end'}
+                label="Range end"
                 value={windowEnd}
                 onChange={setWindowEnd}
               />
@@ -1055,7 +981,7 @@ export default function SegmentationEditor({
                 >
                   50 % overlap
                 </button>
-                {defaultRange && !nested && (
+                {defaultRange && (
                   <button
                     type="button"
                     className="secondary-button"
@@ -1101,18 +1027,7 @@ export default function SegmentationEditor({
           </div>
         )}
         <div className={workflowMode ? 'segment-scope-grid' : undefined}>
-          {fileSegments && valueIndex ? (
-            <WithinControl
-              index={valueIndex}
-              options={fileSegments.options}
-              value={within}
-              onChange={changeWithin}
-              entire="Entire recording"
-              disabled={busy}
-            />
-          ) : (
-            workflowMode && targetEditor()
-          )}
+          {workflowMode && targetEditor()}
           <div>
             <div className="field-label">Outside available data</div>
             <Choice
@@ -1149,9 +1064,7 @@ export default function SegmentationEditor({
             <strong>
               {formatCount(
                 plan.ranges.length,
-                fileSegments
-                  ? 'segment'
-                  : `${target === 'file' ? 'file' : 'signal'} segment`,
+                `${target === 'file' ? 'file' : 'signal'} segment`,
               )}{' '}
               · {clipped} clipped
             </strong>
@@ -1172,10 +1085,7 @@ export default function SegmentationEditor({
                   key={index}
                   title={`${range.inputId ? `${signalLabel ? signalLabel(range.inputId) : nodes.find((node) => node.id === range.inputId)?.name} · ` : ''}Requested ${time(range.requestedStart)} to ${time(range.requestedEnd)}`}
                 >
-                  <span>
-                    {parentName(range.parentId)}
-                    {String(rangeNumbers[index]).padStart(2, '0')}
-                  </span>
+                  <span>{String(rangeNumbers[index]).padStart(2, '0')}</span>
                   <code>
                     {range.inputId && (
                       <small>

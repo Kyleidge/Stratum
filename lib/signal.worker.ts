@@ -34,22 +34,16 @@ async function toStream(
 const pending = new Set<number>(),
   cancelled = new Set<number>();
 type InspectionLane = 'view' | 'rows' | 'measure-plot' | 'sample-count';
-type PreviewLane =
-  | 'segment-preview'
-  | 'segment-set-preview'
-  | 'derive-preview'
-  | 'value-preview';
+type PreviewLane = 'segment-preview' | 'derive-preview' | 'value-preview';
 const inspections = new Map<number, InspectionLane | PreviewLane>();
 const PREVIEWS = new Set<string>([
   'segment-preview',
-  'segment-set-preview',
   'derive-preview',
   'value-preview',
 ]);
 const COMMITS = new Set<string>([
   'derive-many',
   'segment',
-  'segment-set',
   'calculate-values',
   'region-function',
   'time-operation',
@@ -71,7 +65,6 @@ globalThis.onmessage = (
       r.type === 'measure-plot' ||
       r.type === 'sample-count' ||
       r.type === 'segment-preview' ||
-      r.type === 'segment-set-preview' ||
       r.type === 'derive-preview' ||
       r.type === 'value-preview') &&
     r.inspection
@@ -164,29 +157,8 @@ globalThis.onmessage = (
               r.operation,
               r.parameters,
               r.bindings,
-              r.within,
             );
             break;
-          case 'segment-set':
-            await engine.segmentSet(
-              r.sourceId,
-              r.definition,
-              r.referenceId,
-              r.within,
-            );
-            break;
-          case 'segment-set-preview':
-            send({
-              type: 'segment-plan',
-              requestId,
-              plan: await engine.previewSegmentSet(
-                r.sourceId,
-                r.definition,
-                r.referenceId,
-                r.within,
-              ),
-            });
-            return;
           case 'init-regions':
             await engine.open();
             await engine.initializeRegions();
@@ -235,7 +207,6 @@ globalThis.onmessage = (
               {
                 ...(r.unit !== undefined ? { unit: r.unit } : {}),
                 ...(r.formula ? { formula: r.formula } : {}),
-                ...(r.within ? { within: r.within } : {}),
               },
             );
             break;
@@ -277,7 +248,6 @@ globalThis.onmessage = (
                 r.operation,
                 r.parameters,
                 r.bindings,
-                r.within,
               ),
             });
             return;

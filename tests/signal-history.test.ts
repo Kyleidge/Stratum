@@ -160,7 +160,7 @@ async function collect(engine: SignalEngine, id: string) {
 
 async function persistLegacyProject(database: string, project: Project) {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(database);
+    const request = indexedDB.open(database, 1);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

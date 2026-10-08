@@ -42,8 +42,6 @@ export type FunctionSettings = {
   secondaryIds?: string[];
   regionSetId?: string;
   regionIds?: string[];
-  /** One output per input pair in each chosen file segment. */
-  within?: import('./signal-types').SegmentScope;
 };
 export type FunctionOutput = {
   signalId: string;

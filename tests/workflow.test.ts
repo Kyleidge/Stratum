@@ -22,7 +22,6 @@ import type {
 } from '../lib/signal-types';
 import { reportHtml, valuesCsv } from '../lib/workflow-delivery';
 import { affectedOperations } from '../lib/workflow-lifecycle';
-import { segmentEntries } from '../lib/file-segments';
 import { WORKFLOW_EXAMPLE } from '../lib/workflow-example';
 import {
   readPlotSheets,
@@ -671,13 +670,15 @@ void test('workflow drops preserve member inputs, exact segment families and sca
     const segmentSteps = engine.project.workflowSteps!.filter(
       (step) => step.kind === 'segment',
     );
-    const [runs] = segmentSteps;
+    const [runs, nested] = segmentSteps;
     const run = { kind: 'output' as const, id: runs.outputIds[1] };
-    // Segments are processed with the signal that found them; they are not
-    // plotted as signals themselves.
-    assert.deepEqual(targetSignals(index, run), runs.inputIds);
-    assert.deepEqual(targetOutputs(index, run), [run.id]);
-    assert.deepEqual(targetPlotOutputs(index, run), []);
+    assert.deepEqual(targetSignals(index, run), [run.id]);
+    assert.deepEqual(targetPlotOutputs(index, run), runs.outputIds);
+    assert.deepEqual(
+      targetPlotOutputs(index, { kind: 'output', id: nested.outputIds[0] }),
+      nested.outputIds,
+    );
+    assert.ok(!targetPlotOutputs(index, run).includes(nested.outputIds[0]));
     const valueStep = engine.project.workflowSteps!.find(
       (step) => step.kind === 'value',
     )!;
@@ -688,11 +689,10 @@ void test('workflow drops preserve member inputs, exact segment families and sca
     assert.deepEqual(targetSignals(index, value), [
       index.values.get(valueId)!.inputId,
     ]);
-    assert.deepEqual(targetSignals(index, { kind: 'step', id: valueStep.id }), [
-      ...new Set(
-        valueStep.outputIds.map((id) => index.values.get(id)!.inputId),
-      ),
-    ]);
+    assert.deepEqual(
+      targetSignals(index, { kind: 'step', id: valueStep.id }),
+      valueStep.outputIds.map((id) => index.values.get(id)!.inputId),
+    );
     assert.deepEqual(readWorkflowDrag(JSON.stringify(run), index), run);
     assert.deepEqual(targetOutputs(index, { kind: 'output', id: '' }), []);
     for (const raw of [
@@ -717,13 +717,8 @@ void test('motor example creates chronological, executable signal lineage and fi
     const project = engine.project;
     assert.equal(source.exampleKey, WORKFLOW_EXAMPLE);
     assert.equal(source.rows, 1801);
-    // Segments are intervals, not signals: only the derived signals are new.
-    assert.equal(project.nodes.length, 4);
+    assert.equal(project.nodes.length, 9);
     assert.equal(project.values!.length, 5);
-    assert.deepEqual(
-      project.segmentSets!.map((set) => set.segments.length),
-      [3, 2],
-    );
     assert.deepEqual(
       project.workflowSteps!.map((step) => step.kind),
       ['import', 'derive', 'derive', 'segment', 'value', 'segment', 'value'],
@@ -743,40 +738,12 @@ void test('motor example creates chronological, executable signal lineage and fi
     const powerSamples = await samples(engine, power.id);
     for (const [i, point] of powerSamples.entries())
       assert.ok(Math.abs(point[1] - torque[i][1] * speed[i][1]) < 1e-9);
-    const [runs, halves] = project.segmentSets!;
-    // Speed crossings are interpolated between samples.
-    const round = (time: number) => Math.round(time * 10) / 10;
-    assert.deepEqual(
-      runs.segments.map((segment) => [
-        index.label(segment.id),
-        round(segment.start),
-        round(segment.end),
-      ]),
-      [
-        ['Run 1', 10, 50],
-        ['Run 2', 65, 105],
-        ['Run 3', 120, 160],
-      ],
-    );
-    assert.deepEqual(
-      halves.segments.map((segment) => [
-        round(segment.start),
-        round(segment.end),
-      ]),
-      [
-        [65, 85],
-        [85, 105],
-      ],
-    );
-    assert.equal(halves.segments[0].parentId, runs.segments[1].id);
-    const segments = segmentEntries(project);
+    const run2 = find('Run 2 · Torque × speed');
+    const first = find('Run 2 · First half · Torque × speed');
+    assert.deepEqual(first.parents, [run2.id]);
+    assert.deepEqual(engine.bounds(first.id), [65, 85]);
     for (const value of project.values!) {
-      const { segment } = segments.get(value.segmentId!)!;
-      const points = (await samples(engine, value.inputId)).filter(
-        ([time]) =>
-          time >= segment.start &&
-          (segment.endInclusive ? time <= segment.end : time < segment.end),
-      );
+      const points = await samples(engine, value.inputId);
       const expected =
         value.operation === 'maximum'
           ? Math.max(...points.map((point) => point[1]))
@@ -1118,7 +1085,7 @@ void test('journal entries saved before labels existed still undo as "last chang
   engine.close();
   // Rewrite the journal as an older version stored it: no label arrays.
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(database);
+    const request = indexedDB.open(database, 1);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

@@ -5,8 +5,6 @@ import { formatCount } from './format-count';
 import { stepName } from './workflow-history';
 import { savedBindings } from './value-bindings';
 import { compileFormula } from './formula';
-import { isSegmentCrop, visibleInput } from './file-segments';
-import { isBinaryOperation } from './signal-arithmetic';
 
 const withBindings = (
   bindings: import('./workflow-types').ParameterBindings | undefined,
@@ -23,13 +21,6 @@ export type WorkflowCommand =
           | 'time-operation';
       }
     >
-  | {
-      type: 'segment-set';
-      sourceId: string;
-      definition: import('./signal-types').SegmentationDefinition;
-      referenceId?: string;
-      within?: import('./signal-types').SegmentScope;
-    }
   | {
       type: 'segment';
       sourceId: string;
@@ -86,7 +77,6 @@ export function affectedOperations(
         ((first.kind === 'import' && step.sourceId === first.sourceId) ||
           step.inputIds.some((id) => outputs.has(id)) ||
           step.valueInputIds?.some((id) => outputs.has(id)) ||
-          step.segmentInputIds?.some((id) => outputs.has(id)) ||
           // Saved invocations also depend on inputs that yielded no outputs.
           segmentation?.targetIds.some((id) => outputs.has(id)) ||
           (!!step.regionSetId && sets.has(step.regionSetId)) ||
@@ -127,20 +117,10 @@ export function withoutOperations(
   const segmentation = new Set(
     steps.flatMap((step) => (step.segmentationId ? [step.segmentationId] : [])),
   );
-  const read = new Set(
-    project.nodes.flatMap((node) => (outputs.has(node.id) ? [] : node.parents)),
-  );
-  // Hidden segment crops go with the last output that reads them.
   const nodes = project.nodes.filter(
-    (node) =>
-      !outputs.has(node.id) &&
-      !sources.has(node.sourceId) &&
-      (!isSegmentCrop(node) || read.has(node.id)),
+    (node) => !outputs.has(node.id) && !sources.has(node.sourceId),
   );
   const live = new Set(nodes.map((node) => node.id));
-  const sets = new Set(
-    steps.flatMap((step) => (step.segmentSetId ? [step.segmentSetId] : [])),
-  );
   const segments = project.segments
     .map((segment) => ({
       ...segment,
@@ -189,13 +169,6 @@ export function withoutOperations(
       (step) => !stepIds.has(step.id),
     ),
     segments,
-    ...(project.segmentSets
-      ? {
-          segmentSets: project.segmentSets.filter(
-            (set) => !sets.has(set.id) && !sources.has(set.sourceId),
-          ),
-        }
-      : {}),
     segmentationOperations: project.segmentationOperations
       ?.filter(
         (operation) =>
@@ -242,19 +215,6 @@ export function savedCommand(
       type: 'time-operation',
       settings: structuredClone(step.timeSettings),
     };
-  if (step.segmentSetId) {
-    const set = project.segmentSets?.find(
-      (item) => item.id === step.segmentSetId,
-    );
-    if (!set) throw new Error('These segments no longer exist.');
-    return {
-      type: 'segment-set',
-      sourceId: set.sourceId,
-      definition: structuredClone(set.definition),
-      ...(set.referenceId ? { referenceId: set.referenceId } : {}),
-      ...(set.within ? { within: structuredClone(set.within) } : {}),
-    };
-  }
   if (step.kind === 'segment' && step.segmentationId) {
     const saved = segmentationOperation(project, step.segmentationId);
     return {
@@ -266,10 +226,8 @@ export function savedCommand(
       scope: saved.scope,
     };
   }
-  const within = step.within ? { within: structuredClone(step.within) } : {};
   if (step.kind === 'value')
     return {
-      ...within,
       type: 'calculate-values',
       inputIds: step.inputIds,
       operation: step.operation as import('./workflow-types').ValueOperation,
@@ -282,63 +240,6 @@ export function savedCommand(
         ),
       ),
     };
-  if (step.kind === 'derive' && step.within) {
-    // Outputs read hidden crops; the command names the signals they crop.
-    const nodes = new Map(project.nodes.map((node) => [node.id, node]));
-    const outputs = step.outputIds.flatMap((id) => nodes.get(id) ?? []);
-    const first = outputs[0];
-    if (!first) throw new Error('This step has no outputs to rebuild.');
-    const read = (position: number) => [
-      ...new Set(
-        outputs.flatMap((node) =>
-          node.parents[position] === undefined
-            ? []
-            : [visibleInput(nodes, node.parents[position])],
-        ),
-      ),
-    ];
-    if (isBinaryOperation(first.operation))
-      return {
-        type: 'region-function',
-        settings: {
-          sourceId: first.sourceId,
-          operation: first.operation,
-          parameter: 0,
-          inputIds: read(0),
-          secondaryIds: read(1),
-          within: structuredClone(step.within),
-        },
-      };
-    const letters =
-      first.operation === 'formula'
-        ? compileFormula(first.expression ?? '').signals.slice(1)
-        : [];
-    return {
-      ...within,
-      type: 'derive-many',
-      parentIds: read(0),
-      operation: first.operation,
-      parameter: step.parameters?.value ?? first.parameters.value ?? 0,
-      ...withBindings(savedBindings(outputs)),
-      ...(first.operation === 'formula'
-        ? {
-            unit: first.unit,
-            formula: {
-              expression: first.expression ?? '',
-              ...(letters.length
-                ? {
-                    signals: Object.fromEntries(
-                      letters.map((letter, k) => [letter, read(k + 1)]),
-                    ),
-                  }
-                : {}),
-            },
-          }
-        : first.operation === 'convert'
-          ? { unit: first.unit }
-          : {}),
-    };
-  }
   if (step.kind === 'derive') {
     const run = project.functionRuns?.find((item) =>
       item.outputs.some((output) => step.outputIds.includes(output.signalId)),
@@ -394,109 +295,6 @@ export function savedCommand(
   throw new Error(
     `Operation #${step.sequence + 1} uses a legacy recipe that cannot be rebuilt safely. Remove or recreate that dependent operation first.`,
   );
-}
-
-/**
- * What each output of a segment step, or of a derive or value step, is: a
- * segment's place within its parent, or an input (within a segment). Edit
- * keeps an output's ID when its key survives, however many there are.
- */
-export function segmentOutputKeys(
-  project: Project,
-  step: WorkflowStep,
-): string[] | undefined {
-  if (step.segmentSetId) {
-    const set = project.segmentSets?.find(
-      (item) => item.id === step.segmentSetId,
-    );
-    if (!set) return undefined;
-    const counts = new Map<string, number>();
-    const keys = new Map(
-      set.segments.map((segment) => {
-        const parent = segment.parentId ?? '';
-        const place = (counts.get(parent) ?? 0) + 1;
-        counts.set(parent, place);
-        return [segment.id, `${parent}#${place}`] as const;
-      }),
-    );
-    return step.outputIds.map((id) => keys.get(id) ?? id);
-  }
-  if (step.kind !== 'derive' && step.kind !== 'value') return undefined;
-  const nodes = new Map(project.nodes.map((node) => [node.id, node]));
-  const values = new Map(project.values?.map((value) => [value.id, value]));
-  const keys = step.outputIds.map((id) => {
-    const node = nodes.get(id);
-    const value = values.get(id);
-    const input = node
-      ? visibleInput(nodes, node.parents[0])
-      : (value?.inputId ?? id);
-    return `${input}\n${(node ?? value)?.segmentId ?? ''}`;
-  });
-  // Other steps match by position.
-  return new Set(keys).size === keys.length ? keys : undefined;
-}
-
-/**
- * A later step's saved command after earlier steps were rebuilt: a list that
- * used every output of a rebuilt step uses all of its new outputs. Outputs
- * that no longer exist may not be used on their own.
- */
-export function followRebuiltBatches(
-  command: WorkflowCommand,
-  rebuilt: { old: string[]; now: string[] }[],
-): WorkflowCommand {
-  const follow = (ids: string[]): string[] => {
-    let list = ids;
-    for (const batch of rebuilt) {
-      const kept = new Set(batch.now);
-      const gone = batch.old.filter((id) => !kept.has(id));
-      const all = batch.old.every((id) => list.includes(id));
-      if (all && (gone.length || batch.now.length !== batch.old.length)) {
-        const old = new Set(batch.old);
-        const at = list.findIndex((id) => old.has(id));
-        const rest = list.filter((id) => !old.has(id));
-        list = [...rest.slice(0, at), ...batch.now, ...rest.slice(at)];
-      } else if (gone.some((id) => list.includes(id)))
-        throw new Error(
-          'The new settings remove outputs that later steps use on their own. Remove or revise those steps first. Existing work is unchanged.',
-        );
-    }
-    return list;
-  };
-  switch (command.type) {
-    case 'derive-many':
-      return {
-        ...command,
-        parentIds: follow(command.parentIds),
-        ...(command.formula?.signals
-          ? {
-              formula: {
-                ...command.formula,
-                signals: Object.fromEntries(
-                  Object.entries(command.formula.signals).map(
-                    ([letter, ids]) => [letter, follow(ids)],
-                  ),
-                ),
-              },
-            }
-          : {}),
-      };
-    case 'calculate-values':
-      return { ...command, inputIds: follow(command.inputIds) };
-    case 'region-function':
-      return {
-        ...command,
-        settings: {
-          ...command.settings,
-          inputIds: follow(command.settings.inputIds),
-          ...(command.settings.secondaryIds
-            ? { secondaryIds: follow(command.settings.secondaryIds) }
-            : {}),
-        },
-      };
-    default:
-      return command;
-  }
 }
 
 /** Metadata IDs only: this never touches immutable raw sample columns. */

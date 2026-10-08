@@ -111,11 +111,7 @@ export default function SignalChart({
   extent,
 }: {
   traces: Trace[];
-  /** Shaded time bands; a selected band is emphasised. */
-  segments: (Pick<Segment, 'id' | 'start' | 'end'> & {
-    name?: string;
-    selected?: boolean;
-  })[];
+  segments: Segment[];
   range: [number, number];
   onSegment: (id: string) => void;
   compact?: boolean;
@@ -890,17 +886,15 @@ export default function SignalChart({
             <g
               key={s.id}
               className="chart-segment"
-              data-selected={s.selected || undefined}
               onClick={() => onSegment(s.id)}
             >
-              {s.name && <title>{s.name}</title>}
               <rect
                 x={x(s.start)}
                 y="8"
                 width={Math.max(0, x(s.end) - x(s.start))}
                 height={bottom - 5}
                 style={{ fill: SEGMENT_COLORS[i % 3] }}
-                opacity={s.selected ? '0.2' : '0.055'}
+                opacity="0.055"
               />
               <line
                 x1={x(s.start)}

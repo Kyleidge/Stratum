@@ -63,11 +63,6 @@ export type SignalNode = {
   version: 1;
   batchId?: string;
   internal?: boolean;
-  /**
-   * The file segment this signal is restricted to: set on outputs created
-   * within a segment and on the hidden crops they read.
-   */
-  segmentId?: string;
 };
 export type Source = {
   id: string;
@@ -99,42 +94,6 @@ export type Segment = {
   minimumDuration?: number;
 };
 export type SegmentationScope = 'file' | 'signals';
-/**
- * A time interval of a whole recording (or of a workspace time axis), found
- * by a Segment step. It is a pointer, not a signal: Derive, Value and nested
- * Segment steps choose segments with a `SegmentScope`.
- */
-export type FileSegment = {
-  id: string;
-  name: string;
-  /** Recording time (workspace sets: their time reference's axis). */
-  start: number;
-  end: number;
-  /** The end belongs to the segment only at a recording or parent end. */
-  endInclusive: boolean;
-  /** Nested segments: the segment they were found within. */
-  parentId?: string;
-  boundary: SegmentBoundary;
-};
-/** The segments of one Segment step, with the settings that found them. */
-export type SegmentSet = {
-  id: string;
-  /** The recording; '' for a workspace time axis. */
-  sourceId: string;
-  /** Workspace sets: the time reference every scoped signal must share. */
-  timeReferenceId?: string;
-  definition: SegmentationDefinition;
-  /** Workspace ranges and windows: the signal whose time axis they use. */
-  referenceId?: string;
-  /**
-   * Nested sets: the parent segments searched. Ranges and windows are then
-   * seconds from each parent's start.
-   */
-  within?: SegmentScope;
-  segments: FileSegment[];
-};
-/** Segments chosen for an operation: all of a set's, or the listed ones. */
-export type SegmentScope = { setId: string; segmentIds?: string[] };
 export type SegmentationOperation = {
   id: string;
   sourceId: string;
@@ -191,8 +150,6 @@ export type SegmentationDefinition = (
 };
 export type SegmentBoundary = {
   inputId?: string;
-  /** Nested segments: the parent segment searched. */
-  parentId?: string;
   start: number;
   end: number;
   requestedStart: number;
@@ -214,7 +171,6 @@ export type Project = {
   nodes: SignalNode[];
   segments: Segment[];
   segmentationOperations?: SegmentationOperation[];
-  segmentSets?: SegmentSet[];
   examples?: ExampleRun[];
   regionSets?: RegionSet[];
   functionRuns?: FunctionRun[];
@@ -306,18 +262,6 @@ export type EngineRequest =
       parameters?: import('./workflow-types').ValueParameters;
       /** Settings taken from other values; they replace `parameters`. */
       bindings?: import('./workflow-types').ParameterBindings;
-      /** One value per input in each chosen segment. */
-      within?: SegmentScope;
-    }
-  | {
-      type: 'segment-set' | 'segment-set-preview';
-      sourceId: string;
-      definition: SegmentationDefinition;
-      /** Workspace ranges and windows: the signal whose axis they use. */
-      referenceId?: string;
-      /** Nested segmentation: the parent segments to search. */
-      within?: SegmentScope;
-      inspection?: boolean;
     }
   | { type: 'init' }
   | { type: 'import'; file: File; tables?: number[] }
@@ -342,8 +286,6 @@ export type EngineRequest =
       /** The output unit of a formula, or the target unit of a conversion. */
       unit?: string;
       formula?: FormulaSettings;
-      /** One output per input in each chosen segment, read from its crop. */
-      within?: SegmentScope;
     }
   | {
       type: 'segment' | 'segment-preview';
@@ -364,8 +306,6 @@ export type EngineRequest =
       formula?: FormulaSettings;
       secondaryId?: string;
       range?: [number, number];
-      /** Preview within the first segment of this scope that has data. */
-      within?: SegmentScope;
       inspection?: boolean;
     }
   | {
@@ -375,8 +315,6 @@ export type EngineRequest =
       operation?: ValueOperation;
       parameters?: import('./workflow-types').ValueParameters;
       bindings?: import('./workflow-types').ParameterBindings;
-      /** Statistics per input within each chosen segment. */
-      within?: SegmentScope;
       inspection?: boolean;
     }
   | { type: 'segment-metrics'; ids: string[] }

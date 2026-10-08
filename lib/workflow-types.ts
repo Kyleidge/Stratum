@@ -63,8 +63,6 @@ export type ScalarValue = {
   end: number;
   timestamp?: number;
   createdAt: string;
-  /** The file segment the value was calculated within. */
-  segmentId?: string;
 };
 
 /** Chronological invocation record; explicit edits increment its revision. */
@@ -88,12 +86,6 @@ export type WorkflowStep = {
   parameters?: Record<string, number>;
   definition?: SegmentationDefinition;
   segmentationId?: string;
-  /** Segment steps that find file segments: their `SegmentSet`. */
-  segmentSetId?: string;
-  /** The segments this step works within, as chosen. */
-  within?: import('./signal-types').SegmentScope;
-  /** The segments it actually used, for impact, lineage and Used by. */
-  segmentInputIds?: string[];
   regionSetId?: string;
   /** Workflow run that produced this step, when created by a batch. */
   runId?: string;
@@ -178,8 +170,6 @@ export type WorkflowRecipeRecord = {
  */
 export type ValueStatistics = {
   inputId: string;
-  /** Statistics within this file segment of the input. */
-  segmentId?: string;
   sampleCount: number;
   validDuration: number;
   sampleAverage: number | null;

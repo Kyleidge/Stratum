@@ -65,7 +65,7 @@ function expectedPlot(range: [number, number], gaps = false) {
 }
 async function openDatabase(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(name);
+    const request = indexedDB.open(name, 1);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

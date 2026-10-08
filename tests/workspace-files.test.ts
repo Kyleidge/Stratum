@@ -190,9 +190,7 @@ void test('truncated, corrupt, foreign and newer backups are rejected before rep
             ...lines.slice(1),
           ].join('\n'),
         ),
-        new RegExp(
-          `newer version of Stratum \\(backup format ${ARCHIVE_VERSION + 1}\\)`,
-        ),
+        /newer version of Stratum \(backup format 2\)/,
       ],
       [
         encode(JSON.stringify({ ...header, version: '1' }) + '\n'),
