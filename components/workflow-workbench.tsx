@@ -115,6 +115,7 @@ import {
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
+import SegmentValueTable from './segment-value-table';
 import OperationInputs, { editImpact, editTitle } from './operation-inputs';
 import { RegionSelect } from './region-controls';
 import WorkflowExport from './workflow-export';
@@ -475,6 +476,10 @@ export default function WorkflowWorkbench() {
   }
   const [tableQuery, setTableQuery] = useState(''),
     [page, setPage] = useState(0);
+  // Values within segments read best as a segment × input grid.
+  const [valueLayout, setValueLayout] = useState<'segments' | 'list'>(
+    'segments',
+  );
   // Restore the last selection once the workspace opens, if it still exists.
   const selectionRestored = useRef(false);
   useEffect(() => {
@@ -2728,7 +2733,49 @@ export default function WorkflowWorkbench() {
                                 )}
                               </div>
                             </div>
-                            {step.kind === 'regions' ? (
+                            {step.kind === 'value' &&
+                              step.outputIds.some(
+                                (id) => index.values.get(id)?.segmentId,
+                              ) && (
+                                <div
+                                  className="workflow-layout-toggle"
+                                  role="group"
+                                  aria-label="Value layout"
+                                >
+                                  <button
+                                    type="button"
+                                    aria-pressed={valueLayout === 'segments'}
+                                    onClick={() => setValueLayout('segments')}
+                                  >
+                                    By segment
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-pressed={valueLayout === 'list'}
+                                    onClick={() => setValueLayout('list')}
+                                  >
+                                    List
+                                  </button>
+                                </div>
+                              )}
+                            {step.kind === 'value' &&
+                            valueLayout === 'segments' &&
+                            step.outputIds.some(
+                              (id) => index.values.get(id)?.segmentId,
+                            ) ? (
+                              <SegmentValueTable
+                                index={index}
+                                step={step}
+                                selectedId={
+                                  selection.kind === 'output'
+                                    ? selection.id
+                                    : undefined
+                                }
+                                onSelect={(id) =>
+                                  select({ kind: 'output', id })
+                                }
+                              />
+                            ) : step.kind === 'regions' ? (
                               <div className="workflow-saved-ranges">
                                 {project.regionSets
                                   ?.find((set) => set.id === step.regionSetId)

@@ -280,11 +280,12 @@ function SelectionDetails({
   const signalId = node?.id ?? value?.inputId;
   const range = signalId ? graph.ranges.get(signalId) : undefined;
   const time = signalId ? graph.timeReferences.get(signalId) : undefined;
+  // A step's segments are shown under Within, not as inputs.
   const inputs =
     selection.kind === 'output'
       ? index.inputs(selection.id)
       : step
-        ? stepInputs(step)
+        ? stepInputs(step).filter((id) => !index.segments.has(id))
         : [];
   const sourceIds = new Set(lineage.originals.map((item) => item.sourceId));
   if (step?.kind === 'import' && step.sourceId) sourceIds.add(step.sourceId);

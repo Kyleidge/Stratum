@@ -493,3 +493,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Values within segments: a segment × input grid or the plain list */
+.workflow-layout-toggle {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 2px;
+  border: 1px solid var(--line-mid);
+  border-radius: 6px;
+}
+.workflow-layout-toggle button {
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+.workflow-layout-toggle button[aria-pressed='true'] {
+  background: var(--selected);
+  color: var(--ink-1);
+}
+.segment-value-table .workflow-output-table td[data-state='selected'] {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
