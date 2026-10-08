@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { packageRoot } from '../desktop/notices.mjs';
+import { betaVersion } from '../desktop/beta-version.mjs';
 
 const read = (path: string) =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replaceAll(
@@ -33,4 +34,21 @@ void test('licence notices attribute bundled modules to their packages', () => {
     fileURLToPath(new URL('../node_modules/react/index.js', import.meta.url)),
   );
   assert.ok(react?.replaceAll('\\', '/').endsWith('/node_modules/react'));
+});
+
+void test('automatic betas outrank earlier betas and released versions', () => {
+  assert.equal(betaVersion('1.0.0', 42, []), '1.0.0-beta.42');
+  assert.equal(
+    betaVersion('1.0.0-beta.3', 42, ['v1.0.0-beta.3']),
+    '1.0.0-beta.42',
+  );
+  // Once 1.0.0 is tagged, betas move on so beta installs keep updating.
+  assert.equal(
+    betaVersion('1.0.0', 43, ['v1.0.0', 'v1.0.1', 'v1.0.0-beta.42']),
+    '1.0.2-beta.43',
+  );
+  assert.equal(betaVersion('1.1.0', 44, ['v1.0.0']), '1.1.0-beta.44');
+  assert.throws(() => betaVersion('1.0', 1, []));
+  assert.throws(() => betaVersion('1.0.0', 0, []));
+  assert.throws(() => betaVersion('1.0.0', Number.NaN, []));
 });

@@ -1,14 +1,25 @@
-# Builds the Windows installer. A `v*` tag (matching package.json's version)
-# also publishes the installer, its blockmap and latest.yml to a draft release
-# of this public repository, the feed installed copies update from; a beta
-# version (v1.1.0-beta.1) makes a prerelease draft. Pull requests touching
-# packaging and manual runs only build, uploading the installer as a workflow
-# artifact. See docs/releasing.md.
+# Builds the Windows installer and publishes it to this public repository's
+# releases, the feed installed copies update from (see docs/releasing.md):
+#
+# - every push to main (except documentation) publishes an automatic beta,
+#   <package.json version>-beta.<run number>, as a prerelease at once;
+# - a manual run with "Publish a beta" ticked does the same for any branch;
+# - a `v*` tag matching package.json publishes that version: a stable one as
+#   a draft to check and publish by hand, a beta (v1.1.0-beta.1) at once.
+#
+# Pull requests touching packaging and other manual runs only build. Every
+# run uploads the installer as a workflow artifact.
 name: Release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    # Tag pushes ignore path filters, so every tag still builds.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.claude/**'
   pull_request:
     paths:
       - '.github/workflows/release.yml'
@@ -18,27 +29,39 @@ on:
       - 'pnpm-workspace.yaml'
       - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      beta:
+        description: Publish a beta release of this branch
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  # Never cancel a publishing run part-way through an upload.
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  # Publishing runs queue: one stopped part-way through an upload would leave
+  # a release without latest.yml.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 45
-    # Publishing creates the draft release. Fork pull requests still get a
-    # read-only token, and only tag pushes pass a token to the packager.
+    # Publishing creates releases and beta tags. Fork pull requests still get
+    # a read-only token, and only publishing runs pass a token to the packager.
     permissions:
       contents: write
     env:
-      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      BETA: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.beta) }}
+      TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Tags and history for the beta number and release notes.
+          fetch-depth: 0
+          # Only the publishing steps below get the write token.
+          persist-credentials: false
       # Uses the pnpm version pinned in package.json's packageManager.
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -46,24 +69,46 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Check the tag matches package.json
-        if: env.PUBLISH == 'true'
+      - name: Choose the version
+        if: env.BETA == 'true' || env.TAG == 'true'
         shell: bash
         run: |
-          version="v$(node -p "require('./package.json').version")"
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($version)."
-            exit 1
+          if [ "$BETA" = true ]; then
+            version=$(node desktop/beta-version.mjs "$GITHUB_RUN_NUMBER")
+            if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+              echo "::error::v$version already exists. Re-running a published beta is not possible; push or run again instead."
+              exit 1
+            fi
+          else
+            version="${GITHUB_REF_NAME#v}"
+            expected=$(node -p "require('./package.json').version")
+            if [ "$version" != "$expected" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match package.json (v$expected)."
+              exit 1
+            fi
           fi
+          echo "STRATUM_VERSION=$version" >> "$GITHUB_ENV"
+          echo "::notice::Publishing Stratum $version"
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm desktop:build
-      - name: Package${{ startsWith(github.ref, 'refs/tags/v') && ' and publish' || '' }}
+      # A tag made with this workflow's token never starts another run.
+      - name: Tag the beta
+        if: env.BETA == 'true'
         shell: bash
-        run: node desktop/package.mjs $([ "$PUBLISH" = true ] && echo --publish)
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/v$STRATUM_VERSION" -f sha="$GITHUB_SHA" >/dev/null
+          echo "BETA_TAGGED=true" >> "$GITHUB_ENV"
         env:
-          # RELEASES_TOKEN only when the feed is another repository.
-          GH_TOKEN: ${{ env.PUBLISH == 'true' && (secrets.RELEASES_TOKEN || github.token) || '' }}
+          GH_TOKEN: ${{ github.token }}
+      - name: Package${{ (github.event_name == 'push' || inputs.beta) && ' and publish' || '' }}
+        shell: bash
+        run: node desktop/package.mjs ${STRATUM_VERSION:+--publish}
+        env:
+          # Uploads go to a draft. RELEASES_TOKEN only when the feed is
+          # another repository.
+          GH_TOKEN: ${{ (env.BETA == 'true' || env.TAG == 'true') && (secrets.RELEASES_TOKEN || github.token) || '' }}
           # Optional feed overrides (repository variables).
           STRATUM_UPDATE_OWNER: ${{ vars.STRATUM_UPDATE_OWNER }}
           STRATUM_UPDATE_REPO: ${{ vars.STRATUM_UPDATE_REPO }}
@@ -78,12 +123,57 @@ jobs:
           AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
-      # electron-builder can't create a draft that is also a prerelease, and a
-      # beta published as a full release would reach every stable install.
-      - name: Mark a prerelease draft as a prerelease
-        if: env.PUBLISH == 'true' && contains(github.ref_name, '-') && !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
+      # Publishing the finished draft makes the whole beta (installer and
+      # latest.yml) appear at once, marked as a prerelease so stable installs
+      # never take it.
+      - name: Publish the beta
+        if: contains(env.STRATUM_VERSION, '-') && !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
         shell: bash
-        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --prerelease
+        run: |
+          tag="v$STRATUM_VERSION"
+          previous=$(gh release list --limit 50 --exclude-drafts \
+            --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' |
+            { grep -e '-beta\.' || true; } | { grep -vx "$tag" || true; } |
+            sed -n 1p)
+          {
+            echo "Beta build of \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA::7}."
+            echo "Installed betas, and copies with **Help → Get Beta Updates**"
+            echo "ticked, update to it. Stable installs never do."
+            echo
+            if [ -n "$previous" ] && git rev-parse -q --verify "refs/tags/$previous" >/dev/null; then
+              echo "## Changes since $previous"
+              echo
+              git log --no-merges --format='- %s (%h)' "$previous..HEAD"
+            else
+              echo "## Recent changes"
+              echo
+              git log --no-merges --format='- %s (%h)' -20
+            fi
+          } > beta-notes.md
+          gh release edit "$tag" --draft=false --prerelease \
+            --title "Stratum $STRATUM_VERSION" --notes-file beta-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Keep the ten newest betas
+        if: env.BETA == 'true' && !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
+        shell: bash
+        run: |
+          old=$(gh release list --limit 200 --exclude-drafts \
+            --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' |
+            { grep -e '-beta\.' || true; } | tail -n +11)
+          for tag in $old; do gh release delete "$tag" --cleanup-tag --yes; done
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # A half-published beta would break update checks for beta installs.
+      - name: Remove a failed beta
+        if: failure() && env.BETA_TAGGED == 'true'
+        shell: bash
+        run: |
+          gh release delete "v$STRATUM_VERSION" --cleanup-tag --yes ||
+            gh api -X DELETE \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/v$STRATUM_VERSION"
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v7

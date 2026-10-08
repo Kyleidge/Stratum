@@ -70,7 +70,8 @@ time-series recordings. Recordings and workspaces stay on your computer.
 - Windows installer for the current user (no administrator rights), with a
   Start-menu shortcut and an uninstaller that keeps your workspace.
 - Automatic updates download in the background; Stratum asks before
-  restarting to install them.
+  restarting to install them. **Help → Get Beta Updates** also offers test
+  builds before they are released.
 - Light and dark themes.
 - Help menu with About Stratum, the licence and third-party notices.
 - Released under the MIT licence.

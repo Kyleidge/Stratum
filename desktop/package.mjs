@@ -8,6 +8,9 @@
 //   pnpm desktop:package --publish     also upload the installer, blockmap
 //                                      and latest.yml to the update feed
 //
+// STRATUM_VERSION overrides package.json's version (automatic betas, see
+// desktop/beta-version.mjs).
+//
 // The renderer is pre-bundled in dist-desktop, so electron-builder packages a
 // minimal staged app: the main-process modules, dist-desktop, the icon and
 // only the runtime packages the main process loads (copied out of pnpm's
@@ -36,7 +39,15 @@ if (!existsSync(notices))
   throw new Error('Run pnpm desktop:build before packaging.');
 
 // Build-time scripts that the packaged app never loads.
-const BUILD_ONLY = new Set(['package.mjs', 'icons.mjs', 'notices.mjs']);
+const BUILD_ONLY = new Set([
+  'package.mjs',
+  'icons.mjs',
+  'notices.mjs',
+  'beta-version.mjs',
+]);
+const version = env.STRATUM_VERSION || manifest.version;
+if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version))
+  throw new Error(`Invalid version ${version}.`);
 
 async function stage() {
   // Outside the checkout, so electron-builder cannot mistake the staged app
@@ -74,7 +85,7 @@ async function stage() {
       {
         name: 'stratum',
         productName: 'Stratum',
-        version: manifest.version,
+        version,
         description: 'Signal workflow workbench',
         author: 'Kyle Webb',
         license: manifest.license,
