@@ -226,7 +226,8 @@ Each step kind maps one-to-one onto a command the engine already runs.
 | --------------------------------------- | ------------------------------------- | --------------------- |
 | `derive` (unary function)               | `derive-many`                         | `deriveMany`          |
 | `derive` with `with:` (two inputs)      | `region-function` with `secondaryIds` | `applyRegionFunction` |
-| `segment` (ranges, windows, triggers)   | `segment`                             | `segment`             |
+| `segment` (version 2: file segments)    | `segment-set`                         | `segmentSet`          |
+| `segment` (version 1: crops signals)    | `segment`                             | `segment`             |
 | `value`                                 | `calculate-values`                    | `calculateValues`     |
 | `time` (align, resample, combine, crop) | `time-operation`                      | `applyTimeOperation`  |
 
@@ -255,6 +256,19 @@ from:
 
 Binding adds the origin to every time before the engine command is built, so the
 engine itself is unchanged.
+
+### Version 2: file segments
+
+Segments are time intervals of the whole recording, not signals, so a version 2
+`segment` step takes no input and becomes a `segment-set` command. Derive, value
+and nested segment steps choose segments with `within` (`sweeps`, `sweeps[2]`
+or a list of positions from one step), bound at run time to a `SegmentScope`:
+the produced step's set, and the segment IDs at those positions (all of them
+for a bare `sweeps`). Nested ranges and windows are seconds from each parent
+segment's start, so they need no `time-origin`. Outputs within segments can be
+labelled with `{segment}`. Segment steps take `count` and `duration` checks.
+Version 1 files keep crop segments and replay unchanged; their hash is computed
+at version 1.
 
 ### Validation and versioning
 

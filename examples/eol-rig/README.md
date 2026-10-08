@@ -7,22 +7,24 @@ deterministic test data, not measurements from real equipment.
 Each recording is 180 s at 10 Hz with motor speed, torque, supply current and
 winding temperature. A good motor runs three 40-second speed sweeps.
 
-| File         | Expected | What is different                                                                    |
-| ------------ | -------- | ------------------------------------------------------------------------------------ |
-| SN-24001.csv | Pass     | Typical motor                                                                        |
-| SN-24002.csv | Pass     | Typical motor                                                                        |
-| SN-24003.csv | Fail     | Average sweep torque about 75 Nm, below the 78 Nm limit                              |
-| SN-24004.csv | Pass     | Sweeps start 12 s late; trigger segmentation still finds them                        |
-| SN-24005.csv | Fail     | Third sweep missing; the count check stops further processing                        |
-| SN-24006.csv | Warning  | Torque dropouts during sweep 2 (about 4.8 % of samples missing)                      |
-| SN-24007.csv | Warning  | Winding temperature peaks at about 93 °C, above 90 °C                                |
-| SN-24008.csv | Error    | Torque logged in lbf·ft; torque steps are skipped, temperature and current still run |
+| File         | Expected | What is different                                                                                |
+| ------------ | -------- | ------------------------------------------------------------------------------------------------ |
+| SN-24001.csv | Pass     | Typical motor                                                                                    |
+| SN-24002.csv | Pass     | Typical motor                                                                                    |
+| SN-24003.csv | Fail     | Average sweep torque about 75 Nm, below the 78 Nm limit                                          |
+| SN-24004.csv | Pass     | Sweeps start 12 s late; trigger segmentation still finds them                                    |
+| SN-24005.csv | Fail     | Third sweep missing; the count check stops further processing                                    |
+| SN-24006.csv | Warning  | Torque dropouts during sweep 2 (about 4.8 % of samples missing)                                  |
+| SN-24007.csv | Warning  | Winding temperature peaks at about 93 °C, above 90 °C                                            |
+| SN-24008.csv | Error    | Torque logged in lbf·ft; torque steps are skipped, the sweeps, temperature and current still run |
 
-[Motor EOL test.stratum.yaml](Motor%20EOL%20test.stratum.yaml) smooths torque,
-multiplies it by speed, finds the sweeps with speed triggers, averages torque
-per sweep, splits sweep 2 into halves, and checks torque, temperature and
-current. Its report template has a title with the serial number, a status
-summary, a torque plot, a key-results table and a checks table.
+[Motor EOL test.stratum.yaml](Motor%20EOL%20test.stratum.yaml) (workflow
+file version 2) smooths torque, multiplies it by speed, finds the sweeps as
+segments (time intervals) with speed triggers, averages torque within each
+sweep, splits sweep 2 into halves and finds the peak torque within each, and
+checks the number and length of the sweeps, torque, temperature and current.
+Its report template has a title with the serial number, a status summary, a
+torque plot, a key-results table and a checks table.
 
 ## Try it
 

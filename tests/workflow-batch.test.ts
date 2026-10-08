@@ -8,6 +8,7 @@ import {
   itemIdFromFileName,
   parseWorkflow,
   recipeHash,
+  recipeYaml,
   serializeWorkflow,
   WorkflowFileError,
 } from '../lib/workflow-recipe';
@@ -136,18 +137,18 @@ void test('workflow files validate references, functions and checks with line nu
       broken('limits: { min: 78', 'limit: { min: 78'),
       /unknown setting "limit"/,
     ],
-    [broken('version: 1', 'version: 2'), /newer Stratum \(version 2\)/],
+    [broken('version: 2', 'version: 3'), /newer Stratum \(version 3\)/],
     // A newer file this YAML subset cannot parse is still named as newer.
     [
-      broken('version: 1', 'version: 3\nshared: &defaults { a: 1 }'),
+      broken('version: 2', 'version: 3\nshared: &defaults { a: 1 }'),
       /^This workflow was made by a newer Stratum \(version 3\)/,
     ],
     [
-      broken('version: 1', 'version: 1\nshared: &defaults { a: 1 }'),
+      broken('version: 2', 'version: 2\nshared: &defaults { a: 1 }'),
       /Anchors, aliases and tags/,
     ],
-    [broken('version: 1', 'version: 2\nfuture-setting: 1'), /newer Stratum/],
-    [broken('version: 1', 'version: 1\nfuture-setting: 1'), /future-setting/],
+    [broken('version: 2', 'version: 3\nfuture-setting: 1'), /newer Stratum/],
+    [broken('version: 2', 'version: 2\nfuture-setting: 1'), /future-setting/],
     [
       broken('format: stratum-workflow', 'format: something-else'),
       /not a Stratum workflow/,
@@ -185,9 +186,74 @@ void test('workflow files validate references, functions and checks with line nu
       broken('bind: { signal: smoothed-torque }', 'bind: { signal: nowhere }'),
       /report uses "nowhere"/,
     ],
+    // Version 2 segments are time intervals, chosen with within.
     [
-      broken('time-origin: input-start', 'time-origin: sideways'),
-      /time-origin must be one of/,
+      broken(
+        '    segment:\n      triggers:',
+        '    segment:\n      input: torque\n      triggers:',
+      ),
+      /Line \d+: Step "sweeps": segment steps take no "input" in workflow version 2/,
+    ],
+    [
+      broken(
+        '    segment:\n      triggers:',
+        '    segment:\n      independently: true\n      triggers:',
+      ),
+      /segment steps take no "independently"/,
+    ],
+    [
+      broken('input: smoothed-torque, within: sweeps', 'input: sweeps'),
+      /Step "sweep-torque" uses "sweeps" as a signal, but segments are time intervals, not signals; use within: sweeps/,
+    ],
+    [
+      broken('within: sweeps }', 'within: power }'),
+      /Step "sweep-torque" works within "power", which is not a segment step/,
+    ],
+    [
+      broken('within: sweeps }', "within: [sweeps, 'sweeps[2]'] }"),
+      /use sweeps for every segment, or list positions/,
+    ],
+    [
+      broken('within: sweeps }', "within: ['sweeps[1]', 'power[1]'] }"),
+      /within must choose segments of one segment step/,
+    ],
+    [
+      broken('within: sweeps }', "within: ['sweeps[1]', 'sweeps[1]'] }"),
+      /lists a segment twice/,
+    ],
+    [
+      broken(
+        '      within: sweeps[2]\n',
+        '      within: sweeps[2]\n      time-origin: recording-start\n',
+      ),
+      /time-origin cannot be used with within/,
+    ],
+    [
+      broken('      within: sweeps[2]\n', '      time-origin: input-start\n'),
+      /input-start measures from the reference signal's start, so it needs a reference/,
+    ],
+    [
+      broken(
+        '    segment:\n      triggers:',
+        '    segment:\n      reference: torque\n      triggers:',
+      ),
+      /reference applies to ranges and windows/,
+    ],
+    [
+      broken('duration: { min: 35, max: 45 }', 'limits: { min: 35, max: 45 }'),
+      /Step "sweeps": limits checks apply to signals; segment steps take count and duration checks/,
+    ],
+    [
+      broken('duration: { min: 35, max: 45 }', 'missing: { max: 0.1 }'),
+      /missing checks apply to signals; segment steps take count and duration checks/,
+    ],
+    [
+      broken('bind: { signal: smoothed-torque }', 'bind: { signal: sweeps }'),
+      /The report uses "sweeps", which finds segments/,
+    ],
+    [
+      broken('version: 2', 'version: 1'),
+      /within needs workflow version 2|Step "sweeps" inputs must list/,
     ],
   ];
   for (const [text, message] of cases) {
@@ -219,8 +285,11 @@ void test('the example workflow serialises losslessly and hashes independently o
     EOL_WORKFLOW.replace('limits: { min: 78', 'limits: { min: 79'),
   );
   assert.notEqual(await recipeHash(edited), await recipeHash(recipe));
+  assert.equal(recipe.version, 2);
+  assert.match(serializeWorkflow(recipe), /^version: 2$/m);
   assert.deepEqual([...new Set(templateRefs(recipe.report!))].sort(), [
     'average-current',
+    'half-peaks',
     'peak-temperature',
     'smoothed-torque',
     'sweep-torque',
@@ -298,7 +367,7 @@ void test('a batch publishes each item atomically, flags checks and undoes as on
       /Sweep 1 · Average torque = 74\.\d+ Nm; expected 78 Nm – 95 Nm/,
     );
     assert.deepEqual(problems('SN-24005'), [
-      'The rig should record three speed sweeps. 2 outputs; expected 3.',
+      'The rig should record three speed sweeps. 2 segments; expected 3.',
       'Stopped after a failed check in “Find the speed sweeps”; 5 later steps were skipped.',
     ]);
     assert.match(
@@ -311,31 +380,68 @@ void test('a batch publishes each item atomically, flags checks and undoes as on
     );
     assert.deepEqual(problems('SN-24008'), [
       '"Torque" is in lbf·ft, but the workflow expects Nm.',
-      'Skipped 6 steps that need “Torque”: Smooth measured torque, Multiply torque and speed, Find the speed sweeps and 3 more.',
+      'Skipped 4 steps that need “Torque”: Smooth measured torque, Multiply torque and speed, Average torque by sweep and 1 more.',
     ]);
-    // Independent branches still run when another input is missing.
+    // Independent branches still run when another input is missing: the
+    // sweeps are found by speed alone.
     const wrongUnit = batch.runs.find((run) => run.itemId === 'SN-24008')!;
     assert.deepEqual(Object.keys(wrongUnit.steps), [
+      'sweeps',
+      'sweep-2-halves',
       'peak-temperature',
       'average-current',
     ]);
     // Labels follow the recipe and nested windows follow each item's own sweep.
     const index = new WorkflowIndex(project);
     const late = batch.runs.find((run) => run.itemId === 'SN-24004')!;
+    const sweeps = steps.get(late.steps.sweeps)!;
+    assert.ok(sweeps.segmentSetId);
+    assert.deepEqual(
+      sweeps.outputIds.map((id) => index.label(id)),
+      ['Sweep 1', 'Sweep 2', 'Sweep 3'],
+    );
     const halves = steps.get(late.steps['sweep-2-halves'])!;
     assert.deepEqual(
       halves.outputIds.map((id) => index.label(id)),
-      ['Sweep 2 · First half · Torque', 'Sweep 2 · Second half · Torque'],
+      ['Sweep 2 · First half', 'Sweep 2 · Second half'],
     );
-    const sweep2 = steps.get(late.steps.sweeps)!.outputIds[1];
-    const [sweepStart] = engine.bounds(sweep2);
+    assert.deepEqual(halves.within, {
+      setId: sweeps.segmentSetId,
+      segmentIds: [sweeps.outputIds[1]],
+    });
+    // `{segment}` names the segment each value was calculated within.
+    assert.deepEqual(
+      steps
+        .get(late.steps['half-peaks'])!
+        .outputIds.map((id) => index.label(id)),
+      [
+        'Sweep 2 · First half · Peak torque',
+        'Sweep 2 · Second half · Peak torque',
+      ],
+    );
+    assert.deepEqual(
+      steps
+        .get(late.steps['sweep-torque'])!
+        .outputIds.map((id) => index.label(id)),
+      [1, 2, 3].map((n) => `Sweep ${n} · Average torque`),
+    );
+    const sweep2 = index.segments.get(sweeps.outputIds[1])!.segment;
     assert.ok(
-      Math.abs(sweepStart - 77) < 0.2,
-      `Sweep 2 starts at ${sweepStart}`,
+      Math.abs(sweep2.start - 77) < 0.2,
+      `Sweep 2 starts at ${sweep2.start}`,
     );
-    assert.ok(
-      Math.abs(engine.bounds(halves.outputIds[0])[0] - sweepStart) < 1e-9,
+    const firstHalf = index.segments.get(halves.outputIds[0])!.segment;
+    assert.equal(firstHalf.parentId, sweep2.id);
+    assert.ok(Math.abs(firstHalf.start - sweep2.start) < 1e-9);
+    assert.ok(Math.abs(firstHalf.end - sweep2.start - 20) < 1e-9);
+    // Segment checks: the count and each segment's duration.
+    const sweepResults = sweeps.checkResults!.results;
+    assert.deepEqual(
+      sweepResults.map((result) => result.status),
+      ['pass', 'pass', 'pass', 'pass'],
     );
+    assert.equal(sweepResults[0].message, '3 segments.');
+    assert.match(sweepResults[1].message, /^Sweep 1 lasts 40\.\d+ s\.$/);
     // One Undo removes the whole batch; Redo restores it, including after restart.
     const runLabel = `Run 'Lot 42' on ${EOL_COMPONENTS.length} recordings`;
     assert.equal(engine.undoLabel, runLabel);
@@ -437,7 +543,18 @@ void test('a workflow saved from History replays to identical results on another
       itemLabel: 'Run',
     });
     assert.equal(extracted.skipped.length, 0);
-    assert.equal(extracted.recipe.steps.length, 6);
+    assert.equal(extracted.recipe.version, 2);
+    assert.deepEqual(
+      extracted.recipe.steps.map((step) => [step.id, step.operation.kind]),
+      [
+        ['smooth-measured-torque', 'derive'],
+        ['multiply-torque-and-speed', 'derive'],
+        ['find-the-three-runs', 'segment'],
+        ['average-product-per-run', 'value'],
+        ['split-run-2-into-two-halves', 'segment'],
+        ['peak-product-in-each-run-2-half', 'value'],
+      ],
+    );
     assert.deepEqual(
       extracted.recipe.channels.map((channel) => [
         channel.alias,
@@ -449,24 +566,47 @@ void test('a workflow saved from History replays to identical results on another
         ['motor-speed', 'Motor speed', 'rpm'],
       ],
     );
-    const nested = extracted.recipe.steps[4];
-    assert.equal(nested.operation.kind, 'segment');
-    assert.equal(
-      nested.operation.kind === 'segment' && nested.operation.timeOrigin,
-      'input-start',
+    const [, , runs, averages, nested, peaks] = extracted.recipe.steps.map(
+      (step) => step.operation,
     );
+    assert.ok(runs.kind === 'segment');
+    assert.equal(runs.definition.method, 'triggers');
+    assert.equal(runs.within, undefined);
+    assert.ok(averages.kind === 'value');
+    assert.deepEqual(averages.inputs, ['multiply-torque-and-speed']);
+    assert.deepEqual(averages.within, ['find-the-three-runs']);
+    // Nested windows reference the parent step; times stay relative to it.
+    assert.ok(nested.kind === 'segment');
+    assert.deepEqual(nested.within, ['find-the-three-runs[2]']);
+    assert.equal(nested.timeOrigin, 'recording');
     assert.ok(
-      extracted.warnings.some((warning) =>
+      nested.definition.method === 'windows' && nested.definition.start === 0,
+    );
+    assert.ok(peaks.kind === 'value');
+    assert.deepEqual(peaks.within, ['split-run-2-into-two-halves']);
+    assert.equal(extracted.recipe.steps[2].outputs, 'Run {n}');
+    // No fixed recording times; a single segment is worth a count check.
+    assert.ok(
+      !extracted.warnings.some((warning) =>
         /fixed recording times/.test(warning.message),
       ),
     );
     assert.ok(
-      extracted.warnings.some((warning) => /output 2/.test(warning.message)),
+      extracted.warnings.some((warning) =>
+        /works within segment 2 of “Find the three runs”/.test(warning.message),
+      ),
     );
+    // Segments are not report references; their values are.
+    for (const id of engine.project.workflowSteps!.find(
+      (step) => step.name === 'Find the three runs',
+    )!.outputIds)
+      assert.equal(extracted.refs.has(id), false);
     const text = serializeWorkflow(extracted.recipe);
+    assert.match(text, /^version: 2$/m);
+    assert.match(text, /within: find-the-three-runs$/m);
     const recipe = parseWorkflow(text);
     assert.deepEqual(recipe, extracted.recipe);
-    const before = engine.project;
+    const project = engine.project;
     const file = workflowExampleFile();
     await engine.runWorkflow({
       recipe: text,
@@ -477,45 +617,51 @@ void test('a workflow saved from History replays to identical results on another
     });
     const run = engine.project.workflowBatches![0].runs[0];
     // The example has no checks: its items are No checks, never Pass.
-    assert.equal(run.status, 'none');
+    assert.equal(run.status, 'none', JSON.stringify(run.flags));
     const steps = stepsOf(engine.project);
     assert.equal(liveRunStatus(run, steps), 'none');
     const index = new WorkflowIndex(engine.project);
+    const old = new WorkflowIndex(project);
     for (const included of extracted.included) {
-      const old = before.workflowSteps!.find(
-        (step) => step.id === included.stepId,
+      const step = project.workflowSteps!.find(
+        (item) => item.id === included.stepId,
       )!;
       const replayed = steps.get(run.steps[included.recipeStepId])!;
-      assert.equal(replayed.kind, old.kind);
-      assert.equal(replayed.name, old.name);
+      assert.equal(replayed.kind, step.kind);
+      assert.equal(replayed.name, step.name);
+      assert.equal(!!replayed.segmentSetId, !!step.segmentSetId);
+      assert.equal(!!replayed.within, !!step.within);
       assert.deepEqual(
         replayed.outputIds.map((id) => index.label(id)),
-        old.outputIds.map((id) => new WorkflowIndex(before).label(id)),
+        step.outputIds.map((id) => old.label(id)),
       );
       for (const [position, id] of replayed.outputIds.entries()) {
+        const before = step.outputIds[position];
         const value = index.values.get(id);
-        if (value)
-          assert.equal(
-            value.value,
-            before.values!.find((item) => item.id === old.outputIds[position])!
-              .value,
-          );
-        else
+        const segment = index.segments.get(id)?.segment;
+        if (value) assert.equal(value.value, old.values.get(before)!.value);
+        else if (segment) {
+          const was = old.segments.get(before)!.segment;
           assert.deepEqual(
-            engine.bounds(id),
-            engine.bounds(old.outputIds[position]),
+            [segment.start, segment.end, segment.endInclusive],
+            [was.start, was.end, was.endInclusive],
           );
+          assert.equal(
+            segment.parentId && index.label(segment.parentId),
+            was.parentId && old.label(was.parentId),
+          );
+        } else assert.deepEqual(engine.bounds(id), engine.bounds(before));
       }
     }
     // Leaving out a step reports the dependents that can no longer be saved.
-    const runs = before.workflowSteps!.find(
-      (step) => step.name === 'Split the product into three runs',
+    const runStep = project.workflowSteps!.find(
+      (step) => step.name === 'Find the three runs',
     )!;
-    const partial = extractWorkflow(before, original.id, {
+    const partial = extractWorkflow(project, original.id, {
       name: 'Partial',
       stepIds: new Set(
-        before
-          .workflowSteps!.filter((step) => step.id !== runs.id)
+        project
+          .workflowSteps!.filter((step) => step.id !== runStep.id)
           .map((step) => step.id),
       ),
     });
@@ -526,14 +672,25 @@ void test('a workflow saved from History replays to identical results on another
     assert.equal(partial.skipped.length, 3);
     assert.match(
       partial.skipped[0].reason,
-      /^Average product per run uses “Run 1 · Torque × speed”, which is not from this recording or an included step\.$/,
+      /^Average product per run works within “Find the three runs”, which is not from this recording or an included step\.$/,
+    );
+    // A segment step found by triggers can be saved on its own.
+    assert.deepEqual(
+      extractWorkflow(project, original.id, {
+        name: 'Runs',
+        stepIds: new Set([runStep.id]),
+      }).recipe.steps.map((step) => step.name),
+      ['Find the three runs'],
     );
     // Steps that depend on nothing from this recording cannot be saved at all.
+    const averageStep = project.workflowSteps!.find(
+      (step) => step.name === 'Average product per run',
+    )!;
     assert.throws(
       () =>
-        extractWorkflow(before, original.id, {
+        extractWorkflow(project, original.id, {
           name: 'Empty',
-          stepIds: new Set([runs.id]),
+          stepIds: new Set([averageStep.id]),
         }),
       /No steps from this recording can be saved/,
     );
@@ -825,12 +982,19 @@ void test('pre-flight maps a missing channel to a column and the run matches a c
       assert.equal(a.outputIds.length, b.outputIds.length, recipeStepId);
       a.outputIds.forEach((id, position) => {
         const value = index.values.get(id);
+        const segment = index.segments.get(id)?.segment;
         if (value)
           assert.equal(
             index.values.get(b.outputIds[position])!.value,
             value.value,
           );
-        else
+        else if (segment) {
+          const other = index.segments.get(b.outputIds[position])!.segment;
+          assert.deepEqual(
+            [other.start, other.end],
+            [segment.start, segment.end],
+          );
+        } else
           assert.deepEqual(
             engine.bounds(b.outputIds[position]),
             engine.bounds(id),
@@ -855,6 +1019,332 @@ void test('pre-flight maps a missing channel to a column and the run matches a c
     assert.deepEqual(engine.project.workflowBatches![0].runs[1].channelMap, {
       torque: 'Shaft torque',
     });
+  } finally {
+    engine.close();
+  }
+});
+
+const CHANNELS = `input:
+  channels:
+    speed: { name: Motor speed, unit: rpm }
+    torque: { name: Torque, unit: Nm }
+`;
+const SWEEPS = `  - id: sweeps
+    segment:
+      triggers:
+        start: { signal: speed, edge: rising, threshold: 850 }
+        end: { signal: speed, edge: falling, threshold: 850 }
+      boundary: discard
+    outputs: Sweep {n}
+`;
+
+void test('version 2 segment steps, within and segment checks round trip and replay', async () => {
+  const text = `format: stratum-workflow
+version: 2
+name: Segments
+${CHANNELS}steps:
+${SWEEPS}    checks:
+      - count: { min: 2 }
+      - duration: { min: 41 }
+        outputs: [1, 3]
+        severity: warning
+  - id: outer
+    value:
+      function: maximum
+      input: torque
+      within: ['sweeps[1]', 'sweeps[3]']
+    outputs: '{segment} · Peak {input} ({item})'
+  - id: integral
+    derive: { function: integral, input: torque, within: sweeps }
+    outputs: '{segment} · {input} area'
+  - id: product
+    derive: { function: multiply, input: torque, with: speed, within: 'sweeps[2]' }
+  - id: early
+    segment:
+      ranges: [[0, 5], [20, 30]]
+      time-origin: recording-start
+      boundary: clip
+    outputs: [Early, Later]
+  - id: thirds
+    segment:
+      within: early
+      windows: { start: 0, end: 3, duration: 1, step: 1 }
+  - id: thirds-average
+    value: { function: sample-average, input: torque, within: thirds }
+`;
+  const recipe = parseWorkflow(text);
+  assert.equal(recipe.version, 2);
+  assert.deepEqual(parseWorkflow(serializeWorkflow(recipe)), recipe);
+  const [sweeps, outer, integral, product, early, thirds] = recipe.steps;
+  assert.deepEqual(sweeps.operation, {
+    kind: 'segment',
+    definition: {
+      method: 'triggers',
+      boundary: 'discard',
+      start: { signalId: 'speed', edge: 'rising', threshold: 850, offset: 0 },
+      end: { signalId: 'speed', edge: 'falling', threshold: 850, offset: 0 },
+      minimumDuration: 0,
+    },
+    timeOrigin: 'recording',
+  });
+  assert.deepEqual(outer.operation.kind === 'value' && outer.operation.within, [
+    'sweeps[1]',
+    'sweeps[3]',
+  ]);
+  assert.deepEqual(
+    integral.operation.kind === 'derive' && integral.operation.within,
+    ['sweeps'],
+  );
+  assert.deepEqual(
+    product.operation.kind === 'derive' && product.operation.within,
+    ['sweeps[2]'],
+  );
+  assert.equal(
+    early.operation.kind === 'segment' && early.operation.timeOrigin,
+    'recording-start',
+  );
+  assert.deepEqual(
+    thirds.operation.kind === 'segment' && thirds.operation.within,
+    ['early'],
+  );
+
+  const { engine } = await open();
+  try {
+    await engine.runWorkflow({
+      recipe: text,
+      batchId: crypto.randomUUID(),
+      batchName: 'Segments',
+      itemId: 'SN-1',
+      file: componentFiles()[0],
+    });
+    const run = engine.project.workflowBatches![0].runs[0];
+    assert.deepEqual(run.flags, []);
+    const steps = stepsOf(engine.project);
+    const index = new WorkflowIndex(engine.project);
+    const produced = (id: string) => steps.get(run.steps[id])!;
+    const sweepIds = produced('sweeps').outputIds;
+    // Duration checks flag only the chosen segments, as warnings.
+    assert.equal(run.status, 'warning');
+    assert.deepEqual(
+      produced('sweeps').checkResults!.results.map((result) => [
+        result.status,
+        result.outputId && index.label(result.outputId),
+      ]),
+      [
+        ['pass', undefined],
+        ['warning', 'Sweep 1'],
+        ['warning', 'Sweep 3'],
+      ],
+    );
+    // A list of positions chooses those segments; `{segment}` and `{input}`
+    // name the segment and the chosen signal, never its hidden crop.
+    const peaks = produced('outer').outputIds.map((id) =>
+      index.values.get(id)!,
+    );
+    assert.deepEqual(
+      peaks.map((value) => value.segmentId),
+      [sweepIds[0], sweepIds[2]],
+    );
+    assert.deepEqual(
+      peaks.map((value) => index.label(value.id)),
+      ['Sweep 1 · Peak Torque (SN-1)', 'Sweep 3 · Peak Torque (SN-1)'],
+    );
+    assert.deepEqual(produced('outer').within, {
+      setId: produced('sweeps').segmentSetId,
+      segmentIds: [sweepIds[0], sweepIds[2]],
+    });
+    // `sweeps` works within every segment, however many.
+    assert.deepEqual(produced('integral').within, {
+      setId: produced('sweeps').segmentSetId,
+    });
+    assert.deepEqual(
+      produced('integral').outputIds.map((id) => index.label(id)),
+      [1, 2, 3].map((n) => `Sweep ${n} · Torque area`),
+    );
+    const [multiplied] = produced('product').outputIds;
+    assert.equal(index.nodes.get(multiplied)!.segmentId, sweepIds[1]);
+    // Fixed times from the recording start; nested windows from each parent.
+    const set = (id: string) =>
+      engine.project.segmentSets!.find(
+        (item) => item.id === produced(id).segmentSetId,
+      )!;
+    assert.deepEqual(
+      set('early').segments.map((segment) => [segment.start, segment.end]),
+      [
+        [0, 5],
+        [20, 30],
+      ],
+    );
+    assert.deepEqual(
+      set('thirds').segments.map((segment) => [segment.start, segment.end]),
+      [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [20, 21],
+        [21, 22],
+        [22, 23],
+      ],
+    );
+    assert.equal(produced('thirds-average').outputIds.length, 6);
+    // Segment steps take count and duration checks only.
+    await assert.rejects(
+      engine.setChecks(produced('sweeps').id, [
+        { kind: 'limits', max: 1, severity: 'fail' },
+      ]),
+      /count and duration/,
+    );
+    // Saving the replayed item again gives the same workflow.
+    const again = extractWorkflow(engine.project, run.sourceId, {
+      name: 'Segments',
+      timeOrigins: { [produced('early').id]: 'recording-start' },
+    });
+    const renamed = JSON.stringify(
+      again.recipe.steps.map((step) => step.operation),
+    )
+      .replaceAll('"motor-speed', '"speed')
+      .replaceAll('"trigger-segments', '"sweeps')
+      .replaceAll('"time-range-segments', '"early')
+      .replaceAll('"nested-window-segments', '"thirds');
+    assert.deepEqual(
+      JSON.parse(renamed),
+      recipe.steps.map((step) => step.operation),
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('a segment step without segments blocks the steps within it', async () => {
+  const text = `format: stratum-workflow
+version: 2
+name: Blocked
+${CHANNELS}steps:
+${SWEEPS.replaceAll('threshold: 850', 'threshold: 99999')}  - id: peaks
+    value: { function: maximum, input: torque, within: sweeps }
+  - id: halves
+    segment:
+      within: 'sweeps[2]'
+      windows: { start: 0, end: 40, duration: 20, step: 20 }
+  - id: overall
+    value: { function: maximum, input: torque }
+`;
+  const { engine } = await open();
+  try {
+    await engine.runWorkflow({
+      recipe: text,
+      batchId: crypto.randomUUID(),
+      batchName: 'Blocked',
+      itemId: 'SN-1',
+      file: componentFiles()[0],
+    });
+    const run = engine.project.workflowBatches![0].runs[0];
+    assert.equal(run.status, 'error');
+    assert.deepEqual(Object.keys(run.steps), ['overall']);
+    assert.deepEqual(
+      run.flags.map((flag) => flag.message),
+      [
+        '“sweeps” could not run: No segments match these settings. Preview the triggers, offsets, or time ranges.',
+        'Skipped 2 steps that need “sweeps”: peaks, halves.',
+      ],
+    );
+  } finally {
+    engine.close();
+  }
+});
+
+void test('version 1 workflow files keep segment steps that crop signals', async () => {
+  const legacy = `format: stratum-workflow
+version: 1
+name: Legacy
+${CHANNELS}steps:
+  - id: sweeps
+    segment:
+      input: torque
+      triggers:
+        start: { signal: speed, edge: rising, threshold: 850 }
+        end: { signal: speed, edge: falling, threshold: 850 }
+      boundary: discard
+    outputs: Sweep {n} · Torque
+    checks:
+      - count: 3
+      - limits: { min: 0, unit: Nm }
+  - id: sweep-torque
+    value: { function: time-average, input: sweeps }
+  - id: halves
+    segment:
+      input: 'sweeps[2]'
+      windows: { start: 0, end: 40, duration: 20, step: 20 }
+      time-origin: input-start
+`;
+  const recipe = parseWorkflow(legacy);
+  assert.equal(recipe.version, 1);
+  assert.equal(recipe.steps[0].operation.kind, 'crop-segment');
+  // Hashes of version 1 files never change; they are written as version 1.
+  assert.equal(recipeYaml(recipe).version, 1);
+  assert.match(serializeWorkflow(recipe), /^version: 1$/m);
+  assert.deepEqual(parseWorkflow(serializeWorkflow(recipe)), recipe);
+  assert.throws(
+    () =>
+      parseWorkflow(
+        legacy.replace(
+          'value: { function: time-average, input: sweeps }',
+          'value: { function: time-average, input: torque, within: sweeps }',
+        ),
+      ),
+    /Step "sweep-torque": within needs workflow version 2/,
+  );
+  // The same averages, as file segments in version 2.
+  const current = `format: stratum-workflow
+version: 2
+name: Current
+${CHANNELS}steps:
+${SWEEPS}  - id: sweep-torque
+    value: { function: time-average, input: torque, within: sweeps }
+`;
+  const { engine } = await open();
+  try {
+    const batchId = crypto.randomUUID();
+    for (const [itemId, text] of [
+      ['legacy', legacy],
+      ['current', current],
+    ])
+      await engine.runWorkflow({
+        recipe: text,
+        batchId: `${batchId}-${itemId}`,
+        batchName: itemId,
+        itemId,
+        file: componentFiles()[0],
+      });
+    const [legacyRun, currentRun] = engine.project.workflowBatches!.map(
+      (batch) => batch.runs[0],
+    );
+    assert.equal(legacyRun.status, 'pass', JSON.stringify(legacyRun.flags));
+    const steps = stepsOf(engine.project);
+    const index = new WorkflowIndex(engine.project);
+    const sweeps = steps.get(legacyRun.steps.sweeps)!;
+    assert.equal(sweeps.segmentSetId, undefined);
+    assert.ok(
+      sweeps.outputIds.every((id) => index.nodes.get(id)?.operation === 'crop'),
+    );
+    assert.deepEqual(
+      sweeps.outputIds.map((id) => index.label(id)),
+      [1, 2, 3].map((n) => `Sweep ${n} · Torque`),
+    );
+    assert.equal(steps.get(legacyRun.steps.halves)!.outputIds.length, 2);
+    const averages = (run: typeof legacyRun) =>
+      steps
+        .get(run.steps['sweep-torque'])!
+        .outputIds.map((id) => index.values.get(id)!.value!);
+    const old = averages(legacyRun);
+    const now = averages(currentRun);
+    assert.equal(old.length, 3);
+    old.forEach((value, position) =>
+      assert.ok(
+        Math.abs(value - now[position]) < 1e-9,
+        `${value} ≠ ${now[position]}`,
+      ),
+    );
   } finally {
     engine.close();
   }

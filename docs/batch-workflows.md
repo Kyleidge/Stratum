@@ -37,9 +37,11 @@ The design rationale and remaining follow-ups are in
 
 1. Import one representative recording and process it with the normal tools.
 2. Add **checks** in Details (select a step, then **Checks → Add check**):
-   - **Number of outputs**, for example exactly 3 segments;
+   - **Number of outputs** (**Number of segments** on a Segment step), for
+     example exactly 3 segments;
    - **Value limits** or **Sample limits** (min/max, with an exact unit);
-   - **Missing samples (%)** and **Duration (s)** for signals.
+   - **Missing samples (%)** and **Duration (s)** for signals;
+   - **Duration (s)** of each segment, on a Segment step.
 
    Each check either fails or warns. Checks evaluate immediately, flag the
    step and outputs in History (and the **Flagged** filter), and are undoable.
@@ -116,7 +118,7 @@ A workflow is a YAML text file, normally named `<name>.stratum.yaml`. The
 
 ```yaml
 format: stratum-workflow
-version: 1
+version: 2
 name: Motor EOL test
 revision: '1'
 item:
@@ -131,20 +133,27 @@ steps:
     name: Smooth measured torque
     derive: { function: smooth, input: torque, parameter: 5 }
     outputs: Smoothed torque
-  - id: sweeps
+  - id: sweeps # Time intervals of the whole recording, found by speed
     segment:
-      input: smoothed-torque
       triggers:
         start: { signal: speed, edge: rising, threshold: 850 }
         end: { signal: speed, edge: falling, threshold: 850 }
         minimum-duration: 20
       boundary: discard
-    outputs: Sweep {n} · Torque
+    outputs: Sweep {n}
     checks:
       - count: 3
         severity: fail
         message: The rig should record three speed sweeps.
     on-fail: stop
+  - id: sweep-torque # One value per sweep
+    value: { function: time-average, input: smoothed-torque, within: sweeps }
+    outputs: '{segment} · Average torque'
+  - id: sweep-2-halves # Windows within sweep 2, from its start
+    segment:
+      within: sweeps[2]
+      windows: { start: 0, end: 40, duration: 20, step: 20 }
+    outputs: [Sweep 2 · First half, Sweep 2 · Second half]
 ```
 
 The complete example, including a report template, is
@@ -160,19 +169,44 @@ and dashes):
 - `sweeps[2]` refers to the second output. If an item has fewer outputs, the
   step is skipped and flagged. Inside `{ }` or `[ ]`, quote it: `'sweeps[2]'`.
 
+A segment step's outputs are **segments**: time intervals of the whole
+recording, not signals. Other steps never take them as an `input`; they work
+**within** them instead:
+
+- `within: sweeps` runs the step within every segment of `sweeps`, however
+  many an item has: one output per input and segment.
+- `within: sweeps[2]` uses the second segment only, and
+  `within: ['sweeps[1]', 'sweeps[3]']` the listed ones (all from one step).
+
+A `derive` within segments starts afresh at each segment's start, so a filter
+or integral restarts there. A `value` is calculated from each input within
+each segment. A `segment` step within segments finds segments inside each one
+(nested segments). If a segment step could not run for an item, or found
+fewer segments than a position needs, the steps within it are skipped and the
+item is flagged.
+
 ### Steps
 
 Each step has exactly one operation:
 
-| Key       | Settings                                                                                                        | Equivalent tool |
-| --------- | --------------------------------------------------------------------------------------------------------------- | --------------- |
-| `derive`  | `function`, `input`/`inputs`, `parameter`; two-input functions also need `with`                                 | Derive          |
-| `segment` | `input`/`inputs`, one of `ranges`, `windows` or `triggers`, `boundary`, `independently`, `scope`, `time-origin` | Segment         |
-| `value`   | `function`, `input`/`inputs`, and the function's settings (see below)                                           | Calculate value |
-| `time`    | one of `align`, `resample`, `combine`, `crop`                                                                   | Compare & align |
+| Key       | Settings                                                                                                | Equivalent tool |
+| --------- | ------------------------------------------------------------------------------------------------------- | --------------- |
+| `derive`  | `function`, `input`/`inputs`, `parameter`, optional `within`; two-input functions also need `with`      | Derive          |
+| `segment` | one of `ranges`, `windows` or `triggers`, `boundary`, and optional `within`, `reference`, `time-origin` | Segment         |
+| `value`   | `function`, `input`/`inputs`, optional `within`, and the function's settings (see below)                | Calculate value |
+| `time`    | one of `align`, `resample`, `combine`, `crop`                                                           | Compare & align |
 
-Optional step settings: `name`, `outputs` (a label with `{n}`, `{input}` and
-`{item}` tokens, or a list of labels), `checks` and `on-fail: stop`.
+A `segment` step takes no `input`: it finds intervals of the whole recording.
+Triggers name the signals they watch. Ranges and windows are recording times;
+for a time-aligned workspace axis, `reference: <signal>` names the signal whose
+time axis they use. Within segments, ranges and windows are seconds from each
+segment's start.
+
+Optional step settings: `name`, `outputs` (a label with `{n}`, `{input}`,
+`{segment}` and `{item}` tokens, or a list of labels), `checks` and
+`on-fail: stop`. `{segment}` is the label of the segment an output was made
+within (for nested segments, their parent segment); on a segment step,
+`outputs` names its segments.
 
 Value functions are `time-average`, `sample-average`, `minimum`, `maximum`,
 `start-value`, `end-value`, `value-at`, `rms`, `standard-deviation`,
@@ -221,7 +255,6 @@ earlier `value` step.
   value: { function: maximum, input: speed }
 - id: runs
   segment:
-    input: torque
     triggers:
       start:
         signal: speed
@@ -233,12 +266,13 @@ earlier `value` step.
         threshold: { value: peak-speed, factor: 0.5 }
 ```
 
-`time-origin` applies to segment `ranges` and `windows`:
+`time-origin` applies to segment `ranges` and `windows` that are not
+`within` segments (those are always measured from each segment's start):
 
 - `recording` (the default): recording times, exactly as saved.
 - `recording-start`: measured from each recording's first sample.
-- `input-start`: measured from the start of the step's single input, for
-  windows within a segment found by triggers.
+- `input-start`: measured from the start of the `reference` signal, for a
+  workspace time axis.
 
 ### Checks
 
@@ -253,7 +287,10 @@ checks:
   - duration: { min: 30 } # Seconds
 ```
 
-Limits are inclusive. Signal limits use exact samples, never plot previews.
+Segment steps take `count` (the number of segments) and `duration` (each
+segment's end minus its start, in seconds) checks; `limits` and `missing`
+apply to signals. Value steps take `count` and `limits`. Limits are
+inclusive. Signal limits use exact samples, never plot previews.
 Unknown settings are rejected, so a mistyped limit is never ignored.
 
 ### Report template
@@ -267,6 +304,9 @@ the Reports workspace. Blocks can bind to recipe outputs:
 | `bind: { plot: { traces: [...] } }`  | plot       | A saved plot with its layout and axes |
 | `bind: { values: [sweep-torque] }`   | table      | Value, result and unit for each value |
 | `bind: { checks: all }` or `flagged` | table      | Check results and processing problems |
+
+Bindings name signal or value steps; a segment step has no samples to plot,
+so bind the steps that work within it.
 
 Text, block names and the report title can use these placeholders:
 `{{item.id}}`, `{{item.label}}`, `{{file.name}}`, `{{run.date}}`,
@@ -284,7 +324,18 @@ beyond its own size. Other limits:
 - 500 recordings per batch run.
 
 Errors name the line. A file from a newer Stratum version is refused rather than
-partly read, even when it uses syntax this version cannot parse. Saving from Stratum writes a canonical layout, so comments in a
+partly read, even when it uses syntax this version cannot parse.
+
+### Version 1 files
+
+Stratum writes `version: 2`. Version 1 files still open and replay exactly as
+before. In them, a `segment` step crops its `input`/`inputs` into new signals
+(with `independently`, `scope: file` and `time-origin: input-start` for one
+input), later steps take those signals as inputs, and `within` is not
+available. A workspace whose History still has such segment steps saves them
+as a version 1 file when nothing else needs version 2; otherwise Save leaves
+them out and names them, so recreate them as Segment steps that find
+segments. Saving from Stratum writes a canonical layout, so comments in a
 file you opened are not kept when you save a new copy.
 
 Each batch stores the exact workflow text it used, identified by a SHA-256 of
