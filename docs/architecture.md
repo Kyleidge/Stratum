@@ -184,7 +184,11 @@ single preview cache avoids rescanning immutable inputs when creating the same
 recipe immediately afterward. Preview is read-only and reports clipping,
 exclusions, and unpaired starts.
 
-The following describes the retained legacy segment protocol. New region sets use the model above.
+The following describes the retained legacy segment protocol, whose segments
+are crop signals. New Segment steps create file segments instead: time
+intervals of the whole recording that Derive, Value and nested Segment steps
+work within (see "Segments and Within" in `workflow-proposal.md` and
+`lib/file-segments.ts`). The trigger, range and window planning above is shared.
 
 Each saved segment retains the complete definition, trigger events, requested
 and actual boundaries. Crop parents include their data input first, followed by
