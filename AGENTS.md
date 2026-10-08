@@ -354,7 +354,12 @@ There are no server API routes or cloud signal uploads.
   `.github/workflows/release.yml`, signing, update feed): `docs/releasing.md`.
   Every push to `main` except documentation publishes an automatic beta
   (`desktop/beta-version.mjs`) that the user's test copy installs, so only
-  merge finished, checked work, and keep `main` releasable.
+  merge finished, checked work, and keep `main` releasable. When the user asks
+  to test a branch, push it, then publish it as a beta with
+  `gh workflow run release.yml --ref <branch> -f beta=true` (about 10 minutes;
+  the test copy installs the newest beta via Help → Check for Updates…). Say
+  if the branch raises a workspace, backup or workflow format version: the
+  test copy upgrades its workspace one way, so the user should back up first.
 - `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
   (surfaces, ink 1–3, primary, status, kind and series colours), defined once
   per theme under `:root[data-theme]`. Stylesheets and components use only
