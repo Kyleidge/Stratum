@@ -102,6 +102,18 @@ jobs:
           echo "BETA_TAGGED=true" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ github.token }}
+      # electron-builder uploads through two publishers at once; without an
+      # existing draft each creates its own, splitting the files between them.
+      - name: Create the draft release
+        if: (env.BETA == 'true' || env.TAG == 'true') && !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
+        shell: bash
+        run: |
+          tag="v$STRATUM_VERSION"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --draft --verify-tag \
+              --title "Stratum $STRATUM_VERSION" --notes ""
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Package${{ (github.event_name == 'push' || inputs.beta) && ' and publish' || '' }}
         shell: bash
         run: node desktop/package.mjs ${STRATUM_VERSION:+--publish}
