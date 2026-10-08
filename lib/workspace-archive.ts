@@ -511,11 +511,9 @@ export function validateWorkspace(value: unknown): Project {
     ...(project.values ?? []).map((value) => value.id),
     ...fileSegments.keys(),
   ]);
+  const read = new Set(project.nodes.flatMap((node) => node.parents));
   for (const node of project.nodes)
-    if (
-      isSegmentCrop(node) &&
-      !project.nodes.some((other) => other.parents.includes(node.id))
-    )
+    if (isSegmentCrop(node) && !read.has(node.id))
       throw new Error('Invalid segment crop.');
   for (const value of project.values ?? [])
     if (

@@ -1921,6 +1921,13 @@ export class SignalEngine {
       throw new Error('Limit a calculation to 10,000 signals.');
     if (within) {
       const before = this.project;
+      if (
+        inputIds.length * scopeSegments(before, within).segments.length >
+        10000
+      )
+        throw new Error(
+          'Limit a calculation to 10,000 values. Choose fewer signals or segments.',
+        );
       const { values, segments } = await this.valuesWithin(
         within,
         inputIds,
@@ -4377,7 +4384,20 @@ export class SignalEngine {
     const statistics: ValueStatistics[] = [];
     const total = segments.length * inputIds.length;
     try {
-      for (const [position, segment] of segments.entries())
+      for (const [position, segment] of segments.entries()) {
+        if (preview && statistics.length >= 50) break;
+        // Crops of every input in this segment, staged together.
+        this.project = before;
+        const crops = new Map<string, SignalNode>();
+        const reads: (string | undefined)[] = [];
+        for (const id of inputIds) {
+          this.check();
+          reads.push(await this.segmentCrop(id, segment, entries, crops));
+        }
+        this.project = {
+          ...before,
+          nodes: [...before.nodes, ...crops.values()],
+        };
         for (const [index, id] of inputIds.entries()) {
           this.check();
           if (preview && statistics.length >= 50) break;
@@ -4386,14 +4406,8 @@ export class SignalEngine {
               `Calculating ${spec.name.toLowerCase()} · ${position * inputIds.length + index + 1}/${total}`,
               (position * inputIds.length + index) / total,
             );
-          this.project = before;
-          const crops = new Map<string, SignalNode>();
-          const read = await this.segmentCrop(id, segment, entries, crops);
+          const read = reads[index];
           if (!read) continue;
-          this.project = {
-            ...before,
-            nodes: [...before.nodes, ...crops.values()],
-          };
           const reading = this.find(read);
           const { parameters: settings, bound } = this.boundValueSettings(
             operation,
@@ -4434,6 +4448,7 @@ export class SignalEngine {
                 : {}),
           });
         }
+      }
     } finally {
       this.project = before;
     }
