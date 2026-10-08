@@ -834,8 +834,15 @@ export class SignalEngine {
         // segment's place, or input and segment), so their count may change.
         const oldKeys = segmentOutputKeys(before, old);
         const newKeys = segmentOutputKeys(this.project, generated);
+        // With the same count, keys must all match to replace positions
+        // (older steps rebuild hidden crops under new IDs).
+        const keyed =
+          !!oldKeys &&
+          !!newKeys &&
+          (generated.outputIds.length !== old.outputIds.length ||
+            newKeys.every((key) => oldKeys.includes(key)));
         if (
-          (!oldKeys || !newKeys) &&
+          !keyed &&
           generated.outputIds.length !== old.outputIds.length &&
           affected.length > 1
         )
@@ -843,12 +850,12 @@ export class SignalEngine {
             'The new settings change the number of outputs used by later operations. Remove or revise those dependent operations first. Existing work is unchanged.',
           );
         const mapping = new Map<string, string>([[generated.id, old.id]]);
-        if (oldKeys && newKeys) {
+        if (keyed) {
           const byKey = new Map(
-            old.outputIds.map((id, position) => [oldKeys[position], id]),
+            old.outputIds.map((id, position) => [oldKeys![position], id]),
           );
           generated.outputIds.forEach((id, position) => {
-            const match = byKey.get(newKeys[position]);
+            const match = byKey.get(newKeys![position]);
             if (match) mapping.set(id, match);
           });
         } else if (generated.outputIds.length === old.outputIds.length)
