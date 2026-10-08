@@ -1683,15 +1683,39 @@ export async function workflowUiSmoke() {
     await click('Create up to 3 values', withinModal);
     await settled();
     const valuesAll = createdStep();
+    // Values within segments show as a segment × input grid, or a list.
+    const gridRows = () => [
+      ...document.querySelectorAll<HTMLElement>(
+        '.segment-value-table tbody tr',
+      ),
+    ];
+    const segmentNames = ['Segment 01', 'Segment 02', 'Segment 03'];
     assert(
       valuesAll.count === 3 &&
-        ['Segment 01', 'Segment 02', 'Segment 03'].every((name) =>
+        gridRows()
+          .map((row) => row.querySelector('td')?.textContent)
+          .join() === segmentNames.join() &&
+        gridRows().every((row, i) =>
+          row
+            .querySelector<HTMLElement>('.workflow-output-name')
+            ?.title.includes(segmentNames[i]),
+        ),
+      `Values within segments must be a grid by segment: ${gridRows()
+        .map((row) => row.textContent)
+        .join(' / ')}.`,
+    );
+    await click('List');
+    assert(
+      !document.querySelector('.segment-value-table') &&
+        segmentNames.every((name) =>
           [...document.querySelectorAll('.workflow-output-name')].some((item) =>
-            item.textContent?.includes(` · ${name} · `),
+            item.textContent?.includes(name),
           ),
         ),
       'Values within segments must name their segment.',
     );
+    await click('By segment');
+    await until(() => gridRows().length === 3, 'segment value grid');
     // A value within a segment links to it from Details.
     await openFirstOutput();
     (
@@ -2306,6 +2330,13 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Create 40 values', valueModal);
     await settled();
+    // Values of signals within segments open as a segment × input grid;
+    // the list pages every member.
+    await until(
+      () => document.querySelector('.segment-value-table'),
+      'value grid by segment',
+    );
+    await click('List');
     assert(
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Value batch membership was lost.',
