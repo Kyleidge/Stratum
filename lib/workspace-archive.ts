@@ -14,6 +14,7 @@ import { compileFormula } from './formula';
 import { unitConversion } from './units';
 import { belowNyquist } from './signal-filters';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
+import { isSegmentCrop, segmentEntries, visibleInput } from './file-segments';
 import {
   BINDABLE_DERIVE,
   BINDABLE_TRIGGER,
@@ -46,7 +47,7 @@ function validValueSettings(value: ScalarValue): boolean {
  * when a newer Stratum's backups hold anything this one would reject or lose
  * (docs/file-format-stability.md).
  */
-export const ARCHIVE_VERSION = 1;
+export const ARCHIVE_VERSION = 2;
 /** The header's format name keeps its pre-rename spelling. */
 export const ARCHIVE_FORMAT = 'stratus-workspace';
 
@@ -68,7 +69,8 @@ export function checkArchiveHeader(record: Record<string, unknown>) {
     throw new Error(
       `This backup was made by a newer version of Stratum (backup format ${version}). Update Stratum to restore it. Your current workspace is unchanged.`,
     );
-  if (version !== ARCHIVE_VERSION)
+  // Version 2 added file segments; version 1 backups still restore.
+  if (version !== 1 && version !== ARCHIVE_VERSION)
     throw new Error("This workspace backup's version is not supported.");
 }
 
@@ -231,9 +233,11 @@ export function validateWorkspace(value: unknown): Project {
       project.segmentationOperations ?? [],
       project.examples ?? [],
       project.regionExamples ?? [],
+      project.segmentSets ?? [],
     ].every(Array.isArray)
   )
     throw new Error('Invalid workspace collections.');
+  const fileSegments = segmentEntries(project);
   const sources = new Map(project.sources.map((source) => [source.id, source]));
   const nodes = new Map(project.nodes.map((node) => [node.id, node]));
   const values = new Map((project.values ?? []).map((item) => [item.id, item]));
@@ -263,6 +267,10 @@ export function validateWorkspace(value: unknown): Project {
     ...project.nodes,
     ...(project.values ?? []),
     ...(project.workflowSteps ?? []),
+    ...(project.segmentSets ?? []),
+    ...(project.segmentSets ?? []).flatMap((set) =>
+      Array.isArray(set.segments) ? set.segments : [],
+    ),
   ]) {
     if (typeof item.id !== 'string' || !item.id || ids.has(item.id))
       throw new Error('Workspace contains duplicate or invalid IDs.');
@@ -326,6 +334,7 @@ export function validateWorkspace(value: unknown): Project {
       typeof node.createdAt !== 'string' ||
       node.version !== 1 ||
       !optionalText(node.batchId) ||
+      (node.segmentId !== undefined && !fileSegments.has(node.segmentId)) ||
       !stringList(
         node.parents,
         !isArithmetic(node.operation) && node.timeRecipe?.kind !== 'resample',
@@ -381,6 +390,7 @@ export function validateWorkspace(value: unknown): Project {
     } else if (node.operation === 'crop') {
       if (
         !node.parents.length ||
+        (node.internal && node.segmentId && node.parents.length !== 1) ||
         !Number.isFinite(node.parameters.start) ||
         !Number.isFinite(node.parameters.end) ||
         node.parameters.start > node.parameters.end
@@ -493,10 +503,20 @@ export function validateWorkspace(value: unknown): Project {
   for (const range of graph.ranges.values())
     if (!range.every(Number.isFinite))
       throw new Error('Invalid signal time bounds.');
+  // Hidden segment crops belong to the outputs that read them.
   const outputs = new Set([
-    ...nodes.keys(),
+    ...[...nodes.values()]
+      .filter((node) => !isSegmentCrop(node))
+      .map((node) => node.id),
     ...(project.values ?? []).map((value) => value.id),
+    ...fileSegments.keys(),
   ]);
+  for (const node of project.nodes)
+    if (
+      isSegmentCrop(node) &&
+      !project.nodes.some((other) => other.parents.includes(node.id))
+    )
+      throw new Error('Invalid segment crop.');
   for (const value of project.values ?? [])
     if (
       !nodes.has(value.inputId) ||
@@ -513,6 +533,7 @@ export function validateWorkspace(value: unknown): Project {
       !Number.isFinite(value.end) ||
       (value.timestamp !== undefined && !Number.isFinite(value.timestamp)) ||
       (value.level !== undefined && !Number.isFinite(value.level)) ||
+      (value.segmentId !== undefined && !fileSegments.has(value.segmentId)) ||
       !validValueSettings(value) ||
       (value.value !== null && !Number.isFinite(value.value))
     )
@@ -576,6 +597,28 @@ export function validateWorkspace(value: unknown): Project {
         value.id,
       ),
     );
+  const fileSets = new Map(
+    (project.segmentSets ?? []).map((set) => [set.id, set]),
+  );
+  /** A scope names an existing set and, if listed, its own segments. */
+  function validScope(
+    scope: unknown,
+    used?: string[],
+  ): scope is import('./signal-types').SegmentScope {
+    const item = scope as import('./signal-types').SegmentScope;
+    const set =
+      item && typeof item === 'object' ? fileSets.get(item.setId) : undefined;
+    if (!set || (item.segmentIds !== undefined && !stringList(item.segmentIds)))
+      return false;
+    const chosen = item.segmentIds ?? set.segments.map((segment) => segment.id);
+    return (
+      chosen.length > 0 &&
+      chosen.every((id) => fileSegments.get(id)?.set === set) &&
+      (used === undefined ||
+        (used.length === chosen.length &&
+          used.every((id, k) => id === chosen[k])))
+    );
+  }
   const owners = new Map<
     string,
     NonNullable<Project['workflowSteps']>[number]
@@ -600,6 +643,15 @@ export function validateWorkspace(value: unknown): Project {
         (!stringList(step.valueInputIds) ||
           !step.valueInputIds.length ||
           step.valueInputIds.some((id) => !values.has(id)))) ||
+      (step.segmentInputIds !== undefined &&
+        (!stringList(step.segmentInputIds) ||
+          !step.segmentInputIds.length ||
+          step.segmentInputIds.some((id) => !fileSegments.has(id)))) ||
+      (step.within !== undefined &&
+        !validScope(step.within, step.segmentInputIds)) ||
+      (step.segmentSetId !== undefined &&
+        (step.kind !== 'segment' ||
+          fileSets.get(step.segmentSetId)?.sourceId !== step.sourceId)) ||
       !Number.isSafeInteger(step.sequence) ||
       step.sequence < 0 ||
       sequences.has(step.sequence) ||
@@ -631,12 +683,40 @@ export function validateWorkspace(value: unknown): Project {
     } else if (step.operation in TIME_OPERATIONS)
       throw new Error('Missing saved time settings.');
     const dependencies = new Set<string>();
-    for (const id of step.outputIds) {
+    const fileSet = fileSets.get(step.segmentSetId ?? '');
+    if (fileSet) {
+      const segmentIds = fileSet.segments.map((segment) => segment.id);
+      if (
+        step.operation !== 'segment' ||
+        step.outputIds.length !== segmentIds.length ||
+        step.outputIds.some((id, k) => id !== segmentIds[k]) ||
+        JSON.stringify(step.within) !== JSON.stringify(fileSet.within)
+      )
+        throw new Error('Invalid segment history.');
+      for (const id of step.outputIds) {
+        if (owners.has(id))
+          throw new Error('An output belongs to multiple operations.');
+        owners.set(id, step);
+      }
+      const definition = fileSet.definition;
+      if (definition.method === 'triggers') {
+        dependencies.add(definition.start.signalId);
+        dependencies.add(definition.end.signalId);
+      } else if (fileSet.referenceId) dependencies.add(fileSet.referenceId);
+    }
+    for (const id of fileSet ? [] : step.outputIds) {
       if (owners.has(id))
         throw new Error('An output belongs to multiple operations.');
       owners.set(id, step);
       const node = nodes.get(id),
         value = values.get(id);
+      const segment = (node ?? value)?.segmentId;
+      if (
+        segment !== undefined &&
+        step.within &&
+        !step.segmentInputIds?.includes(segment)
+      )
+        throw new Error('An output lies outside its step’s segments.');
       if ((node ?? value)?.sourceId !== step.sourceId)
         throw new Error('Invalid output recording.');
       if (
@@ -653,7 +733,7 @@ export function validateWorkspace(value: unknown): Project {
       )
         throw new Error('Operation kind does not match its outputs.');
       (node?.parents ?? (value ? [value.inputId] : [])).forEach((id) =>
-        dependencies.add(id),
+        dependencies.add(visibleInput(nodes, id)),
       );
     }
     if (step.kind === 'regions') {
@@ -684,9 +764,9 @@ export function validateWorkspace(value: unknown): Project {
     );
     const used = new Set(
       step.kind === 'segment'
-        ? Object.values(segmentation?.definition?.bindings ?? {}).flatMap(
-            (binding) => binding.valueIds,
-          )
+        ? Object.values(
+            (fileSet ?? segmentation)?.definition?.bindings ?? {},
+          ).flatMap((binding) => binding.valueIds)
         : step.outputIds.flatMap((id) => usedValues.get(id) ?? []),
     );
     if (
@@ -699,9 +779,11 @@ export function validateWorkspace(value: unknown): Project {
     throw new Error('Some outputs have no operation history.');
   for (const step of project.workflowSteps ?? [])
     if (
-      [...step.inputIds, ...(step.valueInputIds ?? [])].some(
-        (id) => (owners.get(id)?.sequence ?? Infinity) >= step.sequence,
-      )
+      [
+        ...step.inputIds,
+        ...(step.valueInputIds ?? []),
+        ...(step.segmentInputIds ?? []),
+      ].some((id) => (owners.get(id)?.sequence ?? Infinity) >= step.sequence)
     )
       throw new Error('Operation history is not chronological.');
   for (const segment of project.segments)
@@ -766,6 +848,39 @@ export function validateWorkspace(value: unknown): Project {
       )
         throw new Error('Invalid saved windows.');
     } else throw new Error('Unknown segmentation method.');
+  }
+  for (const set of project.segmentSets ?? []) {
+    if (
+      typeof set.id !== 'string' ||
+      (set.sourceId !== '' && !sources.has(set.sourceId)) ||
+      (set.sourceId === '') !== (typeof set.timeReferenceId === 'string') ||
+      (set.referenceId !== undefined &&
+        nodes.get(set.referenceId)?.sourceId !== set.sourceId) ||
+      (set.within !== undefined &&
+        (!validScope(set.within) || set.within.setId === set.id)) ||
+      !Array.isArray(set.segments) ||
+      !set.segments.length
+    )
+      throw new Error('Invalid segment set.');
+    definition(set.definition, set.sourceId);
+    for (const segment of set.segments) {
+      const parent = segment.parentId
+        ? fileSegments.get(segment.parentId)
+        : undefined;
+      if (
+        typeof segment.name !== 'string' ||
+        !Number.isFinite(segment.start) ||
+        !Number.isFinite(segment.end) ||
+        segment.start >= segment.end ||
+        typeof segment.endInclusive !== 'boolean' ||
+        !segment.boundary ||
+        typeof segment.boundary !== 'object' ||
+        (segment.parentId !== undefined
+          ? !parent || parent.set.id !== set.within?.setId
+          : set.within !== undefined)
+      )
+        throw new Error('Invalid file segment.');
+    }
   }
   const segmentIds = new Set(project.segments.map((segment) => segment.id));
   for (const operation of project.segmentationOperations ?? []) {

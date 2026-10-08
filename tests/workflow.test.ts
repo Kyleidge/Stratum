@@ -1085,7 +1085,7 @@ void test('journal entries saved before labels existed still undo as "last chang
   engine.close();
   // Rewrite the journal as an older version stored it: no label arrays.
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(database, 1);
+    const request = indexedDB.open(database);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

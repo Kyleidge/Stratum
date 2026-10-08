@@ -4,17 +4,40 @@ import { TIME_OPERATIONS } from './time-types';
 import { valueTitle, type ValueOperation } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
 import type { WorkflowStep } from './workflow-types';
+import {
+  isSegmentCrop,
+  segmentEntries,
+  segmentInterval,
+  signalSegment,
+  visibleInput,
+  type SegmentEntry,
+} from './file-segments';
 
-/** A step's signal inputs, then the values its settings use. */
+/** A step's signal inputs, then the values and segments it uses. */
 export const stepInputs = (step: WorkflowStep): string[] =>
-  step.valueInputIds?.length
-    ? [...step.inputIds, ...step.valueInputIds]
+  step.valueInputIds?.length || step.segmentInputIds?.length
+    ? [
+        ...step.inputIds,
+        ...(step.valueInputIds ?? []),
+        ...(step.segmentInputIds ?? []),
+      ]
     : step.inputIds;
 
 export function stepName(step: WorkflowStep): string {
   if (step.name) return step.name;
   if (step.kind === 'import')
     return step.fileName ? `Import ${step.fileName}` : 'Import recording';
+  if (step.segmentSetId) {
+    const method =
+      step.definition?.method === 'triggers'
+        ? 'Trigger'
+        : step.definition?.method === 'windows'
+          ? 'Window'
+          : 'Time range';
+    return step.within
+      ? `Nested ${method.toLowerCase()} segments`
+      : `${method} segments`;
+  }
   if (step.kind === 'segment') return 'Segment signals';
   if (step.kind === 'regions') return 'Saved region ranges';
   if (step.operation === 'power') return 'Brake power';
@@ -30,7 +53,7 @@ export function stepName(step: WorkflowStep): string {
 }
 
 /** The distinct values a batch of saved outputs used for settings. */
-function boundValueIds(
+export function boundValueIds(
   records: { bindings?: Record<string, { valueId: string }> }[],
 ): string[] {
   return [
@@ -41,7 +64,7 @@ function boundValueIds(
     ),
   ];
 }
-const withValueInputs = (ids: string[]) =>
+export const withValueInputs = (ids: string[]) =>
   ids.length ? { valueInputIds: ids } : {};
 
 /**
@@ -155,7 +178,8 @@ export function withWorkflowHistory(project: Project): Project {
   }
   const groups = new Map<string, SignalNode[]>();
   for (const node of project.nodes) {
-    if (knownOutputs.has(node.id)) continue;
+    // Hidden segment crops belong to the step whose outputs read them.
+    if (knownOutputs.has(node.id) || isSegmentCrop(node)) continue;
     const key = `${node.sourceId}:${node.batchId ?? node.id}:${node.operation}`;
     const group = groups.get(key) ?? [];
     group.push(node);
@@ -212,7 +236,7 @@ export function withWorkflowHistory(project: Project): Project {
   const children = new Map<number, number[]>();
   const degrees = candidates.map((step, index) => {
     const dependencies = new Set(
-      [...step.inputIds, ...(step.valueInputIds ?? [])].flatMap((id) => {
+      stepInputs(step as WorkflowStep).flatMap((id) => {
         const parent = owner.get(id);
         return parent === undefined || parent === index ? [] : [parent];
       }),
@@ -281,8 +305,11 @@ export class WorkflowIndex {
   readonly consumers = new Map<string, WorkflowStep[]>();
   readonly segmentNames = new Map<string, string>();
   readonly branchNames = new Map<string, string>();
+  /** File segments by ID, with their sets. */
+  readonly segments: ReadonlyMap<string, SegmentEntry>;
   constructor(readonly project: Project) {
     this.nodes = new Map(project.nodes.map((node) => [node.id, node]));
+    this.segments = segmentEntries(project);
     this.values = new Map(
       (project.values ?? []).map((value) => [value.id, value]),
     );
@@ -310,8 +337,9 @@ export class WorkflowIndex {
       if (visited.has(id)) continue;
       visited.add(id);
       const node = this.nodes.get(id)!;
-      const name =
-        node.operation === 'crop'
+      const name = node.segmentId
+        ? this.segmentLabel(node.segmentId)
+        : node.operation === 'crop'
           ? (this.segmentNames.get(id) ??
             `Segment ${Number(node.parameters.start.toFixed(3))}–${Number(node.parameters.end.toFixed(3))} s`)
           : this.branchNames.get(node.parents[0]);
@@ -320,21 +348,39 @@ export class WorkflowIndex {
     }
     for (const step of this.steps.values()) {
       for (const id of step.outputIds) this.owner.set(id, step);
-      for (const id of [...step.inputIds, ...(step.valueInputIds ?? [])]) {
+      for (const id of stepInputs(step)) {
         const list = this.consumers.get(id) ?? [];
         list.push(step);
         this.consumers.set(id, list);
       }
     }
   }
+  /** A file segment's name; nested names already include their parent. */
+  segmentLabel(id: string): string {
+    return (
+      this.project.labels?.[id] ??
+      this.segments.get(id)?.segment.name ??
+      'Unavailable segment'
+    );
+  }
   label(id: string): string {
     if (this.project.labels?.[id]) return this.project.labels[id];
+    const segment = this.segments.get(id)?.segment;
+    if (segment) return `${segment.name} · ${segmentInterval(segment)}`;
     const node = this.nodes.get(id);
     if (!node) {
       const value = this.values.get(id);
-      return value
-        ? `${valueTitle(value.operation, value.parameters, this.nodes.get(value.inputId)?.unit)} · ${this.label(value.inputId)}`
-        : 'Unavailable input';
+      if (!value) return 'Unavailable input';
+      const title = valueTitle(
+        value.operation,
+        value.parameters,
+        this.nodes.get(value.inputId)?.unit,
+      );
+      // A value within a segment names it unless its input already does.
+      return value.segmentId &&
+        signalSegment(this.nodes, value.inputId) !== value.segmentId
+        ? `${title} · ${this.segmentLabel(value.segmentId)} · ${this.label(value.inputId)}`
+        : `${title} · ${this.label(value.inputId)}`;
     }
     if (node.operation === 'crop') {
       const interval = `${Number(node.parameters.start.toFixed(3))}–${Number(node.parameters.end.toFixed(3))} s`;
@@ -343,20 +389,52 @@ export class WorkflowIndex {
     const branch = this.branchNames.get(id);
     return branch ? `${branch} · ${node.name}` : node.name;
   }
-  kind(id: string): 'Original signal' | 'Derived signal' | 'Value' {
+  kind(id: string): 'Original signal' | 'Derived signal' | 'Value' | 'Segment' {
     return this.values.has(id)
       ? 'Value'
-      : this.nodes.get(id)?.operation === 'raw'
-        ? 'Original signal'
-        : 'Derived signal';
+      : this.segments.has(id)
+        ? 'Segment'
+        : this.nodes.get(id)?.operation === 'raw'
+          ? 'Original signal'
+          : 'Derived signal';
   }
-  /** Signal inputs first, then values used for settings. */
+  /**
+   * Signal inputs first (as chosen, never hidden segment crops), then values
+   * used for settings, then the segment an output was created within.
+   */
   inputs(id: string): string[] {
+    const entry = this.segments.get(id);
+    if (entry) {
+      const definition = entry.set.definition;
+      return [
+        ...new Set([
+          ...(definition.method === 'triggers'
+            ? [definition.start.signalId, definition.end.signalId]
+            : entry.set.referenceId
+              ? [entry.set.referenceId]
+              : []),
+          ...bindingValueIds(definition.bindings),
+          ...(entry.segment.parentId ? [entry.segment.parentId] : []),
+        ]),
+      ];
+    }
     const record = this.nodes.get(id) ?? this.values.get(id);
     if (!record) return [];
-    const signals = 'parents' in record ? record.parents : [record.inputId];
+    const signals =
+      'parents' in record
+        ? record.parents.map((parent) => visibleInput(this.nodes, parent))
+        : [record.inputId];
     const bound = boundValueIds([record]);
-    return bound.length ? [...new Set([...signals, ...bound])] : signals;
+    const segment =
+      record.segmentId &&
+      ('parents' in record
+        ? record.parents.some((parent) => isSegmentCrop(this.nodes.get(parent)))
+        : true)
+        ? [record.segmentId]
+        : [];
+    return bound.length || segment.length
+      ? [...new Set([...signals, ...bound, ...segment])]
+      : signals;
   }
   /** Iterative DAG traversal includes every binary and trigger dependency. */
   lineage(ids: string[]): {

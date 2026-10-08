@@ -337,7 +337,7 @@ void test('stale derived indexes are pruned; live and Undo ones are kept', async
   await engine.plot(removed);
   const open = () =>
     new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(database, 1);
+      const request = indexedDB.open(database);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });

@@ -35,7 +35,21 @@ import {
   isArithmetic,
   isBinaryOperation,
 } from './signal-arithmetic';
-import { withWorkflowHistory, WorkflowIndex } from './workflow-history';
+import {
+  boundValueIds,
+  withValueInputs,
+  withWorkflowHistory,
+  WorkflowIndex,
+} from './workflow-history';
+import {
+  isSegmentCrop,
+  scopeSegments,
+  segmentEntries,
+  segmentWithin,
+  signalSegment,
+  visibleInput,
+  type SegmentEntry,
+} from './file-segments';
 import { importError, sampleTimeProblem } from './csv-import-messages';
 import {
   bestTable,
@@ -65,6 +79,7 @@ import {
   remapProject,
 } from './workflow-lifecycle';
 import type { WorkflowCommand } from './workflow-lifecycle';
+import { followRebuiltBatches, segmentOutputKeys } from './workflow-lifecycle';
 import { APP_VERSION } from './app-version';
 import {
   ARCHIVE_FORMAT,
@@ -92,6 +107,7 @@ import { unitConversion } from './units';
 import {
   BINDABLE_DERIVE,
   BINDABLE_VALUE,
+  bindingValueIds,
   resolveBinding,
   resolveTriggerBindings,
   type BindingContext,
@@ -136,6 +152,7 @@ import type {
   Chunk,
   DerivePreview,
   EdgeTrigger,
+  FileSegment,
   FormulaSettings,
   Operation,
   Plot,
@@ -145,6 +162,8 @@ import type {
   SegmentationDefinition,
   SegmentationPlan,
   SegmentationScope,
+  SegmentScope,
+  SegmentSet,
   SeriesChunk,
   SignalNode,
   Source,
@@ -172,13 +191,19 @@ const CHECKPOINTS_KEY = 'checkpoints-v1';
  * when rewriting, so older versions refuse the workspace instead
  * (docs/file-format-stability.md).
  */
-export const WORKSPACE_SCHEMA_VERSION = 1;
+export const WORKSPACE_SCHEMA_VERSION = 2;
 export const NEWER_WORKSPACE_MESSAGE =
   'This workspace was saved by a newer version of Stratum. Update Stratum to open it; this version has not changed it.';
 const CHECKPOINT_BUDGET = 16 * 1024 * 1024;
 export const COLORS = ['#61d9b0', '#ac9cfa', '#edb477', '#74b9fa', '#e787ac'];
 const emptyProject = (): Project => ({ sources: [], nodes: [], segments: [] });
 const uid = () => randomId();
+/** The sequence of a step appended now. */
+const nextStepSequence = (project: Project) =>
+  (project.workflowSteps ?? []).reduce(
+    (max, item) => Math.max(max, item.sequence + 1),
+    0,
+  );
 function result<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -734,6 +759,7 @@ export class SignalEngine {
           {
             ...(command.unit !== undefined ? { unit: command.unit } : {}),
             ...(command.formula ? { formula: command.formula } : {}),
+            ...(command.within ? { within: command.within } : {}),
           },
         );
         break;
@@ -743,6 +769,15 @@ export class SignalEngine {
           command.operation,
           command.parameters,
           command.bindings,
+          command.within,
+        );
+        break;
+      case 'segment-set':
+        await this.segmentSet(
+          command.sourceId,
+          command.definition,
+          command.referenceId,
+          command.within,
         );
         break;
       case 'segment':
@@ -769,6 +804,8 @@ export class SignalEngine {
       throw new Error('This operation cannot be edited with signal settings.');
     let next: Project;
     this.staging = true;
+    // Rebuilt outputs, so later steps that used a whole batch follow it.
+    const rebuilt: { old: string[]; now: string[] }[] = [];
     try {
       this.project = withoutOperations(before, affected);
       this.invalidate();
@@ -778,7 +815,9 @@ export class SignalEngine {
           this.project.workflowSteps?.map((step) => step.id),
         );
         await this.applyCommand(
-          old.id === stepId ? command : savedCommand(before, old),
+          old.id === stepId
+            ? command
+            : followRebuiltBatches(savedCommand(before, old), rebuilt),
         );
         const added =
           this.project.workflowSteps?.filter((step) => !prior.has(step.id)) ??
@@ -788,7 +827,12 @@ export class SignalEngine {
             'This legacy operation cannot be rebuilt as one atomic step. Existing work is unchanged.',
           );
         const generated = added[0];
+        // Segments and outputs within segments match by what they are (the
+        // segment's place, or input and segment), so their count may change.
+        const oldKeys = segmentOutputKeys(before, old);
+        const newKeys = segmentOutputKeys(this.project, generated);
         if (
+          (!oldKeys || !newKeys) &&
           generated.outputIds.length !== old.outputIds.length &&
           affected.length > 1
         )
@@ -796,12 +840,26 @@ export class SignalEngine {
             'The new settings change the number of outputs used by later operations. Remove or revise those dependent operations first. Existing work is unchanged.',
           );
         const mapping = new Map<string, string>([[generated.id, old.id]]);
-        if (generated.outputIds.length === old.outputIds.length)
+        if (oldKeys && newKeys) {
+          const byKey = new Map(
+            old.outputIds.map((id, position) => [oldKeys[position], id]),
+          );
+          generated.outputIds.forEach((id, position) => {
+            const match = byKey.get(newKeys[position]);
+            if (match) mapping.set(id, match);
+          });
+        } else if (generated.outputIds.length === old.outputIds.length)
           generated.outputIds.forEach((id, position) =>
             mapping.set(id, old.outputIds[position]),
           );
         if (generated.segmentationId && old.segmentationId)
           mapping.set(generated.segmentationId, old.segmentationId);
+        if (generated.segmentSetId && old.segmentSetId)
+          mapping.set(generated.segmentSetId, old.segmentSetId);
+        rebuilt.push({
+          old: old.outputIds,
+          now: generated.outputIds.map((id) => mapping.get(id) ?? id),
+        });
         this.project = remapProject(this.project, mapping);
         this.project = {
           ...this.project,
@@ -1849,6 +1907,7 @@ export class SignalEngine {
     operation: ValueOperation,
     parameters?: ValueParameters,
     bindings?: ParameterBindings,
+    within?: SegmentScope,
   ) {
     const spec = valueSpec(operation);
     if (!spec) throw new Error('Choose a supported value calculation.');
@@ -1857,6 +1916,44 @@ export class SignalEngine {
       throw new Error('Choose at least one unique signal.');
     if (inputIds.length > 10000)
       throw new Error('Limit a calculation to 10,000 signals.');
+    if (within) {
+      const before = this.project;
+      const { values, segments } = await this.valuesWithin(
+        within,
+        inputIds,
+        operation,
+        parameters,
+        bindings,
+      );
+      if (!values.length)
+        throw new Error(
+          'The selected signals have no samples inside these segments.',
+        );
+      if (values.length > 10000)
+        throw new Error('Limit a calculation to 10,000 values.');
+      const step: WorkflowStep = {
+        id: uid(),
+        sourceId: values[0].sourceId,
+        sequence: nextStepSequence(before),
+        createdAt: values[0].createdAt,
+        kind: 'value',
+        operation,
+        inputIds: [...new Set(values.map((value) => value.inputId))],
+        outputIds: values.map((value) => value.id),
+        ...withValueInputs(boundValueIds(values)),
+        ...(values[0].parameters
+          ? { parameters: { ...values[0].parameters } }
+          : {}),
+        within: structuredClone(within),
+        segmentInputIds: segments.map((segment) => segment.id),
+      };
+      await this.save({
+        ...before,
+        values: [...(before.values ?? []), ...values],
+        workflowSteps: [...(before.workflowSteps ?? []), step],
+      });
+      return values;
+    }
     const inputs = inputIds.map((id) => this.find(id));
     const mixedSources =
       new Set(inputs.map((node) => node.sourceId)).size !== 1;
@@ -1882,7 +1979,9 @@ export class SignalEngine {
       );
       const [start, end] = this.bounds(input.id);
       const timestamp = statisticTime(statistics, operation);
+      const segmentId = signalSegment(this.graph().nodes, input.id);
       values.push({
+        ...(segmentId ? { segmentId } : {}),
         id: uid(),
         sourceId: mixedSources ? '' : input.sourceId,
         inputId: input.id,
@@ -1929,7 +2028,11 @@ export class SignalEngine {
       operation,
       parameters,
     );
-    for await (const chunk of this.evaluate(id)) {
+    // A segment crop reads only its window of the input.
+    const window: [number, number] | undefined = isSegmentCrop(this.find(id))
+      ? [start, end]
+      : undefined;
+    for await (const chunk of this.evaluate(id, undefined, window)) {
       this.check();
       for (let i = 0; i < chunk.time.length; i++)
         accumulator.add(chunk.time[i], chunk.values[i]);
@@ -1942,10 +2045,23 @@ export class SignalEngine {
     operation?: ValueOperation,
     parameters?: ValueParameters,
     bindings?: ParameterBindings,
+    within?: SegmentScope,
   ): Promise<ValueStatistics[]> {
     if (ids.length > 50) throw new Error('Preview up to 50 signals at once.');
     const spec = operation ? valueSpec(operation) : undefined;
     if (spec) this.checkBindings(bindings, spec.parameters ?? [], spec.name);
+    // Within segments: the first 50 input and segment pairs.
+    if (within)
+      return (
+        await this.valuesWithin(
+          within,
+          [...new Set(ids)],
+          spec?.operation ?? 'time-average',
+          parameters,
+          bindings,
+          true,
+        )
+      ).statistics;
     const statistics: ValueStatistics[] = [];
     for (const id of new Set(ids)) {
       this.check();
@@ -2208,6 +2324,49 @@ export class SignalEngine {
   }
   async applyRegionFunction(settings: FunctionSettings): Promise<FunctionRun> {
     this.check();
+    if (settings.within) {
+      // Two-input functions within segments: one output per first input in
+      // each segment, both read from crops of that segment.
+      const secondary = settings.secondaryIds ?? [];
+      if (!isBinaryOperation(settings.operation) || secondary.length !== 1)
+        throw new Error('Choose one second input for this calculation.');
+      const labels = this.project.labels ?? {};
+      const outputs = await this.deriveWithin(
+        settings.within,
+        settings.inputIds,
+        secondary,
+        async (inputs, crop) => {
+          const second = crop(secondary[0]);
+          if (!second) return [];
+          const names = Object.fromEntries(
+            [...inputs, second].map((id) => {
+              const read = visibleInput(this.graph().nodes, id);
+              return [id, labels[read] ?? this.find(read).name];
+            }),
+          );
+          return inputs.map((id) =>
+            this.binaryNode(
+              settings.sourceId,
+              settings.operation,
+              id,
+              second,
+              names,
+            ),
+          );
+        },
+      );
+      return {
+        ...structuredClone(settings),
+        id: outputs[0].batchId!,
+        sequence: nextStepSequence(this.project),
+        createdAt: outputs[0].createdAt,
+        outputs: outputs.map((node) => ({
+          signalId: node.id,
+          inputId: visibleInput(this.graph().nodes, node.parents[0]),
+        })),
+        skipped: 0,
+      };
+    }
     const before = this.project;
     const binary = isBinaryOperation(settings.operation);
     const inputs = settings.inputIds;
@@ -2740,8 +2899,45 @@ export class SignalEngine {
     constant: number,
     persist = true,
     bindings?: ParameterBindings,
-    extra: { unit?: string; formula?: FormulaSettings } = {},
-  ) {
+    extra: {
+      unit?: string;
+      formula?: FormulaSettings;
+      within?: SegmentScope;
+    } = {},
+  ): Promise<SignalNode[]> {
+    if (extra.within) {
+      if (!persist) throw new Error('Preview segments with derive-preview.');
+      const { within, ...rest } = extra;
+      const signals = rest.formula?.signals ?? {};
+      return this.deriveWithin(
+        within,
+        parentIds,
+        [...new Set(Object.values(signals).flat())],
+        (inputs, crop) =>
+          this.deriveMany(inputs, operation, constant, false, bindings, {
+            ...rest,
+            ...(rest.formula
+              ? {
+                  formula: {
+                    ...rest.formula,
+                    ...(rest.formula.signals
+                      ? {
+                          signals: Object.fromEntries(
+                            Object.entries(rest.formula.signals).map(
+                              ([letter, ids]) => [
+                                letter,
+                                ids.flatMap((id) => crop(id) ?? []),
+                              ],
+                            ),
+                          ),
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          }),
+      );
+    }
     if (
       !FUNCTIONS.some(
         (spec) =>
@@ -3056,7 +3252,9 @@ export class SignalEngine {
     formula?: FormulaSettings;
     secondaryId?: string;
     range?: [number, number];
+    within?: SegmentScope;
   }): Promise<DerivePreview> {
+    if (request.within) return this.previewDerivedWithin(request);
     const input = this.find(request.inputId);
     const binary = isBinaryOperation(request.operation);
     let node: SignalNode;
@@ -3125,6 +3323,135 @@ export class SignalEngine {
       inputs.push(range ? await this.plot(id, range) : empty(id));
     }
     return { node, plot, inputs, domain };
+  }
+  /**
+   * A derive preview within the first chosen segment where the input has
+   * samples: the candidate reads crops, and its inputs are shown over the
+   * segment.
+   */
+  private async previewDerivedWithin(
+    request: Parameters<SignalEngine['previewDerived']>[0],
+  ): Promise<DerivePreview> {
+    const within = request.within!;
+    const before = this.project;
+    const { set, segments } = scopeSegments(before, within);
+    const binary = isBinaryOperation(request.operation);
+    const others = binary
+      ? request.secondaryId
+        ? [request.secondaryId]
+        : []
+      : [...new Set(Object.values(request.formula?.signals ?? {}).flat())];
+    if (binary && !others.length)
+      throw new Error('Choose the second input for this calculation.');
+    for (const id of [request.inputId, ...others])
+      this.checkSegmentInput(id, set);
+    const entries = segmentEntries(before);
+    let node: SignalNode | undefined;
+    let graph: SignalGraph | undefined;
+    try {
+      for (const segment of segments) {
+        this.check();
+        const crops = new Map<string, SignalNode>();
+        const input = await this.segmentCrop(
+          request.inputId,
+          segment,
+          entries,
+          crops,
+        );
+        if (!input) continue;
+        const mapped = new Map<string, string | undefined>();
+        for (const id of others)
+          mapped.set(id, await this.segmentCrop(id, segment, entries, crops));
+        this.project = {
+          ...before,
+          nodes: [...before.nodes, ...crops.values()],
+        };
+        if (binary) {
+          const second = mapped.get(others[0]);
+          if (!second) continue;
+          node = this.binaryNode(
+            this.find(input).sourceId,
+            request.operation,
+            input,
+            second,
+            before.labels,
+          );
+        } else
+          [node] = await this.deriveMany(
+            [input],
+            request.operation,
+            request.parameter,
+            false,
+            request.bindings,
+            {
+              ...(request.unit !== undefined ? { unit: request.unit } : {}),
+              ...(request.formula
+                ? {
+                    formula: {
+                      ...request.formula,
+                      ...(request.formula.signals
+                        ? {
+                            signals: Object.fromEntries(
+                              Object.entries(request.formula.signals).map(
+                                ([letter, ids]) => [
+                                  letter,
+                                  ids.flatMap((id) => mapped.get(id) ?? []),
+                                ],
+                              ),
+                            ),
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
+          );
+        graph = new SignalGraph({
+          ...this.project,
+          nodes: [...this.project.nodes, node],
+        });
+        break;
+      }
+    } finally {
+      this.project = before;
+    }
+    if (!node || !graph)
+      throw new Error('The input has no samples inside these segments.');
+    // Inputs are shown as chosen, over the segment the candidate covers.
+    const inputIds = (binary ? [request.inputId, ...others] : node.parents)
+      .map((id) => visibleInput(graph!.nodes, id))
+      .slice(0, 8);
+    const domain = graph.ranges.get(node.id)!;
+    const view: [number, number] = request.range
+      ? [
+          Math.max(domain[0], request.range[0]),
+          Math.min(domain[1], request.range[1]),
+        ]
+      : domain;
+    const envelope = new Envelope(...view);
+    if (view[1] >= view[0])
+      for await (const chunk of this.execute(node.id, graph, view))
+        for (let i = 0; i < chunk.time.length; i++)
+          envelope.add(chunk.time[i], chunk.values[i]);
+    const inputs: Plot[] = [];
+    for (const id of inputIds) {
+      const bounds = this.bounds(id);
+      const range: [number, number] = [
+        Math.max(view[0], bounds[0]),
+        Math.min(view[1], bounds[1]),
+      ];
+      inputs.push(
+        range[1] >= range[0]
+          ? await this.plot(id, range)
+          : { id, ...new Envelope(view[0], view[1]).finish() },
+      );
+    }
+    return {
+      node,
+      plot: { id: node.id, ...envelope.finish() },
+      inputs,
+      domain,
+    };
   }
   /** Constant translation from recording time to this node's displayed time. */
   private axisOffset(id: string): number {
@@ -3676,6 +4003,433 @@ export class SignalEngine {
       ],
     });
     return segments;
+  }
+  /**
+   * The signal whose bounds limit a segment set: a recording's first channel,
+   * a workspace trigger, or the workspace signal chosen for ranges/windows.
+   */
+  private segmentAxis(
+    sourceId: string,
+    definition: SegmentationDefinition,
+    referenceId?: string,
+  ): string {
+    if (sourceId !== '') {
+      const source = this.project.sources.find((item) => item.id === sourceId);
+      if (!source) throw new Error('Choose a recording to segment.');
+      return source.channels[0];
+    }
+    const id =
+      definition.method === 'triggers'
+        ? definition.start.signalId
+        : referenceId;
+    if (!id || this.find(id).sourceId !== '')
+      throw new Error(
+        'Choose a workspace signal whose time axis these segments use.',
+      );
+    return id;
+  }
+  /**
+   * File segments found by these settings, for a dialog preview. Nested
+   * segmentation searches each parent segment; its ranges and windows are
+   * seconds from that parent's start.
+   */
+  async previewSegmentSet(
+    sourceId: string,
+    definition: SegmentationDefinition,
+    referenceId?: string,
+    within?: SegmentScope,
+  ): Promise<SegmentationPlan> {
+    this.check();
+    const axis = this.segmentAxis(sourceId, definition, referenceId);
+    if (!within)
+      return this.previewSegments(
+        sourceId,
+        definition,
+        [axis],
+        false,
+        'signals',
+        undefined,
+        true,
+      );
+    const { set, segments } = scopeSegments(this.project, within);
+    if (
+      set.sourceId !== sourceId ||
+      (sourceId === '' &&
+        set.timeReferenceId !== this.graph().timeReferences.get(axis)?.id)
+    )
+      throw new Error(
+        'Nested segments must use the same recording as their parent segments.',
+      );
+    const combined: SegmentationPlan = {
+      ranges: [],
+      skipped: 0,
+      incomplete: 0,
+    };
+    for (const parent of segments) {
+      this.check();
+      const local: SegmentationDefinition =
+        definition.method === 'ranges'
+          ? {
+              ...definition,
+              ranges: definition.ranges.map(
+                ([a, b]) =>
+                  [parent.start + a, parent.start + b] as [number, number],
+              ),
+            }
+          : definition.method === 'windows'
+            ? {
+                ...definition,
+                start: parent.start + definition.start,
+                end: Math.min(parent.end, parent.start + definition.end),
+              }
+            : definition;
+      if (local.method === 'windows' && !(local.end > local.start)) {
+        combined.skipped++;
+        continue;
+      }
+      const plan = await this.previewSegments(
+        sourceId,
+        local,
+        [axis],
+        false,
+        'signals',
+        [parent.start, parent.end],
+        true,
+      );
+      combined.ranges.push(
+        ...plan.ranges.map((range) => ({ ...range, parentId: parent.id })),
+      );
+      combined.skipped += plan.skipped;
+      combined.incomplete += plan.incomplete;
+      if (combined.ranges.length > 10000)
+        throw new Error(
+          'More than 10,000 nested segments. Narrow the settings or choose fewer parent segments.',
+        );
+    }
+    return combined;
+  }
+  /**
+   * A Segment step that finds file segments: time intervals of the whole
+   * recording, not signals. Later steps choose them with `within`.
+   */
+  async segmentSet(
+    sourceId: string,
+    definition: SegmentationDefinition,
+    referenceId?: string,
+    within?: SegmentScope,
+  ) {
+    const plan = await this.previewSegmentSet(
+      sourceId,
+      definition,
+      referenceId,
+      within,
+    );
+    if (!plan.ranges.length)
+      throw new Error(
+        'No segments match these settings. Preview the triggers, offsets, or time ranges.',
+      );
+    const before = this.project;
+    const axis = this.segmentAxis(sourceId, definition, referenceId);
+    const recordingEnd = this.bounds(axis)[1] - this.axisOffset(axis);
+    const saved = resolveTriggerBindings(
+      this.bindingContext(),
+      structuredClone(definition),
+    );
+    const entries = segmentEntries(before);
+    const numbers = new Map<string, number>();
+    const segments = plan.ranges.map(
+      ({ parentId, ...boundary }): FileSegment => {
+        const parent = parentId ? entries.get(parentId)!.segment : undefined;
+        const number = (numbers.get(parentId ?? '') ?? 0) + 1;
+        numbers.set(parentId ?? '', number);
+        const label = String(number).padStart(2, '0');
+        return {
+          id: uid(),
+          name: parent
+            ? `${before.labels?.[parent.id] ?? parent.name}.${label}`
+            : `Segment ${label}`,
+          start: boundary.start,
+          end: boundary.end,
+          endInclusive:
+            boundary.end >= recordingEnd ||
+            (!!parent && boundary.end >= parent.end && parent.endInclusive),
+          ...(parent ? { parentId: parent.id } : {}),
+          boundary,
+        };
+      },
+    );
+    const set: SegmentSet = {
+      id: uid(),
+      sourceId,
+      ...(sourceId === ''
+        ? {
+            timeReferenceId: this.graph().timeReferences.get(axis)!.id,
+            ...(saved.method === 'triggers' ? {} : { referenceId: axis }),
+          }
+        : {}),
+      definition: saved,
+      ...(within ? { within: structuredClone(within) } : {}),
+      segments,
+    };
+    const valueIds = bindingValueIds(saved.bindings);
+    const step: WorkflowStep = {
+      id: uid(),
+      sourceId,
+      sequence: nextStepSequence(before),
+      createdAt: new Date().toISOString(),
+      kind: 'segment',
+      operation: 'segment',
+      inputIds:
+        saved.method === 'triggers'
+          ? [...new Set([saved.start.signalId, saved.end.signalId])]
+          : set.referenceId
+            ? [set.referenceId]
+            : [],
+      outputIds: segments.map((segment) => segment.id),
+      ...(valueIds.length ? { valueInputIds: valueIds } : {}),
+      definition: saved,
+      segmentSetId: set.id,
+      ...(within
+        ? {
+            within: structuredClone(within),
+            segmentInputIds: scopeSegments(before, within).segments.map(
+              (segment) => segment.id,
+            ),
+          }
+        : {}),
+    };
+    await this.save({
+      ...before,
+      segmentSets: [...(before.segmentSets ?? []), set],
+      workflowSteps: [...(before.workflowSteps ?? []), step],
+    });
+    return set;
+  }
+  /** Signals must share a segment set's recording or workspace time axis. */
+  private checkSegmentInput(id: string, set: SegmentSet) {
+    const node = this.find(id);
+    if (
+      node.sourceId !== set.sourceId ||
+      (set.sourceId === '' &&
+        this.graph().timeReferences.get(id)?.id !== set.timeReferenceId)
+    )
+      throw new Error(
+        `${this.project.labels?.[id] ?? node.name} is not on the time axis of these segments. Segments apply to the signals of the recording they were found in.`,
+      );
+  }
+  /**
+   * The signal to read for `id` within `segment`: itself when it already
+   * belongs to that segment, otherwise a hidden crop of it (added to
+   * `crops`). Undefined when it has no samples there, or belongs to a
+   * segment that does not contain this one.
+   */
+  private async segmentCrop(
+    id: string,
+    segment: FileSegment,
+    entries: ReadonlyMap<string, SegmentEntry>,
+    crops: Map<string, SignalNode>,
+  ): Promise<string | undefined> {
+    const own = signalSegment(this.graph().nodes, id);
+    if (own === segment.id) return id;
+    if (own && !segmentWithin(entries, segment.id, own)) return undefined;
+    const key = `${id}\n${segment.id}`;
+    const known = crops.get(key);
+    if (known) return known.id;
+    const parent = this.find(id);
+    const offset = this.axisOffset(id);
+    const [first, last] = this.bounds(id);
+    const start = Math.max(first, segment.start + offset);
+    const end = Math.min(last, segment.end + offset);
+    const endExclusive = !segment.endInclusive && end === segment.end + offset;
+    if (end < start || !(await this.hasSample(id, start, end, endExclusive)))
+      return undefined;
+    const crop = this.node(parent.sourceId, parent.name, parent.unit, 'crop', [
+      id,
+    ]);
+    crop.parameters = { start, end, endExclusive: endExclusive ? 1 : 0 };
+    crop.color = parent.color;
+    crop.internal = true;
+    crop.segmentId = segment.id;
+    crops.set(key, crop);
+    return crop.id;
+  }
+  /**
+   * Derived signals within segments: for each chosen segment, `create`
+   * builds the outputs from crops of every signal input, so stateful
+   * functions start at the segment's start. One step holds every output.
+   */
+  private async deriveWithin(
+    within: SegmentScope,
+    inputIds: string[],
+    otherIds: string[],
+    create: (
+      inputs: string[],
+      crop: (id: string) => string | undefined,
+    ) => Promise<SignalNode[]>,
+  ) {
+    const before = this.project;
+    const { set, segments } = scopeSegments(before, within);
+    if (!inputIds.length || new Set(inputIds).size !== inputIds.length)
+      throw new Error('Choose unique inputs for this operation.');
+    for (const id of [...inputIds, ...otherIds])
+      this.checkSegmentInput(id, set);
+    const entries = segmentEntries(before);
+    const crops = new Map<string, SignalNode>();
+    const outputs: SignalNode[] = [];
+    const batchId = uid();
+    try {
+      for (const [position, segment] of segments.entries()) {
+        this.check();
+        this.progress(
+          `Processing ${segment.name} · ${position + 1}/${segments.length}`,
+          position / segments.length,
+        );
+        const mapped = new Map<string, string | undefined>();
+        for (const id of [...inputIds, ...otherIds])
+          mapped.set(id, await this.segmentCrop(id, segment, entries, crops));
+        const inputs = inputIds.flatMap((id) => mapped.get(id) ?? []);
+        if (!inputs.length) continue;
+        this.project = {
+          ...before,
+          nodes: [...before.nodes, ...crops.values(), ...outputs],
+        };
+        for (const node of await create(inputs, (id) => mapped.get(id))) {
+          node.segmentId = segment.id;
+          node.batchId = batchId;
+          outputs.push(node);
+        }
+        if (outputs.length > 10000)
+          throw new Error('Limit this operation to 10,000 outputs.');
+      }
+    } finally {
+      this.project = before;
+    }
+    if (!outputs.length)
+      throw new Error(
+        'The selected signals have no samples inside these segments.',
+      );
+    // Only crops an output reads are kept.
+    const read = new Set(outputs.flatMap((node) => node.parents));
+    const internal = [...crops.values()].filter((node) => read.has(node.id));
+    const nodes = new Map(
+      [...before.nodes, ...internal].map((node) => [node.id, node]),
+    );
+    const step: WorkflowStep = {
+      id: uid(),
+      sourceId: outputs[0].sourceId,
+      sequence: nextStepSequence(before),
+      createdAt: new Date().toISOString(),
+      kind: 'derive',
+      operation: outputs[0].operation,
+      inputIds: [
+        ...new Set(
+          outputs.flatMap((node) =>
+            node.parents.map((id) => visibleInput(nodes, id)),
+          ),
+        ),
+      ],
+      outputIds: outputs.map((node) => node.id),
+      parameters: outputs[0].parameters,
+      ...withValueInputs(boundValueIds(outputs)),
+      within: structuredClone(within),
+      segmentInputIds: segments.map((segment) => segment.id),
+    };
+    await this.save({
+      ...before,
+      nodes: [...before.nodes, ...internal, ...outputs],
+      workflowSteps: [...(before.workflowSteps ?? []), step],
+    });
+    return outputs;
+  }
+  /**
+   * Each input's value within each chosen segment, read from the input
+   * itself (filters keep their state from before the segment). Values on a
+   * signal that already belongs to a segment keep that segment.
+   */
+  private async valuesWithin(
+    within: SegmentScope,
+    inputIds: string[],
+    operation: ValueOperation,
+    parameters?: ValueParameters,
+    bindings?: ParameterBindings,
+    preview = false,
+  ): Promise<{
+    values: ScalarValue[];
+    statistics: ValueStatistics[];
+    segments: FileSegment[];
+  }> {
+    const spec = valueSpec(operation)!;
+    const before = this.project;
+    const { set, segments } = scopeSegments(before, within);
+    for (const id of inputIds) this.checkSegmentInput(id, set);
+    const entries = segmentEntries(before);
+    const batchId = uid(),
+      createdAt = new Date().toISOString();
+    const values: ScalarValue[] = [];
+    const statistics: ValueStatistics[] = [];
+    const total = segments.length * inputIds.length;
+    try {
+      for (const [position, segment] of segments.entries())
+        for (const [index, id] of inputIds.entries()) {
+          this.check();
+          if (preview && statistics.length >= 50) break;
+          if (!preview)
+            this.progress(
+              `Calculating ${spec.name.toLowerCase()} · ${position * inputIds.length + index + 1}/${total}`,
+              (position * inputIds.length + index) / total,
+            );
+          this.project = before;
+          const crops = new Map<string, SignalNode>();
+          const read = await this.segmentCrop(id, segment, entries, crops);
+          if (!read) continue;
+          this.project = {
+            ...before,
+            nodes: [...before.nodes, ...crops.values()],
+          };
+          const reading = this.find(read);
+          const { parameters: settings, bound } = this.boundValueSettings(
+            operation,
+            parameters,
+            bindings,
+            reading,
+          );
+          const result = await this.valueStatistics(read, operation, settings);
+          result.inputId = id;
+          result.segmentId = segment.id;
+          statistics.push(result);
+          if (preview) continue;
+          const input = this.find(id);
+          const [start, end] = this.bounds(read);
+          const timestamp = statisticTime(result, operation);
+          values.push({
+            id: uid(),
+            sourceId: input.sourceId,
+            inputId: id,
+            batchId,
+            name: `${input.name} · ${valueTitle(operation, settings, input.unit)}`,
+            unit: valueUnit(operation, input.unit),
+            operation,
+            ...(spec.parameters?.length ? { parameters: settings } : {}),
+            ...(bound ? { bindings: bound } : {}),
+            value: statisticValue(result, operation),
+            sampleCount: result.sampleCount,
+            validDuration: result.validDuration,
+            start,
+            end,
+            createdAt,
+            segmentId: segment.id,
+            ...(timestamp !== undefined ? { timestamp } : {}),
+            ...(operation === 'time-of-minimum' && result.minimum !== null
+              ? { level: result.minimum }
+              : operation === 'time-of-maximum' && result.maximum !== null
+                ? { level: result.maximum }
+                : {}),
+          });
+        }
+    } finally {
+      this.project = before;
+    }
+    return { values, statistics, segments };
   }
   private segmentationScope(
     sourceId: string,
