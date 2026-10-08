@@ -375,3 +375,39 @@ void test('settings taken from values use the value of the same segment', async 
   );
   engine.close();
 });
+
+void test('workspace outputs are segmented on their own time axis', async () => {
+  const { engine, torque, speed } = await fixture();
+  const shared = await engine.applyTimeOperation({
+    kind: 'resample',
+    inputIds: [torque, speed],
+    grid: { kind: 'uniform', start: 0, end: 39, rate: 1 },
+    interpolation: 'linear',
+    maxGap: 2,
+  });
+  assert.ok(shared.every((node) => node.sourceId === ''));
+  const set = await engine.segmentSet(
+    '',
+    { method: 'ranges', boundary: 'clip', ranges: [[20, 25]] },
+    shared[0].id,
+  );
+  assert.ok(set.timeReferenceId);
+  assert.equal(set.referenceId, shared[0].id);
+  const [peak] = await engine.calculateValues(
+    [shared[0].id],
+    'maximum',
+    undefined,
+    undefined,
+    { setId: set.id },
+  );
+  assert.equal(peak.value, 24);
+  // A recording's own signals are not on this axis.
+  await assert.rejects(
+    engine.calculateValues([torque], 'maximum', undefined, undefined, {
+      setId: set.id,
+    }),
+    /not on the time axis/,
+  );
+  validateWorkspace(structuredClone(engine.project));
+  engine.close();
+});
