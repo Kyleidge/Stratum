@@ -40,12 +40,13 @@ const TEXT: Record<string, string> = {
   derive2:
     'Derive can also combine two signals. Details on the right traces this product back to the recording.',
   segment1:
-    'Segment cuts a signal into parts by time ranges or triggers. Each run is an ordinary signal you can process further.',
+    'Segment finds time intervals of the whole recording, here each run, triggered by motor speed. Segments are not signals: later steps choose them.',
   value1:
-    'Value reduces each input to one number, such as an average or a peak. Here, the average product of each run.',
-  segment2: 'Segments can be split again: Run 2 becomes two 20-second halves.',
+    'Value reduces a signal to numbers. Calculated within the three runs, it gives the average product of each run.',
+  segment2:
+    'Segments can be searched again: Run 2 is split into two 20-second halves.',
   derive: 'Derive makes a new signal from others; its inputs never change.',
-  segment: 'Segment cuts signals into parts you can process further.',
+  segment: 'Segment finds time intervals that later steps can work within.',
   value: 'Value reduces each input to one number.',
 };
 const LAST =

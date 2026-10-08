@@ -46,51 +46,54 @@ export async function buildExampleWorkflow(
   const productId = product.outputs[0].signalId;
   await engine.rename(productId, 'Torque × speed');
   await nameStep('Multiply torque and speed');
-  const runs = await engine.segment(
-    source.id,
-    {
-      method: 'ranges',
-      boundary: 'clip',
-      ranges: [
-        [10, 50],
-        [65, 105],
-        [120, 160],
-      ],
-    },
+  // Segments are time intervals of the whole recording, found by a signal.
+  const speed = source.channels[0];
+  const runs = await engine.segmentSet(source.id, {
+    method: 'triggers',
+    boundary: 'clip',
+    minimumDuration: 5,
+    start: { signalId: speed, edge: 'rising', threshold: 800, offset: 0 },
+    end: { signalId: speed, edge: 'falling', threshold: 800, offset: 0 },
+  });
+  for (const [i, segment] of runs.segments.entries())
+    await engine.rename(segment.id, `Run ${i + 1}`);
+  await nameStep('Find the three runs');
+  const averages = await engine.calculateValues(
     [productId],
-    false,
-    'signals',
+    'time-average',
+    undefined,
+    undefined,
+    { setId: runs.id },
   );
-  const runIds = runs.map((run) => run.nodes[0]);
-  for (const [i, id] of runIds.entries())
-    await engine.rename(id, `Run ${i + 1} · Torque × speed`);
-  await nameStep('Split the product into three runs');
-  await engine.calculateValues(runIds, 'time-average');
-  for (const [i, value] of engine.project.values!.slice(-3).entries())
+  for (const [i, value] of averages.entries())
     await engine.rename(value.id, `Run ${i + 1} · Average product`);
   await nameStep('Average product per run');
-  const windows = await engine.segment(
+  const halves = await engine.segmentSet(
     source.id,
     {
       method: 'windows',
       boundary: 'clip',
-      start: 65,
-      end: 105,
+      start: 0,
+      end: 40,
       duration: 20,
       step: 20,
       includePartial: false,
     },
-    [runIds[1]],
-    false,
-    'signals',
+    undefined,
+    { setId: runs.id, segmentIds: [runs.segments[1].id] },
   );
-  const windowIds = windows.map((window) => window.nodes[0]);
   const labels = ['First half', 'Second half'];
-  for (const [i, id] of windowIds.entries())
-    await engine.rename(id, `Run 2 · ${labels[i]} · Torque × speed`);
-  await nameStep('Split Run 2 into two windows');
-  await engine.calculateValues(windowIds, 'maximum');
-  for (const [i, value] of engine.project.values!.slice(-2).entries())
+  for (const [i, segment] of halves.segments.entries())
+    await engine.rename(segment.id, `Run 2 · ${labels[i]}`);
+  await nameStep('Split Run 2 into two halves');
+  const peaks = await engine.calculateValues(
+    [productId],
+    'maximum',
+    undefined,
+    undefined,
+    { setId: halves.id },
+  );
+  for (const [i, value] of peaks.entries())
     await engine.rename(value.id, `Run 2 · ${labels[i]} · Peak product`);
   await nameStep('Peak product in each Run 2 half');
 }

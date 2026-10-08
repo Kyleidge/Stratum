@@ -548,8 +548,11 @@ export class SignalEngine {
         ),
       });
     if (
-      !this.project.nodes.some((node) => node.id === id) &&
-      !this.project.values?.some((value) => value.id === id)
+      !this.project.nodes.some((node) => node.id === id && !node.internal) &&
+      !this.project.values?.some((value) => value.id === id) &&
+      !this.project.segmentSets?.some((set) =>
+        set.segments.some((segment) => segment.id === id),
+      )
     )
       throw new Error('That output no longer exists.');
     await this.save({

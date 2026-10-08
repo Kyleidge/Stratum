@@ -169,6 +169,16 @@ export type ActivePlot = {
   traces: { id: string; color: string }[];
   /** Explains when the selection has more outputs than Active shows. */
   note?: string;
+  /** File segments shaded on the plot, in its display time. */
+  bands?: {
+    id: string;
+    name: string;
+    start: number;
+    end: number;
+    selected?: boolean;
+  }[];
+  /** A time interval Active first zooms to, such as a selected segment. */
+  focus?: [number, number];
 };
 const initialSheet: PlotSheet = {
   id: 'result',
@@ -282,7 +292,6 @@ export default function PlotScratchpad({
     setMeasureStates((old) => ({ ...old, [windowKey]: value }));
     update({ measuring: value });
   }
-  const window: PlotRange = windows[windowKey] ?? sheet.window ?? [0, 1];
   const visibleIds = sheet.traces
     .filter(
       (trace) =>
@@ -302,6 +311,22 @@ export default function PlotScratchpad({
         )
       : [0, 1],
   );
+  const window: PlotRange = windows[windowKey] ??
+    sheet.window ??
+    focusWindow() ?? [0, 1];
+  /** Active's first view of a focused interval, with a margin each side. */
+  function focusWindow(): PlotRange | undefined {
+    if (!isActive || !active.focus || sheet.zeroTime) return undefined;
+    const span = fullRange[1] - fullRange[0];
+    const [a, b] = active.focus;
+    const margin = (b - a) * 0.15;
+    if (!(span > 0) || !(b > a)) return undefined;
+    return plotViewport([
+      (a - margin - fullRange[0]) / span,
+      (b + margin - fullRange[0]) / span,
+    ]);
+  }
+  const bands = isActive && !sheet.zeroTime ? (active.bands ?? []) : [];
   const clocks = new Set(
     visibleIds.map((id) =>
       sheet.zeroTime
@@ -1713,13 +1738,13 @@ export default function PlotScratchpad({
                           <SignalChart
                             key={windowKey}
                             traces={[trace]}
-                            segments={[]}
+                            segments={bands}
                             range={zoomRange(
                               clocks.size > 1
                                 ? displayRange(trace.node.id)
                                 : fullRange,
                             )}
-                            onSegment={() => {}}
+                            onSegment={onInspect}
                             fluid
                             height={traces.length > 1 ? 185 : 340}
                             fillHeight={traces.length === 1}
@@ -1773,9 +1798,9 @@ export default function PlotScratchpad({
                                     sheet.axes,
                                   ) === axis.key,
                               )}
-                              segments={[]}
+                              segments={bands}
                               range={zoomRange(fullRange)}
-                              onSegment={() => {}}
+                              onSegment={onInspect}
                               fluid
                               height={180}
                               fillHeight
@@ -1791,9 +1816,9 @@ export default function PlotScratchpad({
                         <SignalChart
                           key={windowKey}
                           traces={overlayTraces}
-                          segments={[]}
+                          segments={bands}
                           range={zoomRange(fullRange)}
-                          onSegment={() => {}}
+                          onSegment={onInspect}
                           fluid
                           height={340}
                           fillHeight
