@@ -518,3 +518,6 @@
   outline: 1px solid var(--primary);
   outline-offset: -1px;
 }
+fieldset.workflow-layout-toggle {
+  min-width: 0;
+}

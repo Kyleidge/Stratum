@@ -2737,9 +2737,8 @@ export default function WorkflowWorkbench() {
                               step.outputIds.some(
                                 (id) => index.values.get(id)?.segmentId,
                               ) && (
-                                <div
+                                <fieldset
                                   className="workflow-layout-toggle"
-                                  role="group"
                                   aria-label="Value layout"
                                 >
                                   <button
@@ -2756,7 +2755,7 @@ export default function WorkflowWorkbench() {
                                   >
                                     List
                                   </button>
-                                </div>
+                                </fieldset>
                               )}
                             {step.kind === 'value' &&
                             valueLayout === 'segments' &&
