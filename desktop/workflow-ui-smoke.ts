@@ -9,7 +9,24 @@ import { plotUiSmoke } from './plot-ui-smoke';
 import { timeRangeUiSmoke } from './time-range-ui-smoke';
 
 export async function workflowUiSmoke() {
-  const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
+  // Hidden smoke windows run no rendering frames, so programmatic scrolling
+  // (History revealing its selection) never fires the scroll event a visible
+  // window would. Deliver it whenever the History scroll position changed.
+  const scrolled = new WeakMap<Element, number>();
+  function deliverScroll() {
+    const tree = document.querySelector('[role="tree"]');
+    if (tree && scrolled.get(tree) !== tree.scrollTop) {
+      scrolled.set(tree, tree.scrollTop);
+      tree.dispatchEvent(new Event('scroll'));
+    }
+  }
+  const delay = () =>
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        deliverScroll();
+        setTimeout(resolve, 0);
+      }, 30),
+    );
   async function until<T>(
     read: () => T | undefined | false,
     label: string,
@@ -21,7 +38,7 @@ export async function workflowUiSmoke() {
       await delay();
     }
     throw new Error(
-      `Timed out: ${label}. ${document.querySelector('[role="alert"]')?.textContent ?? ''} Controls: ${[...document.querySelectorAll<HTMLButtonElement>('button[aria-label]')].map((item) => `${item.getAttribute('aria-label')}:${item.disabled}`).join(', ')}. Status: ${document.querySelector('.workflow-status')?.textContent}. Screen: ${document.body.innerText.slice(0, 1500)}`,
+      `Timed out: ${label}. ${document.querySelector('[role="alert"]')?.textContent ?? ''} Controls: ${[...document.querySelectorAll<HTMLButtonElement>('button[aria-label]')].map((item) => `${item.getAttribute('aria-label')}:${item.disabled}`).join(', ')}. Status: ${document.querySelector('.workflow-status')?.textContent}. Dialog: ${document.querySelector('[role="dialog"][data-open] .operation-footer')?.textContent ?? 'none'}. Screen: ${document.body.innerText.slice(0, 1500)}`,
     );
   }
   const button = (text: string, root: Document | HTMLElement = document) =>
@@ -120,11 +137,63 @@ export async function workflowUiSmoke() {
     element.dispatchEvent(new Event('input', { bubbles: true }));
   }
   let checkedSegmentMethods = false;
+  /** The step a creation notice names, and how many outputs it made. */
+  function createdStep() {
+    const text = document.querySelector('.workflow-notice')?.textContent ?? '';
+    const match = /^(#\d{3}) .* created ([\d,]+) /.exec(text);
+    assert(match, `Unexpected creation notice: ${text}`);
+    return { ref: match[1], count: Number(match[2].replaceAll(',', '')) };
+  }
+  /** Within's segment check boxes: "All N segments", then each segment. */
+  function withinAll(modal: HTMLElement) {
+    const label = modal.querySelector<HTMLElement>(
+      '.within-segments > label.segment-checkbox',
+    );
+    return label
+      ? {
+          text: label.textContent?.trim() ?? '',
+          box: label.querySelector<HTMLElement>('[role="checkbox"]')!,
+        }
+      : undefined;
+  }
+  function withinChoices(modal: HTMLElement) {
+    return [
+      ...modal.querySelectorAll<HTMLElement>('.within-segment-list li'),
+    ].map((item) => ({
+      name: item.querySelector('label > span:not([role])')?.textContent ?? '',
+      box: item.querySelector<HTMLElement>('[role="checkbox"]')!,
+    }));
+  }
+  const withinText = (modal: HTMLElement) =>
+    modal
+      .querySelector('button[aria-label="Within"] [data-slot="select-value"]')
+      ?.textContent?.trim() ?? '';
+  /** The segments checked in Within's per-segment list. */
+  const withinChosen = (modal: HTMLElement) =>
+    withinChoices(modal)
+      .filter((item) => item.box.getAttribute('aria-checked') === 'true')
+      .map((item) => item.name)
+      .join();
+  /** Describes Within and the create button for failure messages. */
+  const withinState = (modal: HTMLElement) =>
+    `Within "${withinText(modal)}", ${withinAll(modal)?.text ?? 'no segments'} ${withinAll(modal)?.box.getAttribute('aria-checked')}, chosen "${withinChosen(modal)}", footer "${modal.querySelector('.operation-footer')?.textContent}"`;
+  /** Finds segments by time ranges; returns the new Segment step. */
   async function segment(ranges: string) {
     await click('Segment');
     const modal = await dialog();
+    assert(
+      modal.querySelector('h2')?.textContent === 'Find segments' &&
+        modal.querySelector('.operation-inputs-label')?.textContent ===
+          'Recording' &&
+        modal.querySelectorAll('.operation-input-chip').length === 1,
+      'Segment must find segments of the recording, not of signals.',
+    );
     let pickedOnPlot = false;
     if (!checkedSegmentMethods) {
+      assert(
+        withinText(modal) === 'Entire recording' && !withinAll(modal),
+        'New top-level segments must search the entire recording.',
+      );
       assert(
         modal.querySelectorAll('[role="radio"]').length === 3,
         'Segment methods should be directly selectable cards.',
@@ -154,7 +223,7 @@ export async function workflowUiSmoke() {
         () =>
           modal
             .querySelector('.segment-preview strong')
-            ?.textContent?.startsWith('2 signal segments'),
+            ?.textContent?.startsWith('2 segments · 0 clipped'),
         'window card preview',
       );
       await until(
@@ -188,7 +257,7 @@ export async function workflowUiSmoke() {
         () =>
           modal
             .querySelector('.segment-preview strong')
-            ?.textContent?.startsWith('3 signal segments'),
+            ?.textContent?.startsWith('3 segments'),
         'trigger card preview',
       );
       await until(
@@ -223,7 +292,8 @@ export async function workflowUiSmoke() {
     if (!textarea) throw new Error('Manual ranges were not the default.');
     if (!pickedOnPlot) setValue(textarea, ranges);
     await delay();
-    if (ranges.split('\n').length > 30) {
+    const count = ranges.split('\n').length;
+    if (count > 30) {
       assert(
         modal.querySelectorAll('.range-list tbody tr').length === 30,
         'Exact range rows must stay paged for large batches.',
@@ -235,11 +305,163 @@ export async function workflowUiSmoke() {
       );
     }
     await until(
-      () => modal.querySelector('.segment-preview strong') ?? undefined,
+      () =>
+        modal
+          .querySelector('.segment-preview strong')
+          ?.textContent?.startsWith(`${count} segments · 0 clipped`),
       'segment preview',
     );
-    await click('Create signal segments', modal);
+    await click('Create segments', modal);
     await settled();
+    const created = createdStep();
+    assert(
+      created.count === count &&
+        document.querySelector('.workflow-status-selection')?.textContent ===
+          'Time range segments',
+      'Creating segments did not select its Segment step.',
+    );
+    return created.ref;
+  }
+  const searchBox = () =>
+    document.querySelector<HTMLInputElement>(
+      'input[aria-label="Search workflow"]',
+    )!;
+  /** History's row for a step, found by searching for its reference. */
+  async function stepRow(ref: string) {
+    setValue(searchBox(), ref);
+    await delay();
+    return until(() => {
+      const rows = [
+        ...document.querySelectorAll<HTMLElement>(
+          '.workflow-tree-row[data-kind="step"]',
+        ),
+      ];
+      return rows.length === 1 && rows[0];
+    }, `step row ${ref}`);
+  }
+  /** A step row's revision and output count, such as "v2 · 3 segments". */
+  async function stepSummary(ref: string) {
+    const text = (await stepRow(ref)).querySelector('small')?.textContent;
+    setValue(searchBox(), '');
+    await delay();
+    return text;
+  }
+  /** Selects a step's output by its position in the Outputs table. */
+  async function openStepOutput(ref: string, position: number) {
+    (await stepRow(ref)).click();
+    await delay();
+    setValue(searchBox(), '');
+    await delay();
+    await outputsTab();
+    (
+      await until(
+        () =>
+          document.querySelectorAll<HTMLButtonElement>('.workflow-output-name')[
+            position
+          ],
+        `output ${position + 1} of ${ref}`,
+      )
+    ).click();
+    await delay();
+  }
+  async function uncheckAll() {
+    if (button('Uncheck all signals')) await click('Uncheck all signals');
+  }
+  const details = () =>
+    document.querySelector<HTMLElement>(
+      '#workflow-inspector .workflow-properties',
+    )!;
+  const detailTerm = (term: string) =>
+    [...details().querySelectorAll('dt')].find(
+      (item) => item.textContent === term,
+    )?.nextElementSibling;
+  const detail = (term: string) => detailTerm(term)?.textContent ?? undefined;
+  const detailLink = (term: string) =>
+    detailTerm(term)?.querySelector<HTMLButtonElement>('button') ?? undefined;
+  /** Shaded segment bands in the first Active plot frame. */
+  const plotBands = () => [
+    ...(document
+      .querySelector('.scratchpad-canvas .signal-chart svg')
+      ?.querySelectorAll('.chart-segment') ?? []),
+  ];
+  const selectedBand = () =>
+    plotBands().find((band) => band.hasAttribute('data-selected'));
+  /**
+   * A selected segment: a scissors row without a check box, Details with its
+   * times, and the plot of its signals zoomed to its shaded band.
+   */
+  async function checkSegmentSelection(name: string, duration?: number) {
+    const row = selectedHistoryRow();
+    assert(
+      row.title.startsWith(name) &&
+        row.querySelector('.workflow-icon.segment') &&
+        !row.hasAttribute('aria-checked') &&
+        !row.querySelector('.workflow-row-check') &&
+        /^[\d.]+–[\d.]+ s$/.test(row.querySelector('small')?.textContent ?? ''),
+      `History did not show ${name} as a segment: ${row.getAttribute('aria-label')}.`,
+    );
+    await until(
+      () => details().querySelector('h2')?.textContent?.startsWith(name),
+      `Details of ${name}`,
+    );
+    assert(
+      ['Start', 'End', 'Duration'].every((term) => detail(term)) &&
+        (duration === undefined ||
+          Math.abs(Number.parseFloat(detail('Duration')!) - duration) < 0.01),
+      `Details did not show the times of ${name}: ${details().textContent}`,
+    );
+    await until(
+      () =>
+        selectedBand() &&
+        !document
+          .querySelector('.scratchpad-axis-footer')
+          ?.textContent?.includes('100%'),
+      `plot zoomed to ${name}`,
+    );
+  }
+  /** The example finds three runs, then works within them. */
+  async function exampleSegments() {
+    assert(
+      (await stepSummary('Find the three runs')) === '3 segments',
+      'The example must find three run segments.',
+    );
+    await openOutput('Run 2');
+    await checkSegmentSelection('Run 2');
+    assert(
+      detail('Crossings') && plotBands().length === 3,
+      'The example runs must come from speed triggers.',
+    );
+    // Value while viewing a segment works within it.
+    await click('Calculate value');
+    const modal = await dialog();
+    assert(
+      withinText(modal).includes('Find the three runs · 3 segments') &&
+        withinAll(modal)?.box.getAttribute('aria-checked') === 'false' &&
+        withinChosen(modal) === 'Run 2' &&
+        button('Create up to 1 value', modal),
+      `Value did not default Within to the viewed segment: ${withinState(modal)}.`,
+    );
+    await click('Close', modal);
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close segment value editor',
+    );
+    await openOutput('Run 2 · First half');
+    await checkSegmentSelection('Run 2 · First half', 20);
+    await openOutput('Run 2 · Average product');
+    (
+      await until(
+        () =>
+          detailLink('Within')?.textContent === 'Run 2' && detailLink('Within'),
+        'value Within link',
+      )
+    ).click();
+    await until(
+      () =>
+        document.querySelector('.workflow-status-selection')?.textContent ===
+        'Run 2',
+      'follow a value to its segment',
+    );
   }
   async function openFirstOutput() {
     await outputsTab();
@@ -369,7 +591,10 @@ export async function workflowUiSmoke() {
     const row = document.querySelector<HTMLElement>(
       '.workflow-tree-row[aria-selected="true"]',
     );
-    assert(row, 'Selected history item is missing.');
+    assert(
+      row,
+      `Selected history item is missing: ${document.querySelector('.workflow-status-selection')?.textContent}; rows ${[...document.querySelectorAll<HTMLElement>('.workflow-tree-row')].map((item) => item.title).join(' / ')}`,
+    );
     return row;
   }
   async function dragItem(row: HTMLElement, target: HTMLElement) {
@@ -1200,9 +1425,10 @@ export async function workflowUiSmoke() {
     await settled();
     assert(
       document.querySelector('.workflow-inventory')?.textContent ===
-        '2 original signals7 derived signals5 values',
+        '2 original signals2 derived signals5 values',
       'Refreshing did not restore the complete example.',
     );
+    await exampleSegments();
     await openOutput('Motor speed');
     await click('Derive signal');
     const mathModal = await dialog();
@@ -1323,16 +1549,233 @@ export async function workflowUiSmoke() {
         ?.includes('Derived signal'),
       'Derived output was not selected.',
     );
-    await segment('12, 51\n70, 109\n128, 167');
+    const smoothedSpeed = document.querySelector(
+      '.workflow-status-selection',
+    )!.textContent!;
+    // Segments are time intervals of the recording, found here by ranges
+    // drawn on the plot of the viewed signal.
+    const rangesRef = await segment('12, 51\n70, 109\n128, 167');
+    await outputsTab();
     assert(
-      document.querySelectorAll('.workflow-output-name').length === 3,
-      'A segment batch did not expose three individual signals.',
+      document.querySelectorAll('.workflow-output-name').length === 3 &&
+        [...document.querySelectorAll('.workflow-output-table th')].some(
+          (cell) => cell.textContent === 'Segment',
+        ) &&
+        !document.querySelector('.workflow-output-table .workflow-check-cell'),
+      'A Segment step must list three segments without input check boxes.',
+    );
+    assert(
+      (await stepSummary(rangesRef)) === '3 segments',
+      'History did not count the step’s segments.',
+    );
+    await until(
+      () => plotBands().length === 3 && !selectedBand(),
+      'segment bands over the recording',
+    );
+    await openFirstOutput();
+    await checkSegmentSelection('Segment 01', 39);
+    await exportFile({ scope: 'step' });
+    // A segment is not a signal: dropping it on a plot adds no trace.
+    const plotsBeforeDrop = localStorage.getItem(PLOT_STORAGE_KEY);
+    await dragItem(
+      selectedHistoryRow(),
+      document.querySelector<HTMLElement>('.scratchpad-canvas')!,
+    );
+    await until(
+      () =>
+        document
+          .querySelector('.workflow-notice')
+          ?.textContent?.startsWith('This operation has no plottable outputs.'),
+      'segment drop notice',
+    );
+    assert(
+      localStorage.getItem(PLOT_STORAGE_KEY) === plotsBeforeDrop &&
+        plotBands().length === 3,
+      'Dropping a segment on a plot changed it.',
+    );
+    // Derive while viewing a segment works within that segment, for the
+    // recording's signals.
+    await openStepOutput(rangesRef, 1);
+    await checkSegmentSelection('Segment 02', 39);
+    await click('Derive signal');
+    let withinModal = await dialog();
+    assert(
+      withinText(withinModal).includes(`${rangesRef} Time range segments`) &&
+        withinAll(withinModal)?.box.getAttribute('aria-checked') === 'false' &&
+        withinChosen(withinModal) === 'Segment 02',
+      `Derive did not default Within to the viewed segment: ${withinState(withinModal)}.`,
+    );
+    await click('Create up to 2 derived signals', withinModal);
+    await settled();
+    const deriveOne = createdStep();
+    assert(
+      deriveOne.count === 2 &&
+        [...document.querySelectorAll('.workflow-output-name')].every((item) =>
+          item.textContent?.startsWith('Segment 02 · '),
+        ),
+      'Deriving within one segment must name one signal per input.',
+    );
+    await uncheckAll();
+    // Segment again while viewing a segment: nested windows within it, in
+    // seconds from the parent's start.
+    await openStepOutput(rangesRef, 1);
+    await click('Segment');
+    withinModal = await dialog();
+    assert(
+      withinText(withinModal).includes(`${rangesRef} Time range segments`) &&
+        withinChosen(withinModal) === 'Segment 02',
+      `Segment did not nest within the viewed segment: ${withinState(withinModal)}.`,
+    );
+    await chooseCard('Windows');
+    assert(
+      !withinModal.querySelector('.segment-plot') &&
+        withinModal.querySelector(
+          'input[aria-label="From (after parent start)"]',
+        ),
+      'Nested windows must be relative to each parent.',
+    );
+    for (const [label, value] of [
+      ['From (after parent start)', '0'],
+      ['To (after parent start)', '20'],
+      ['Window duration', '10'],
+      ['Step between starts', '10'],
+    ]) {
+      setValue(
+        withinModal.querySelector<HTMLInputElement>(
+          `input[aria-label="${label}"]`,
+        )!,
+        value,
+      );
+      await delay();
+    }
+    await until(
+      () =>
+        withinModal
+          .querySelector('.segment-preview strong')
+          ?.textContent?.startsWith('2 segments · 0 clipped'),
+      'nested window preview',
+    );
+    await click('Create segments', withinModal);
+    await settled();
+    const nestedRef = createdStep().ref;
+    assert(
+      document.querySelector('.workflow-status-selection')?.textContent ===
+        'Nested window segments' && detail('Within') === 'Segment 02',
+      'The nested Segment step lost its Within scope.',
+    );
+    await openFirstOutput();
+    await checkSegmentSelection('Segment 02.01', 10);
+    // Values within all segments: one per segment for each input.
+    await openOutput(smoothedSpeed);
+    await click('Calculate value');
+    withinModal = await dialog();
+    assert(
+      withinText(withinModal) === 'Entire signal' &&
+        button('Create 1 value', withinModal),
+      `Values start on the entire signal: ${withinState(withinModal)}.`,
+    );
+    await choose('Within', `${rangesRef} Time range segments · 3 segments`);
+    assert(
+      withinAll(withinModal)?.text === 'All 3 segments' &&
+        withinAll(withinModal)?.box.getAttribute('aria-checked') === 'true',
+      `Choosing a Segment step must work within all of its segments: ${withinState(withinModal)}.`,
+    );
+    await click('Create up to 3 values', withinModal);
+    await settled();
+    const valuesAll = createdStep();
+    // Values within segments show as a segment × input grid, or a list.
+    const gridRows = () => [
+      ...document.querySelectorAll<HTMLElement>(
+        '.segment-value-table tbody tr',
+      ),
+    ];
+    const segmentNames = ['Segment 01', 'Segment 02', 'Segment 03'];
+    assert(
+      valuesAll.count === 3 &&
+        gridRows()
+          .map((row) => row.querySelector('td')?.textContent)
+          .join() === segmentNames.join() &&
+        gridRows().every((row, i) =>
+          row
+            .querySelector<HTMLElement>('.workflow-output-name')
+            ?.title.includes(segmentNames[i]),
+        ),
+      `Values within segments must be a grid by segment: ${gridRows()
+        .map((row) => row.textContent)
+        .join(' / ')}.`,
+    );
+    await click('List');
+    assert(
+      !document.querySelector('.segment-value-table') &&
+        segmentNames.every((name) =>
+          [...document.querySelectorAll('.workflow-output-name')].some((item) =>
+            item.textContent?.includes(name),
+          ),
+        ),
+      'Values within segments must name their segment.',
+    );
+    await click('By segment');
+    await until(() => gridRows().length === 3, 'segment value grid');
+    // A value within a segment links to it from Details.
+    await openFirstOutput();
+    (
+      await until(
+        () =>
+          detailLink('Within')?.textContent === 'Segment 01' &&
+          detailLink('Within'),
+        'value Within link',
+      )
+    ).click();
+    await until(
+      () =>
+        document
+          .querySelector('.workflow-status-selection')
+          ?.textContent?.startsWith('Segment 01 · '),
+      'follow a value to its segment',
+    );
+    // Derived signals within chosen segments.
+    await openOutput(smoothedSpeed);
+    await click('Derive signal');
+    withinModal = await dialog();
+    await click('Math', withinModal);
+    withinModal
+      .querySelector<HTMLElement>('[role="radio"][aria-label="Scale signal"]')!
+      .click();
+    await delay();
+    setValue(
+      withinModal.querySelector<HTMLInputElement>(
+        'input[aria-label="Scale factor"]',
+      )!,
+      '2',
+    );
+    await delay();
+    await choose('Within', `${rangesRef} Time range segments · 3 segments`);
+    withinAll(withinModal)!.box.click();
+    await until(
+      () => withinChoices(withinModal).length === 3,
+      'per-segment check boxes',
+    );
+    withinChoices(withinModal)[2].box.click();
+    await delay();
+    assert(
+      withinModal
+        .querySelector('.within-segment-list summary')
+        ?.textContent?.includes('2 segments chosen'),
+      'Unchecking a segment did not update the chosen count.',
+    );
+    await click('Create up to 2 derived signals', withinModal);
+    await settled();
+    const deriveChosen = createdStep();
+    assert(
+      deriveChosen.count === 2 &&
+        document.querySelectorAll('.workflow-output-name').length === 2,
+      'Deriving within chosen segments created the wrong outputs.',
     );
     await openFirstOutput();
     assert(
       document
         .querySelector('.workflow-input-scope')
-        ?.textContent?.includes('3 checked'),
+        ?.textContent?.includes('2 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
     await contextAction(selectedHistoryRow(), 'View samples');
@@ -1345,13 +1788,13 @@ export async function workflowUiSmoke() {
     assert(
       document
         .querySelector('.workflow-input-scope')
-        ?.textContent?.includes('3 checked'),
+        ?.textContent?.includes('2 checked'),
       'Context inspection changed checked processing inputs.',
     );
     await clickInputScope();
     const scopeModal = await dialog();
     assert(
-      scopeModal.querySelectorAll('.workflow-input-review li').length === 3,
+      scopeModal.querySelectorAll('.workflow-input-review li').length === 2,
       'Input review does not match the toolbar count.',
     );
     await click('Follow selection', scopeModal);
@@ -1385,11 +1828,19 @@ export async function workflowUiSmoke() {
       'Empty input scope cannot return to the current selection.',
     );
     await contextAction(selectedHistoryRow(), 'Check only');
-    // A segment member expands only its producing operation on the plot.
+    // A member within a segment plots alone; its step adds its siblings.
     await dragItem(selectedHistoryRow(), button('New plot')!);
     await until(
-      () => document.querySelectorAll('.scratchpad-trace').length === 3,
-      'three segment traces',
+      () => document.querySelectorAll('.scratchpad-trace').length === 1,
+      'one within-segment trace',
+    );
+    const plotTarget =
+      document.querySelector<HTMLElement>('.scratchpad-canvas')!;
+    await dragItem(await stepRow(deriveChosen.ref), plotTarget);
+    setValue(searchBox(), '');
+    await until(
+      () => document.querySelectorAll('.scratchpad-trace').length === 2,
+      'both within-segment traces',
     );
     const zeroButton = document.querySelector<HTMLButtonElement>(
       '[aria-label="Align trace starts at zero"]',
@@ -1404,7 +1855,7 @@ export async function workflowUiSmoke() {
     await until(
       () =>
         document.querySelectorAll('.scratchpad-canvas [clip-path] path[d]')
-          .length === 3,
+          .length === 2,
       'complete segment overlay',
     );
     assert(
@@ -1419,7 +1870,7 @@ export async function workflowUiSmoke() {
       ),
       'Segments did not share the zero origin.',
     );
-    // A processing tool receives this member, without adding its sibling segments.
+    // A processing tool receives this member, without adding its siblings.
     await dragItem(
       selectedHistoryRow(),
       document.querySelector<HTMLElement>('[data-action="value"]')!,
@@ -1432,13 +1883,6 @@ export async function workflowUiSmoke() {
     await click('Close', memberModal);
     await closePlot();
     await contextAction(selectedHistoryRow(), 'Check only');
-    await segment('15, 20');
-    assert(
-      document
-        .querySelector('.workflow-status-selection')
-        ?.textContent?.includes('15–20 s'),
-      'Nested segment interval was not exposed.',
-    );
     await exportFile();
     await click('Calculate value');
     await click('Create 1 value', await dialog());
@@ -1522,9 +1966,15 @@ export async function workflowUiSmoke() {
     await outputsTab();
     await click('New version…');
     const repeatModal = await dialog();
+    // New version restores the saved scope: chosen segments of the step.
     assert(
-      repeatModal.querySelector('textarea')?.value.includes('15, 20'),
-      'Repeat did not restore exact saved ranges.',
+      withinText(repeatModal).includes(`${rangesRef} Time range segments`) &&
+        withinAll(repeatModal)?.box.getAttribute('aria-checked') === 'false' &&
+        withinChosen(repeatModal) === 'Segment 01,Segment 02' &&
+        repeatModal.querySelector<HTMLInputElement>(
+          'input[aria-label="Scale factor"]',
+        )?.value === '2',
+      `New version did not restore the saved segments and settings: ${withinState(repeatModal)}.`,
     );
     (
       repeatModal.querySelector<HTMLButtonElement>(
@@ -1536,8 +1986,196 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close repeat dialog',
     );
-    // Exercise a large batch through the UI; a single operation owns every member.
-    await segment(Array.from({ length: 40 }, () => '15, 16').join('\n'));
+    // Value while viewing a Segment step works within all of its segments.
+    await uncheckAll();
+    (await stepRow(rangesRef)).click();
+    await delay();
+    setValue(searchBox(), '');
+    await delay();
+    await click('Calculate value');
+    withinModal = await dialog();
+    assert(
+      withinText(withinModal).includes(`${rangesRef} Time range segments`) &&
+        withinAll(withinModal)?.box.getAttribute('aria-checked') === 'true' &&
+        button('Create up to 6 values', withinModal),
+      `Value did not default Within to the viewed Segment step: ${withinState(withinModal)}.`,
+    );
+    await click('Close', withinModal);
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close Segment step value editor',
+    );
+    // Editing the Segment step to find fewer segments recalculates every
+    // step within them; outputs of removed segments go with them.
+    await contextAction(await stepRow(rangesRef), 'Edit settings');
+    const segmentEdit = await dialog();
+    assert(
+      // The two later steps within it (Scale and its value) are counted.
+      [deriveOne.ref, nestedRef, valuesAll.ref, 'and 2 more steps'].every(
+        (text) => segmentEdit.textContent?.includes(text),
+      ),
+      `Segment edit omitted dependent steps: ${segmentEdit.querySelector('[data-slot="dialog-description"]')?.textContent}`,
+    );
+    setValue(
+      segmentEdit.querySelector<HTMLTextAreaElement>(
+        '[aria-label="Time range pairs"]',
+      )!,
+      '12, 51\n70, 109',
+    );
+    await until(
+      () =>
+        segmentEdit
+          .querySelector('.segment-preview strong')
+          ?.textContent?.startsWith('2 segments · 0 clipped'),
+      'edited segment preview',
+    );
+    await click('Save changes and recalculate', segmentEdit);
+    await settled();
+    setValue(searchBox(), '');
+    async function counts() {
+      return [
+        await stepSummary(rangesRef),
+        await stepSummary(valuesAll.ref),
+        await stepSummary(deriveOne.ref),
+        await stepSummary(deriveChosen.ref),
+        await stepSummary(nestedRef),
+      ].join(', ');
+    }
+    const edited =
+      'v2 · 2 segments, v2 · 2 values, v2 · 2 signals, v2 · 2 signals, v2 · 2 segments';
+    assert(
+      (await counts()) === edited,
+      `Editing segments did not recalculate the steps within them: ${await counts()}.`,
+    );
+    await historyAction('Undo');
+    assert(
+      (await counts()) ===
+        '3 segments, 3 values, 2 signals, 2 signals, 2 segments',
+      `Undo did not restore the three segments: ${await counts()}.`,
+    );
+    await historyAction('Redo');
+    assert(
+      (await counts()) === edited,
+      `Redo did not reapply the edit: ${await counts()}.`,
+    );
+    // Deleting a Segment step deletes every step that works within it.
+    await contextAction(await stepRow(rangesRef), 'Delete step');
+    const segmentImpact = await until(
+      () =>
+        document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+        undefined,
+      'segment delete impact',
+    );
+    await click('Delete 6 steps', segmentImpact);
+    await until(
+      () => !document.querySelector('[role="alertdialog"]'),
+      'segment delete committed',
+    );
+    for (const ref of [rangesRef, nestedRef, valuesAll.ref, deriveChosen.ref]) {
+      setValue(searchBox(), ref);
+      await delay();
+      assert(
+        !document.querySelector('.workflow-tree-row[data-kind="step"]'),
+        `Deleting the Segment step kept ${ref}.`,
+      );
+    }
+    setValue(searchBox(), '');
+    await historyAction('Undo');
+    assert(
+      (await counts()) === edited,
+      `Undo did not restore the deleted steps: ${await counts()}.`,
+    );
+    // Triggers find segments where a signal crosses its thresholds.
+    await openOutput('Motor speed');
+    await uncheckAll();
+    await click('Segment');
+    withinModal = await dialog();
+    await chooseCard('Triggers');
+    for (const [label, value] of [
+      ['Start threshold', '1000'],
+      ['End threshold', '1000'],
+      ['Start offset', '0'],
+      ['End offset', '0'],
+    ]) {
+      setValue(
+        withinModal.querySelector<HTMLInputElement>(
+          `input[aria-label="${label}"]`,
+        )!,
+        value,
+      );
+      await delay();
+    }
+    await until(
+      () =>
+        withinModal
+          .querySelector('.segment-preview strong')
+          ?.textContent?.startsWith('3 segments · 0 clipped'),
+      'trigger segment preview',
+    );
+    await click('Create segments', withinModal);
+    await settled();
+    const triggers = createdStep();
+    assert(
+      triggers.count === 3 &&
+        document.querySelector('.workflow-status-selection')?.textContent ===
+          'Trigger segments',
+      'Trigger segments were not created.',
+    );
+    await openFirstOutput();
+    await checkSegmentSelection('Segment 01');
+    assert(
+      detail('Crossings') &&
+        document.querySelectorAll('.scratchpad-canvas .signal-chart svg')
+          .length === 1,
+      'A trigger segment must show its crossings over its trigger signal.',
+    );
+    await outputsTab();
+    await click('New version…');
+    const triggerRepeat = await dialog();
+    assert(
+      triggerRepeat
+        .querySelector('[role="radio"][aria-label="Triggers"]')
+        ?.getAttribute('aria-checked') === 'true' &&
+        triggerRepeat.querySelector<HTMLInputElement>(
+          'input[aria-label="Start threshold"]',
+        )?.value === '1000' &&
+        withinText(triggerRepeat) === 'Entire recording' &&
+        button('Create segments', triggerRepeat),
+      'New version did not restore the saved triggers.',
+    );
+    triggerRepeat
+      .querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!
+      .click();
+    await until(
+      () => !document.querySelector('[role="dialog"]'),
+      'close trigger repeat dialog',
+    );
+    // Exercise a large batch through the UI; a single operation owns every
+    // member. Exact ranges stay paged in the dialog.
+    await openOutput('Motor speed');
+    const manyRef = await segment(
+      Array.from({ length: 40 }, () => '15, 16').join('\n'),
+    );
+    await outputsTab();
+    assert(
+      document.querySelectorAll('.workflow-output-name').length === 30 &&
+        !document.querySelector('.workflow-output-table .workflow-check-cell'),
+      'Segment outputs are not bounded to one page.',
+    );
+    await openOutput('Motor speed');
+    await click('Derive signal');
+    withinModal = await dialog();
+    await choose('Within', `${manyRef} Time range segments · 40 segments`);
+    assert(
+      withinAll(withinModal)?.text === 'All 40 segments',
+      'Within did not offer all 40 segments.',
+    );
+    await click('Create up to 40 derived signals', withinModal);
+    await settled();
+    assert(
+      createdStep().count === 40,
+      'Deriving within 40 segments lost members.',
+    );
     assert(
       document
         .querySelector('.workflow-input-scope')
@@ -1588,8 +2226,11 @@ export async function workflowUiSmoke() {
     );
     // Full membership stays in the sidebar and preserves the current inspection.
     const historyTree = document.querySelector<HTMLElement>('[role="tree"]')!;
+    // The derived step is the last; its 40 segments' step also has a link.
     const allOutputs = () =>
-      historyTree.querySelector<HTMLElement>('[data-kind="more"]') ?? undefined;
+      [...historyTree.querySelectorAll<HTMLElement>('[data-kind="more"]')].at(
+        -1,
+      );
     const moreOutputs = await until(allOutputs, 'full output tree link');
     assert(
       moreOutputs.title === 'View all 40 outputs',
@@ -1689,6 +2330,13 @@ export async function workflowUiSmoke() {
     await delay();
     await click('Create 40 values', valueModal);
     await settled();
+    // Values of signals within segments open as a segment × input grid;
+    // the list pages every member.
+    await until(
+      () => document.querySelector('.segment-value-table'),
+      'value grid by segment',
+    );
+    await click('List');
     assert(
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Value batch membership was lost.',
@@ -2187,7 +2835,7 @@ export async function workflowUiSmoke() {
     root.unmount();
     host.remove();
     console.info(
-      'STRATUM_SMOKE_OK: Workflow UI passed the compact labeled toolbar, keyboard inspection menu, checked-input review, context actions, signal/segment/value drag-and-drop, zero-time alignment, complete paged comparisons, toolbar input selection, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, nested segmentation, scalar values, 40-member batches, pagination, lineage and keyboard navigation.',
+      'STRATUM_SMOKE_OK: Workflow UI passed the compact labeled toolbar, keyboard inspection menu, checked-input review, context actions, signal/value drag-and-drop (segments add no plot traces), zero-time alignment, complete paged comparisons, toolbar input selection, segments found by drawn ranges, windows and triggers with History, Details and plot bands, nested segments, derived signals and values within all, one or chosen segments, Segment edits that recalculate the steps within them, Segment deletion with its dependants, editing with dependent recalculation, deletion confirmation, Undo/Redo, rename, backup, invalid restore recovery, scalar values, 40-segment and 40-member batches, pagination, lineage and keyboard navigation.',
     );
   } catch (error) {
     console.error(
