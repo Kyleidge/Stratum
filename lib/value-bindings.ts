@@ -37,6 +37,8 @@ export type BindingContext = {
   nodes: ReadonlyMap<string, SignalNode>;
   /** Display name of a value, for messages. */
   label?: (id: string) => string;
+  /** File segments by ID, so values of enclosing segments also match. */
+  segments?: ReadonlyMap<string, { segment: { parentId?: string } }>;
 };
 
 /** The ancestry of a signal along its first inputs, nearest first. */
@@ -80,12 +82,21 @@ export function matchValue(
   // Within a segment, values of that segment come first, then values of
   // entire signals; values of other segments never match.
   if (candidates.some((value) => value.segmentId)) {
-    const segment = ancestry
-      .map((id) => context.nodes.get(id)?.segmentId)
-      .find(Boolean);
-    const same = candidates.filter(
-      (value) => !!segment && value.segmentId === segment,
-    );
+    // The input's segment, then the segments that contain it, nearest first.
+    const levels: string[] = [];
+    for (
+      let segment = ancestry
+        .map((id) => context.nodes.get(id)?.segmentId)
+        .find(Boolean);
+      segment && !levels.includes(segment);
+      segment = context.segments?.get(segment)?.segment.parentId
+    )
+      levels.push(segment);
+    let same: ScalarValue[] = [];
+    for (const level of levels) {
+      same = candidates.filter((value) => value.segmentId === level);
+      if (same.length) break;
+    }
     const entire = candidates.filter((value) => !value.segmentId);
     candidates = same.length ? same : entire;
     if (candidates.length === 1) return candidates[0];

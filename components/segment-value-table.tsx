@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Table,
   TableBody,
@@ -35,16 +35,19 @@ export default function SegmentValueTable({
 }) {
   const [page, setPage] = useState(0);
   const [columnPage, setColumnPage] = useState(0);
-  const cells = new Map<string, string>();
-  const segments: string[] = [];
-  const inputs: string[] = [];
-  for (const id of step.outputIds) {
-    const value = index.values.get(id);
-    if (!value?.segmentId) continue;
-    if (!segments.includes(value.segmentId)) segments.push(value.segmentId);
-    if (!inputs.includes(value.inputId)) inputs.push(value.inputId);
-    cells.set(`${value.segmentId}\n${value.inputId}`, id);
-  }
+  const { cells, segments, inputs } = useMemo(() => {
+    const cells = new Map<string, string>();
+    const segments = new Set<string>();
+    const inputs = new Set<string>();
+    for (const id of step.outputIds) {
+      const value = index.values.get(id);
+      if (!value?.segmentId) continue;
+      segments.add(value.segmentId);
+      inputs.add(value.inputId);
+      cells.set(`${value.segmentId}\n${value.inputId}`, id);
+    }
+    return { cells, segments: [...segments], inputs: [...inputs] };
+  }, [index, step]);
   const pages = Math.max(1, Math.ceil(segments.length / PAGE));
   const current = Math.min(page, pages - 1);
   const columnPages = Math.max(1, Math.ceil(inputs.length / COLUMNS));

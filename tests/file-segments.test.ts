@@ -411,3 +411,95 @@ void test('workspace outputs are segmented on their own time axis', async () => 
   validateWorkspace(structuredClone(engine.project));
   engine.close();
 });
+
+void test('edits follow per-segment values used for settings, including nested ones', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+    ],
+  });
+  const starts = await engine.calculateValues(
+    [torque],
+    'start-value',
+    undefined,
+    undefined,
+    { setId: set.id },
+  );
+  const binding = {
+    value: { valueIds: starts.map((value) => value.id), factor: -1 },
+  };
+  await engine.deriveMany([torque], 'offset', 0, true, binding, {
+    within: { setId: set.id },
+  });
+  // Nested segments use the value of the segment that contains them.
+  const nested = await engine.segmentSet(
+    source.id,
+    { method: 'ranges', boundary: 'clip', ranges: [[1, 2]] },
+    undefined,
+    { setId: set.id },
+  );
+  const inner = await engine.deriveMany([torque], 'offset', 0, true, binding, {
+    within: { setId: nested.id },
+  });
+  assert.deepEqual((await samples(engine, inner[1].id))[0], [11, 1]);
+  const segmentStep = stepOf(engine, set.segments[0].id);
+  for (const ranges of [
+    [
+      [2, 6],
+      [10, 20],
+      [25, 30],
+    ],
+    [[2, 6]],
+  ] as [number, number][][]) {
+    await engine.editOperation(segmentStep.id, {
+      type: 'segment-set',
+      sourceId: source.id,
+      definition: { method: 'ranges', boundary: 'clip', ranges },
+    });
+    const offsets = engine.project.nodes.filter(
+      (node) => node.operation === 'offset' && !node.internal,
+    );
+    assert.equal(offsets.length, ranges.length * 2);
+    validateWorkspace(structuredClone(engine.project));
+  }
+  engine.close();
+});
+
+void test('a formula within segments skips segments where a signal has no samples', async () => {
+  const { engine, source, torque, speed } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+    ],
+  });
+  const [onlyFirst] = await engine.deriveMany(
+    [speed],
+    'scale',
+    1,
+    true,
+    undefined,
+    { within: { setId: set.id, segmentIds: [set.segments[0].id] } },
+  );
+  const sums = await engine.deriveMany(
+    [torque],
+    'formula',
+    0,
+    true,
+    undefined,
+    {
+      unit: 'x',
+      formula: { expression: 'A + B', signals: { B: [onlyFirst.id] } },
+      within: { setId: set.id },
+    },
+  );
+  assert.equal(sums.length, 1);
+  assert.equal(sums[0].segmentId, set.segments[0].id);
+  engine.close();
+});

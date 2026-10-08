@@ -840,7 +840,9 @@ export class SignalEngine {
           !!oldKeys &&
           !!newKeys &&
           (generated.outputIds.length !== old.outputIds.length ||
-            newKeys.every((key) => oldKeys.includes(key)));
+            ((known) => newKeys.every((key) => known.has(key)))(
+              new Set(oldKeys),
+            ));
         if (
           !keyed &&
           generated.outputIds.length !== old.outputIds.length &&
@@ -2140,6 +2142,7 @@ export class SignalEngine {
     return {
       values,
       nodes,
+      segments: segmentEntries(this.project),
       label: (id) =>
         this.project.labels?.[id] ??
         values.get(id)?.name ??
@@ -2962,29 +2965,27 @@ export class SignalEngine {
         within,
         parentIds,
         [...new Set(Object.values(signals).flat())],
-        (inputs, crop) =>
-          this.deriveMany(inputs, operation, constant, false, bindings, {
+        async (inputs, crop) => {
+          const letters = Object.entries(rest.formula?.signals ?? {}).map(
+            ([letter, ids]) =>
+              [letter, ids.flatMap((id) => crop(id) ?? [])] as const,
+          );
+          // A segment where a formula signal has no samples is skipped.
+          if (letters.some(([, ids]) => !ids.length)) return [];
+          return this.deriveMany(inputs, operation, constant, false, bindings, {
             ...rest,
             ...(rest.formula
               ? {
                   formula: {
                     ...rest.formula,
                     ...(rest.formula.signals
-                      ? {
-                          signals: Object.fromEntries(
-                            Object.entries(rest.formula.signals).map(
-                              ([letter, ids]) => [
-                                letter,
-                                ids.flatMap((id) => crop(id) ?? []),
-                              ],
-                            ),
-                          ),
-                        }
+                      ? { signals: Object.fromEntries(letters) }
                       : {}),
                   },
                 }
               : {}),
-          }),
+          });
+        },
       );
     }
     if (
@@ -3415,6 +3416,13 @@ export class SignalEngine {
           ...before,
           nodes: [...before.nodes, ...crops.values()],
         };
+        if (
+          !binary &&
+          Object.values(request.formula?.signals ?? {}).some(
+            (ids) => !ids.some((id) => mapped.get(id)),
+          )
+        )
+          continue;
         if (binary) {
           const second = mapped.get(others[0]);
           if (!second) continue;
