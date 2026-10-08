@@ -66,7 +66,7 @@ export function matchValue(
   inputId: string,
 ): ScalarValue {
   const label = (id: string) => context.label?.(id) ?? 'a value';
-  const candidates = binding.valueIds.map((id) => {
+  let candidates = binding.valueIds.map((id) => {
     const value = context.values.get(id);
     if (!value)
       throw new Error(
@@ -77,6 +77,23 @@ export function matchValue(
   if (!candidates.length) throw new Error('Choose a value for this setting.');
   if (candidates.length === 1) return candidates[0];
   const ancestry = chain(context.nodes, inputId);
+  // Within a segment, values of that segment come first, then values of
+  // entire signals; values of other segments never match.
+  if (candidates.some((value) => value.segmentId)) {
+    const segment = ancestry
+      .map((id) => context.nodes.get(id)?.segmentId)
+      .find(Boolean);
+    const same = candidates.filter(
+      (value) => !!segment && value.segmentId === segment,
+    );
+    const entire = candidates.filter((value) => !value.segmentId);
+    candidates = same.length ? same : entire;
+    if (candidates.length === 1) return candidates[0];
+    if (!candidates.length)
+      throw new Error(
+        `None of the chosen values was calculated within the segment of ${context.label?.(inputId) ?? 'this input'}. Choose values calculated within the same segments.`,
+      );
+  }
   let best: ScalarValue[] = [];
   let distance = Infinity;
   for (const value of candidates) {

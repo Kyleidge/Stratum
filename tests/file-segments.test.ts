@@ -334,3 +334,44 @@ void test('backups keep segments and steps within them', async () => {
   engine.close();
   target.close();
 });
+
+void test('settings taken from values use the value of the same segment', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+    ],
+  });
+  const starts = await engine.calculateValues(
+    [torque],
+    'start-value',
+    undefined,
+    undefined,
+    { setId: set.id },
+  );
+  // Each segment is offset by minus its own start value.
+  const offsets = await engine.deriveMany(
+    [torque],
+    'offset',
+    0,
+    true,
+    { value: { valueIds: starts.map((value) => value.id), factor: -1 } },
+    { within: { setId: set.id } },
+  );
+  assert.deepEqual(
+    offsets.map((node) => node.bindings?.value.valueId),
+    starts.map((value) => value.id),
+  );
+  assert.deepEqual((await samples(engine, offsets[1].id))[0], [10, 0]);
+  // An entire signal cannot use values of segments.
+  await assert.rejects(
+    engine.deriveMany([torque], 'offset', 0, true, {
+      value: { valueIds: starts.map((value) => value.id), factor: -1 },
+    }),
+    /within the segment/,
+  );
+  engine.close();
+});
