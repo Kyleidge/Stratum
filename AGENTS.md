@@ -194,6 +194,16 @@ There are no server API routes or cloud signal uploads.
   Batch value columns follow recipe step order. The open batch view is stored
   per device under `stratum-batch-view-v1`. The Workspace dialog holds backup,
   restore and the example; workflow commands live in the Import menu.
+  Workflow files are version 2 (`WORKFLOW_VERSION`): a `segment` step finds
+  file segments (no `input`), and `within` (`sweeps`, `sweeps[2]`, or a list
+  of positions from one step) scopes derive, value and nested segment steps,
+  bound at run time to a `SegmentScope`. Labels may use `{segment}`; segment
+  steps take only `count` and `duration` checks and are never signal inputs or
+  report bindings. Version 1 files keep crop segments (`crop-segment` in the
+  recipe model), replay unchanged and keep their hash (`recipeYaml` writes the
+  version a recipe was read with). Extraction writes version 2; legacy crop
+  segment steps are written as version 1 only when nothing needs version 2,
+  otherwise they are skipped with a named reason.
   Report templates (`lib/workflow-report-template.ts`) bind blocks to recipe
   references; `lib/workflow-batch-report.ts` renders one item's report, and
   `lib/zip-store.ts` packages PDFs. `lib/eol-example.ts` generates

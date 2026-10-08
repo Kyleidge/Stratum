@@ -301,7 +301,11 @@ report:
           height: 230
           text: Key results
           bind:
-            values: [sweep-torque, half-peaks, peak-temperature, average-current]
+            values:
+              - sweep-torque
+              - half-peaks
+              - peak-temperature
+              - average-current
         - type: table
           name: Checks
           y: 840
