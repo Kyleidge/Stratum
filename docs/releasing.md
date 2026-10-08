@@ -33,7 +33,56 @@ Without these secrets the build is unsigned; nothing else changes. Keep a
 release line on one signing identity: electron-updater checks that an
 update is signed by the same publisher as the installed app.
 
-## Cut a release
+## Beta releases: test every change
+
+Every push to `main` that changes more than documentation publishes an
+automatic **beta** about ten minutes later. Beta installs pick it up on their
+next update check, so a change merged by you or an agent can be tested
+straight away. Stable installs never see betas: they read only GitHub's
+latest full release.
+
+### Set up a test copy (once)
+
+1. On the Windows computer you test with, open the newest
+   `Stratum <version>-beta.<n>` release on the repository's **Releases**
+   page, download `Stratum-Setup-<version>-beta.<n>.exe` and run it. It
+   installs over any earlier copy and keeps the workspace. (`1.0.0-preview.1`
+   predates the update feed and never updates, so replace it this way.)
+2. A beta install has **Help → Get Beta Updates** ticked already. Ticking it
+   on a stable install also opts that copy into betas.
+
+### Test a change
+
+1. Merge it to `main`. The **Release** workflow
+   (`.github/workflows/release.yml`) typechecks, tests, builds and publishes
+   `v<version>-beta.<n>`, where n is the workflow's run number. Its notes list
+   the commits since the previous beta.
+2. In Stratum, choose **Help → Check for Updates…**. (It also checks ten
+   seconds after starting and every hour.) The beta downloads in the
+   background; choose **Restart now**, or **Later** to install it when you
+   quit.
+3. **Help → About Stratum** shows the version you are running.
+
+To try a branch before merging it, open **Actions → Release → Run
+workflow**, choose the branch and tick **Publish a beta release of this
+branch**. Its beta number is higher than every earlier beta, so test copies
+take it; the next beta from `main` replaces it again.
+
+The workflow keeps the ten newest betas and deletes older ones with their
+tags. A run that fails after tagging removes its tag and release, so a beta
+is never half-published. A finished run cannot be re-run (the tag exists):
+push again or start a new run.
+
+Betas use `<package.json version>-beta.<run number>`. Once that version has
+a stable tag, betas use the next patch version (`1.0.1-beta.<n>` after
+`v1.0.0`), so they still outrank the release; bump `package.json` to the
+next planned version when you start on it. Prerelease names must be `beta`
+(or `alpha`): electron-updater treats any other name, such as `preview`, as a
+separate channel whose installs never move to a stable release.
+
+## Cut a stable release
+
+Release a version once its beta has been tested:
 
 1. Update `version` in `package.json` and move the `CHANGELOG.md` entry from
    "Unreleased" to the release date. Commit to `main`.
@@ -44,34 +93,20 @@ update is signed by the same publisher as the installed app.
    git push origin v1.0.0
    ```
 
-3. The **Release** workflow (`.github/workflows/release.yml`) runs on
-   `windows-latest`: install, typecheck, tests, `desktop:build`, then
-   `node desktop/package.mjs --publish`. It fails if the tag does not match
-   `package.json`.
+3. The **Release** workflow runs the same checks and fails if the tag does
+   not match `package.json`.
 4. electron-builder uploads `Stratum-Setup-<version>.exe`, its `.blockmap`
-   and `latest.yml` to a **draft** release in this repository. Check the
-   draft (install it on a clean Windows account), add release notes from the
-   changelog, and publish it. Installed copies only see published releases.
+   and `latest.yml` to a **draft** release. Check the draft (install it on a
+   clean Windows account), add release notes from the changelog, and publish
+   it. Installed copies only see published releases, and beta installs
+   update to it too.
 
-### Beta releases
+Pushing a beta tag such as `v1.1.0-beta.1` (matching `package.json`) also
+works; it publishes as a prerelease at once, like an automatic beta.
 
-Test builds use a `beta` prerelease version, such as `1.1.0-beta.1` (tag
-`v1.1.0-beta.1`). The workflow marks their drafts as prereleases; keep that
-box ticked when publishing. Then:
-
-- Stable installs never see betas: they read only GitHub's latest full
-  release.
-- A beta install updates to the newest published release, beta or stable,
-  so testers move on to `1.1.0` when it ships.
-
-Use `beta` (or `alpha`) only. electron-updater treats any other name, such as
-`preview`, as a separate channel whose installs never move to a stable
-release. Number betas below the release they lead to: `1.1.0-beta.1` comes
-before `1.1.0`.
-
-Pull requests that touch packaging files and manual runs (**Run workflow**)
-build the installer without publishing and
-attach it as the `stratum-windows-installer` workflow artifact.
+Pull requests that touch packaging files, and manual runs without the beta
+box ticked, build the installer without publishing and attach it as the
+`stratum-windows-installer` workflow artifact.
 
 ## Build locally
 
@@ -116,13 +151,16 @@ these environment variables (repository variables in CI) say otherwise:
 
 A feed in another GitHub repository also needs a `RELEASES_TOKEN` Actions
 secret: a fine-grained token limited to that repository with **Contents: read
-and write**. The workflow then can't mark beta drafts there as prereleases, so
-tick the box yourself. Never point the feed at a private repository: reading it
+and write**. Betas then stay drafts there: publish each one as a prerelease
+yourself. Never point the feed at a private repository: reading it
 would require a token inside every installed copy.
 
 At run time (`desktop/updater.mjs`) the installed app checks quietly ten
-seconds after startup and from **Help → Check for updates…**, downloads in the
-background, then asks to restart. Choosing **Later** installs the update when
+seconds after startup, every hour and from **Help → Check for Updates…**,
+downloads in the background, then asks to restart. **Help → Get Beta
+Updates** (stored in the profile's `updates.json`; on by default for a beta)
+sets electron-updater's `allowPrerelease`, so the copy takes the newest
+release, beta or stable. Choosing **Later** installs the update when
 Stratum quits. Updates are off for development runs, smoke tests, the report
 mockup, non-Windows builds and copies without the installer's uninstaller
 (such as `win-unpacked`).

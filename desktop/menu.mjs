@@ -1,5 +1,5 @@
 // The desktop application menu: File, Edit, View and Help (About, licences,
-// Check for updates…). The workbench owns its own shortcuts (Ctrl+Z/Y/K/D,
+// Check for updates…, Get Beta Updates). The workbench owns its own shortcuts (Ctrl+Z/Y/K/D,
 // Alt+arrows, Escape), so Edit items show their usual keys without
 // registering them: Chromium keeps handling copy/paste in fields exactly as
 // it did with no menu, and no accelerator can swallow a workbench shortcut.
@@ -64,8 +64,8 @@ async function showAbout(window) {
   if (response === 2) await openDocument('notices', window);
 }
 
-/** Builds the menu; `checkForUpdates` comes from desktop/updater.mjs. */
-export function applicationMenu({ checkForUpdates }) {
+/** Builds the menu around the updater from desktop/updater.mjs. */
+export function applicationMenu({ updater }) {
   const shown = (role) => ({ role, registerAccelerator: false });
   return Menu.buildFromTemplate([
     { label: '&File', submenu: [{ role: 'quit' }] },
@@ -101,8 +101,19 @@ export function applicationMenu({ checkForUpdates }) {
       submenu: [
         {
           label: 'Check for &Updates…',
-          click: () => void checkForUpdates(),
+          click: () => void updater.checkNow(),
         },
+        // Copies that cannot update (development, portable) omit the option.
+        ...(updater.supported
+          ? [
+              {
+                label: 'Get &Beta Updates',
+                type: 'checkbox',
+                checked: updater.betaUpdates(),
+                click: (item) => void updater.setBetaUpdates(item.checked),
+              },
+            ]
+          : []),
         { type: 'separator' },
         {
           label: 'Third-party &Notices',

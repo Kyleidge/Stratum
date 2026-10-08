@@ -2,12 +2,29 @@
 // The feed is written into resources/app-update.yml at packaging time (see
 // desktop/package.mjs and docs/releasing.md). Updates download quietly; the
 // user chooses when to restart, and an unapplied update installs on quit.
+// Help → Get Beta Updates (stored in userData/updates.json; on by default for
+// a beta) also offers prerelease builds: the newest release, beta or stable.
 import { app, BrowserWindow, dialog } from 'electron';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 // Leave startup to the workspace before touching the network.
 const STARTUP_DELAY_MS = 10_000;
+// Later checks pick up builds published while Stratum stays open.
+const CHECK_INTERVAL_MS = 60 * 60_000;
+
+const settingsPath = () => join(app.getPath('userData'), 'updates.json');
+
+function readBeta() {
+  try {
+    const { beta } = JSON.parse(readFileSync(settingsPath(), 'utf8'));
+    if (typeof beta === 'boolean') return beta;
+  } catch {
+    // Missing or unreadable: follow the installed version.
+  }
+  return app.getVersion().includes('-');
+}
 
 /** Why this copy cannot update itself, or undefined when it can. */
 function unsupportedReason() {
@@ -47,6 +64,7 @@ export function createUpdater({ enabled, beforeInstall }) {
   let state = 'idle';
   let readyVersion = '';
   let prompting = false;
+  let beta;
 
   async function load() {
     if (updater) return updater;
@@ -106,7 +124,8 @@ export function createUpdater({ enabled, beforeInstall }) {
       return;
     }
     if (state === 'ready') {
-      await promptRestart();
+      // Hourly checks leave the restart to Help or quitting.
+      if (interactive) await promptRestart();
       return;
     }
     if (state !== 'idle') {
@@ -124,7 +143,10 @@ export function createUpdater({ enabled, beforeInstall }) {
     }
     state = 'checking';
     try {
-      const result = await (await load()).checkForUpdates();
+      const client = await load();
+      beta ??= readBeta();
+      client.allowPrerelease = beta;
+      const result = await client.checkForUpdates();
       if (result?.isUpdateAvailable) {
         if (state === 'checking') state = 'downloading';
         // Failures are reported through the 'error' event.
@@ -145,7 +167,9 @@ export function createUpdater({ enabled, beforeInstall }) {
             type: 'info',
             title: 'Check for updates',
             message: 'Stratum is up to date.',
-            detail: `You have version ${app.getVersion()}.`,
+            detail:
+              `You have version ${app.getVersion()}.` +
+              (beta ? ' Beta updates are on.' : ''),
           });
       }
     } catch (error) {
@@ -162,13 +186,31 @@ export function createUpdater({ enabled, beforeInstall }) {
     }
   }
 
+  const supported = enabled && !unsupportedReason();
   return {
-    /** Checks quietly once the window has had time to load. */
+    /** Whether this copy updates itself (and shows the beta option). */
+    supported,
+    /** Checks quietly once the window has had time to load, then hourly. */
     checkOnStartup() {
-      if (enabled && !unsupportedReason())
-        setTimeout(() => void check(false), STARTUP_DELAY_MS);
+      if (!supported) return;
+      setTimeout(() => {
+        void check(false);
+        setInterval(() => void check(false), CHECK_INTERVAL_MS).unref();
+      }, STARTUP_DELAY_MS);
     },
     /** The Help menu's "Check for updates…": always reports an outcome. */
     checkNow: () => check(true),
+    betaUpdates: () => (beta ??= readBeta()),
+    /** Help → Get Beta Updates; turning it on checks at once. */
+    async setBetaUpdates(on) {
+      beta = on;
+      await writeFile(
+        settingsPath(),
+        `${JSON.stringify({ beta: on }, null, 2)}\n`,
+      ).catch((error) =>
+        process.stderr.write(`Could not save update settings: ${error}\n`),
+      );
+      if (on) await check(true);
+    },
   };
 }

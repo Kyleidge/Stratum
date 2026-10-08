@@ -346,11 +346,15 @@ There are no server API routes or cloud signal uploads.
   workbench. Native windows load bundled assets using a restricted custom scheme.
   `menu.mjs` is the application menu (Edit items never register accelerators,
   so workbench shortcuts reach the page); `updater.mjs` wraps electron-updater
-  (installed Windows copies only, never dev or smoke runs); `notices.mjs`
+  (installed Windows copies only, never dev or smoke runs; Help → Get Beta
+  Updates opts into prereleases); `notices.mjs`
   writes `dist-desktop/THIRD_PARTY_NOTICES.txt` during `desktop:build`;
   `package.mjs` stages a minimal app for electron-builder. Icons come from
   `desktop/icons/stratum.svg` (`pnpm desktop:icons`). Releases (Windows NSIS,
   `.github/workflows/release.yml`, signing, update feed): `docs/releasing.md`.
+  Every push to `main` except documentation publishes an automatic beta
+  (`desktop/beta-version.mjs`) that the user's test copy installs, so only
+  merge finished, checked work, and keep `main` releasable.
 - `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
   (surfaces, ink 1–3, primary, status, kind and series colours), defined once
   per theme under `:root[data-theme]`. Stylesheets and components use only

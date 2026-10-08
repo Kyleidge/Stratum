@@ -359,9 +359,7 @@ if (singleInstance) {
     .whenReady()
     .then(async () => {
       Menu.setApplicationMenu(
-        smoke || mockup
-          ? null
-          : applicationMenu({ checkForUpdates: updater.checkNow }),
+        smoke || mockup ? null : applicationMenu({ updater }),
       );
       // Smoke runs (temporary profile) answer file dialogs without showing them.
       desktopFiles = registerDesktopFiles({
