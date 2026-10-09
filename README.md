@@ -1,8 +1,8 @@
 # Stratum
 
 A desktop workbench for workflows built from immutable time-series signals.
-Derive signals, segment them into reusable signal chunks, and calculate scalar
-values. Each operation keeps exact links to its inputs and outputs in chronological
+Derive signals, find segments (time intervals of a recording, such as each
+test run), and calculate scalar values over entire signals or within segments. Each operation keeps exact links to its inputs and outputs in chronological
 history. The included motor-test example demonstrates the complete signal workflow.
 
 New to Stratum? Read the illustrated
@@ -56,7 +56,7 @@ containing its current traces.
 | Dragged item               | Onto a plot                                             | Onto a processing tool                                     |
 | -------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
 | Original or derived signal | Add that trace                                          | Select that signal                                         |
-| Segment                    | Add all segments from its producing operation           | Select that segment only                                   |
+| Segment                    | Nothing: selecting a segment shades it on Active        | Work within that segment, with the signals that found it   |
 | Operation                  | Add every plottable output                              | Select its signal outputs, or the inputs of its values     |
 | Scalar value               | Add a dashed reference line over its evaluated interval | Select its input signal, with an explanation in the editor |
 

@@ -79,8 +79,12 @@ import type {
   Operation,
   Project,
   SegmentationOperation,
+  SegmentScope,
+  SegmentSet,
 } from '@/lib/signal-types';
 import { segmentationOperation } from '@/lib/segmentation-operation';
+import { visibleInput } from '@/lib/file-segments';
+import { withinFromSelection, withinOptions } from './within-control';
 import WorkflowHistory, { type WorkflowSelection } from './workflow-history';
 import { formatValue } from './signal-chart';
 import PlotScratchpad, {
@@ -103,6 +107,7 @@ import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
 import {
   readWorkflowDrag,
   startWorkflowDrag,
+  segmentSignals,
   targetOutputs,
   targetSignals,
   WORKFLOW_DRAG_TYPE,
@@ -110,6 +115,7 @@ import {
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
+import SegmentValueTable from './segment-value-table';
 import OperationInputs, { editImpact, editTitle } from './operation-inputs';
 import { RegionSelect } from './region-controls';
 import WorkflowExport from './workflow-export';
@@ -261,6 +267,10 @@ type Editor = {
   unit?: string;
   formula?: FormulaSettings;
   savedSegment?: SegmentationOperation;
+  /** The segments the step works within. */
+  within?: SegmentScope;
+  /** Segment steps that find file segments (always, for new ones). */
+  segmentSet?: { saved?: SegmentSet };
 };
 
 /**
@@ -270,13 +280,18 @@ type Editor = {
 function savedBindingsOf(
   project: Project,
   step: WorkflowStep,
-): Pick<Editor, 'bindings' | 'unit' | 'formula'> {
+): Pick<Editor, 'bindings' | 'unit' | 'formula' | 'within'> {
   try {
     const command = savedCommand(project, step);
+    const within = step.within ? { within: step.within } : {};
     if (command.type === 'calculate-values')
-      return command.bindings ? { bindings: command.bindings } : {};
-    if (command.type !== 'derive-many') return {};
+      return {
+        ...within,
+        ...(command.bindings ? { bindings: command.bindings } : {}),
+      };
+    if (command.type !== 'derive-many') return within;
     return {
+      ...within,
       ...(command.bindings ? { bindings: command.bindings } : {}),
       ...(command.unit !== undefined ? { unit: command.unit } : {}),
       ...(command.formula ? { formula: command.formula } : {}),
@@ -461,6 +476,10 @@ export default function WorkflowWorkbench() {
   }
   const [tableQuery, setTableQuery] = useState(''),
     [page, setPage] = useState(0);
+  // Values within segments read best as a segment × input grid.
+  const [valueLayout, setValueLayout] = useState<'segments' | 'list'>(
+    'segments',
+  );
   // Restore the last selection once the workspace opens, if it still exists.
   const selectionRestored = useRef(false);
   useEffect(() => {
@@ -600,6 +619,12 @@ export default function WorkflowWorkbench() {
   /** Captures `ids` into the report; only a drop on Reports switches to it. */
   function addToReport(ids: string[], open = false) {
     const editor = report.current;
+    if (!ids.length && !engine.busy) {
+      setNotice(
+        'Segments are time intervals, not results. Add the signals or values made within them instead.',
+      );
+      return;
+    }
     if (!ids.length || engine.busy || !engine.ready || !editor) return;
     if (open) openReports();
     setDetailPanel(undefined);
@@ -754,12 +779,13 @@ export default function WorkflowWorkbench() {
     setInputs(
       last.kind === 'import' ||
         last.kind === 'value' ||
+        last.segmentSetId ||
         last.outputIds.length === 1
         ? null
         : last.outputIds,
     );
     announceChange(
-      `${reference(last)} ${stepName(last)} created ${formatCount(last.outputIds.length, last.kind === 'value' ? 'value' : 'signal')}.`,
+      `${reference(last)} ${stepName(last)} created ${formatCount(last.outputIds.length, last.kind === 'value' ? 'value' : last.segmentSetId ? 'segment' : 'signal')}.`,
     );
   }
   async function perform(message: EngineRequest, label: string) {
@@ -1341,6 +1367,31 @@ export default function WorkflowWorkbench() {
     const open = (next: Editor) =>
       setEditor({ ...next, editingStepId: editing ? step.id : undefined });
     const nodeIds = step.inputIds.filter((id) => index.nodes.has(id));
+    if (step.segmentSetId) {
+      const set = project.segmentSets?.find(
+        (item) => item.id === step.segmentSetId,
+      );
+      if (!set) return;
+      const sourceChannels =
+        project.sources.find((item) => item.id === set.sourceId)?.channels ??
+        [];
+      open({
+        kind: 'segment',
+        ids: nodeIds.length ? nodeIds : sourceChannels.slice(0, 1),
+        segmentSet: { saved: set },
+        within: set.within,
+        savedSegment: {
+          id: set.id,
+          sourceId: set.sourceId,
+          definition: set.definition,
+          targetIds: nodeIds,
+          independently: false,
+          scope: 'signals',
+          segmentIds: [],
+        },
+      });
+      return;
+    }
     if (step.kind === 'segment') {
       const saved = step.segmentationId
         ? segmentationOperation(project, step.segmentationId)
@@ -1405,13 +1456,22 @@ export default function WorkflowWorkbench() {
       });
     } else if (step.kind === 'derive' || step.kind === 'value') {
       const binary = isBinaryOperation(step.operation);
+      // Outputs within segments read hidden crops; name the signals cropped.
       const parents = step.outputIds.flatMap(
-        (id) => index.nodes.get(id)?.parents.slice(0, 1) ?? [],
+        (id) =>
+          index.nodes
+            .get(id)
+            ?.parents.slice(0, 1)
+            .map((parent) => visibleInput(index.nodes, parent)) ?? [],
       );
       const second = [
         ...new Set(
           step.outputIds.flatMap(
-            (id) => index.nodes.get(id)?.parents.slice(1, 2) ?? [],
+            (id) =>
+              index.nodes
+                .get(id)
+                ?.parents.slice(1, 2)
+                .map((parent) => visibleInput(index.nodes, parent)) ?? [],
           ),
         ),
       ];
@@ -1487,7 +1547,17 @@ export default function WorkflowWorkbench() {
         new Set(signals.map((id) => index.nodes.get(id)?.sourceId)).size > 1
       )
         setTimeEditor({ ids: signals, mode: 'crop' });
-      else setEditor({ kind: action, ids: signals });
+      else
+        setEditor({
+          kind: action,
+          ids: signals,
+          ...(action === 'segment' ? { segmentSet: {} } : {}),
+          // A new Segment step nests only within one viewed segment.
+          within:
+            action === 'segment' && target.kind === 'step'
+              ? undefined
+              : withinFromSelection(index, target),
+        });
     } else if (action === 'align') setTimeEditor({ ids: signals });
     else if (action === 'export') {
       if (dropped) setInputs(null);
@@ -1561,7 +1631,40 @@ export default function WorkflowWorkbench() {
         })),
       ];
     };
+    // Segments are shown over the signals that found them, shaded.
+    const segmentPlot = (set: SegmentSet, selected?: string): ActivePlot => {
+      const signals = segmentSignals(index, set.segments[0]?.id ?? '');
+      const shown = signals.slice(0, ACTIVE_LIMIT);
+      const offset = set.sourceId ? (graph.offsets.get(shown[0]) ?? 0) : 0;
+      const segment = set.segments.find((item) => item.id === selected);
+      const owner = index.owner.get(set.segments[0]?.id ?? '');
+      return {
+        key,
+        title: selected
+          ? index.label(selected)
+          : owner
+            ? stepName(owner)
+            : 'Segments',
+        traces: shown.map((id) => ({ id, color: colorOf(id, shown) })),
+        bands: set.segments.map((item) => ({
+          id: item.id,
+          name: index.label(item.id),
+          start: item.start + offset,
+          end: item.end + offset,
+          selected: item.id === selected,
+        })),
+        ...(segment
+          ? { focus: [segment.start + offset, segment.end + offset] }
+          : {}),
+        note:
+          signals.length > shown.length
+            ? `Showing ${shown.length} of ${signals.length} signals of this recording.`
+            : undefined,
+      };
+    };
     if (selectionKind === 'output') {
+      const entry = index.segments.get(selectionId);
+      if (entry) return segmentPlot(entry.set, selectionId);
       const title = index.label(selectionId);
       return {
         key,
@@ -1575,6 +1678,10 @@ export default function WorkflowWorkbench() {
     }
     const owner = index.steps.get(selectionId);
     if (!owner) return { key, title: 'Your workflow', traces: [] };
+    const ownSet = owner.segmentSetId
+      ? index.project.segmentSets?.find((set) => set.id === owner.segmentSetId)
+      : undefined;
+    if (ownSet) return segmentPlot(ownSet);
     const values = owner.outputIds.filter((id) => index.values.has(id));
     const signals = owner.outputIds.filter((id) => index.nodes.has(id));
     const members = values.length ? values : signals;
@@ -1590,7 +1697,7 @@ export default function WorkflowWorkbench() {
           ? `Showing ${shown.length} of ${members.length} outputs. Create a plot from History to compare all of them.`
           : undefined,
     };
-  }, [selectionKind, selectionId, index]);
+  }, [selectionKind, selectionId, index, graph]);
   const traceColor = new Map(
     activePlot.traces.map((trace) => [trace.id, trace.color]),
   );
@@ -1817,7 +1924,7 @@ export default function WorkflowWorkbench() {
       {
         id: `step:${item.id}`,
         label: `${reference(item)} ${stepName(item)}`,
-        hint: `Step · ${formatCount(item.outputIds.length, 'output')}`,
+        hint: `Step · ${formatCount(item.outputIds.length, item.segmentSetId ? 'segment' : 'output')}`,
         icon:
           item.kind === 'value'
             ? Hash
@@ -1867,13 +1974,16 @@ export default function WorkflowWorkbench() {
         ? stepName(step)
         : 'Your workflow';
   const allValues = step?.kind === 'value';
+  const allSegments = !!step?.segmentSetId;
   const countAll = allScope || !!scopeBatch;
   const originalCount = countAll
     ? project.sources.reduce((sum, item) => sum + item.channels.length, 0)
     : (source?.channels.length ?? 0);
   const derivedCount = project.nodes.filter(
     (node) =>
-      (countAll || node.sourceId === source?.id) && node.operation !== 'raw',
+      (countAll || node.sourceId === source?.id) &&
+      node.operation !== 'raw' &&
+      !node.internal,
   ).length;
   const valueCount = (project.values ?? []).filter(
     (value) => countAll || value.sourceId === source?.id,
@@ -2573,7 +2683,11 @@ export default function WorkflowWorkbench() {
                                 <strong>
                                   {formatCount(
                                     stepOutputs.length,
-                                    allValues ? 'value' : 'signal',
+                                    allValues
+                                      ? 'value'
+                                      : allSegments
+                                        ? 'segment'
+                                        : 'signal',
                                   )}
                                 </strong>
                               </div>
@@ -2619,7 +2733,43 @@ export default function WorkflowWorkbench() {
                                 )}
                               </div>
                             </div>
-                            {step.kind === 'regions' ? (
+                            {step.kind === 'value' && !!step.within && (
+                              <fieldset
+                                className="workflow-layout-toggle"
+                                aria-label="Value layout"
+                              >
+                                <button
+                                  type="button"
+                                  aria-pressed={valueLayout === 'segments'}
+                                  onClick={() => setValueLayout('segments')}
+                                >
+                                  By segment
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={valueLayout === 'list'}
+                                  onClick={() => setValueLayout('list')}
+                                >
+                                  List
+                                </button>
+                              </fieldset>
+                            )}
+                            {step.kind === 'value' &&
+                            valueLayout === 'segments' &&
+                            !!step.within ? (
+                              <SegmentValueTable
+                                index={index}
+                                step={step}
+                                selectedId={
+                                  selection.kind === 'output'
+                                    ? selection.id
+                                    : undefined
+                                }
+                                onSelect={(id) =>
+                                  select({ kind: 'output', id })
+                                }
+                              />
+                            ) : step.kind === 'regions' ? (
                               <div className="workflow-saved-ranges">
                                 {project.regionSets
                                   ?.find((set) => set.id === step.regionSetId)
@@ -2657,7 +2807,7 @@ export default function WorkflowWorkbench() {
                                       Show all outputs in this step
                                     </button>
                                   )}
-                                  {!allValues && (
+                                  {!allValues && !allSegments && (
                                     <>
                                       <button
                                         className="workflow-link"
@@ -2693,7 +2843,7 @@ export default function WorkflowWorkbench() {
                                 <Table className="workflow-output-table">
                                   <TableHeader>
                                     <TableRow>
-                                      {!allValues && (
+                                      {!allValues && !allSegments && (
                                         <TableHead
                                           className="workflow-check-cell"
                                           title="Checked signals are the inputs for Derive, Segment and Value"
@@ -2702,7 +2852,11 @@ export default function WorkflowWorkbench() {
                                         </TableHead>
                                       )}
                                       <TableHead>
-                                        {allValues ? 'Value' : 'Signal'}
+                                        {allValues
+                                          ? 'Value'
+                                          : allSegments
+                                            ? 'Segment'
+                                            : 'Signal'}
                                       </TableHead>
                                       <TableHead>Type</TableHead>
                                       <TableHead>Made from</TableHead>
@@ -2717,11 +2871,26 @@ export default function WorkflowWorkbench() {
                                   <TableBody>
                                     {outputPage.map((id) => {
                                       const node = index.nodes.get(id),
-                                        value = index.values.get(id);
-                                      const parent =
-                                        node?.parents[0] ?? value?.inputId;
-                                      const bounds =
-                                        node && graph.ranges.get(node.id);
+                                        value = index.values.get(id),
+                                        segment = index.segments.get(id);
+                                      // Outputs within segments read hidden
+                                      // crops; name the signal cropped.
+                                      const parent = node
+                                        ? visibleInput(
+                                            index.nodes,
+                                            node.parents[0],
+                                          )
+                                        : (value?.inputId ??
+                                          segment?.segment.parentId ??
+                                          index.inputs(id)[0]);
+                                      const bounds:
+                                        | [number, number]
+                                        | undefined = segment
+                                        ? [
+                                            segment.segment.start,
+                                            segment.segment.end,
+                                          ]
+                                        : node && graph.ranges.get(node.id);
                                       return (
                                         <TableRow
                                           key={id}
@@ -2749,7 +2918,7 @@ export default function WorkflowWorkbench() {
                                               : undefined
                                           }
                                         >
-                                          {!allValues && (
+                                          {!allValues && !allSegments && (
                                             <TableCell>
                                               {/* Ticks only explicit inputs, as History does. */}
                                               {node && (
@@ -2793,9 +2962,11 @@ export default function WorkflowWorkbench() {
                                               data-type={
                                                 value
                                                   ? 'value'
-                                                  : node?.operation === 'raw'
-                                                    ? 'original'
-                                                    : 'derived'
+                                                  : segment
+                                                    ? 'segment'
+                                                    : node?.operation === 'raw'
+                                                      ? 'original'
+                                                      : 'derived'
                                               }
                                             >
                                               {index.kind(id)}
@@ -2829,7 +3000,9 @@ export default function WorkflowWorkbench() {
                                                 : '—'}
                                           </TableCell>
                                           <TableCell>
-                                            {node?.unit ?? value?.unit}
+                                            {segment
+                                              ? 's'
+                                              : (node?.unit ?? value?.unit)}
                                           </TableCell>
                                         </TableRow>
                                       );
@@ -2989,7 +3162,10 @@ export default function WorkflowWorkbench() {
                   ? 'Ready'
                   : activeValue
                     ? 'Ready'
-                    : formatCount(stepOutputs.length, 'output'))}
+                    : formatCount(
+                        stepOutputs.length,
+                        allSegments ? 'segment' : 'output',
+                      ))}
           {notice && undoable && engine.canUndo && !engine.busy && (
             <button className="workflow-notice-undo" onClick={() => undo()}>
               Undo
@@ -3404,18 +3580,36 @@ export default function WorkflowWorkbench() {
               : editor?.kind === 'derive'
                 ? 'New derived signal'
                 : editor?.kind === 'segment'
-                  ? 'Segment signals'
+                  ? editor.segmentSet
+                    ? 'Find segments'
+                    : 'Segment signals'
                   : 'Calculate values'}
           </DialogTitle>
-          {editor && editorSource && (
+          {editor && editorSource && editor.segmentSet ? (
+            // Segments belong to the recording, not to the signals shown.
             <OperationInputs
-              items={editor.ids.map((id) => ({
-                id,
-                label: index.label(id),
-                title:
-                  `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
-              }))}
+              label="Recording"
+              items={[
+                {
+                  id: editorSource.id || 'workspace',
+                  label: editorSource.id
+                    ? editorSource.name
+                    : 'Workspace time axis',
+                },
+              ]}
             />
+          ) : (
+            editor &&
+            editorSource && (
+              <OperationInputs
+                items={editor.ids.map((id) => ({
+                  id,
+                  label: index.label(id),
+                  title:
+                    `${reference(index.owner.get(id))} ${index.label(id)}`.trim(),
+                }))}
+              />
+            )
           )}
           <DialogDescription>
             {editorOpen &&
@@ -3423,7 +3617,9 @@ export default function WorkflowWorkbench() {
             index.steps.has(editor.editingStepId)
               ? editImpact(project, editor.editingStepId)
               : editor?.kind === 'segment'
-                ? 'Create signal segments using triggers, ranges or windows.'
+                ? editor.segmentSet
+                  ? `Find time intervals of ${editorSource?.id === '' ? 'the workspace time axis' : (editorSource?.name ?? 'the recording')} using triggers, ranges or windows.`
+                  : 'Create signal segments using triggers, ranges or windows.'
                 : editor?.kind === 'value'
                   ? 'Reduce each input signal to a scalar value.'
                   : 'Apply a function to each input signal.'}
@@ -3468,46 +3664,97 @@ export default function WorkflowWorkbench() {
                   })()}
                   source={editorSource}
                   nodes={project.nodes.filter(
-                    (node) => node.sourceId === editorSource.id,
+                    (node) =>
+                      node.sourceId === editorSource.id && !node.internal,
                   )}
                   segments={project.segments}
                   selectedIds={editor.ids}
                   selectionKind="collection"
                   savedOperation={editor.savedSegment}
+                  fileSegments={
+                    editor.segmentSet
+                      ? {
+                          options: withinOptions(
+                            index,
+                            editor.ids,
+                            editor.editingStepId
+                              ? index.steps.get(editor.editingStepId)?.sequence
+                              : undefined,
+                            editor.editingStepId,
+                          ),
+                          within: editor.within,
+                        }
+                      : undefined
+                  }
                   busy={engine.busy}
                   onPreview={async (
                     definition,
                     targetIds,
                     independently,
                     scope,
+                    within,
                   ) => {
                     // Live previews never block the dialog; a newer one
                     // supersedes any still queued in the worker.
-                    const response = await request({
-                      type: 'segment-preview',
-                      sourceId: editorSource.id,
-                      definition,
-                      targetIds,
-                      independently,
-                      scope,
-                      inspection: true,
-                    });
+                    const response = await request(
+                      editor.segmentSet
+                        ? {
+                            type: 'segment-set-preview',
+                            sourceId: editorSource.id,
+                            definition,
+                            ...(editorSource.id === '' && targetIds[0]
+                              ? { referenceId: targetIds[0] }
+                              : {}),
+                            ...(within ? { within } : {}),
+                            inspection: true,
+                          }
+                        : {
+                            type: 'segment-preview',
+                            sourceId: editorSource.id,
+                            definition,
+                            targetIds,
+                            independently,
+                            scope,
+                            inspection: true,
+                          },
+                    );
                     if (response.type !== 'segment-plan')
                       throw new Error('Unexpected preview response.');
                     return response.plan;
                   }}
-                  onCreate={(definition, targetIds, independently, scope) =>
-                    perform(
-                      {
-                        type: 'segment',
-                        sourceId: editorSource.id,
-                        definition,
-                        targetIds,
-                        independently,
-                        scope,
-                      },
-                      'Creating derived segment signals…',
-                    )
+                  onCreate={(
+                    definition,
+                    targetIds,
+                    independently,
+                    scope,
+                    within,
+                  ) =>
+                    editor.segmentSet
+                      ? perform(
+                          {
+                            type: 'segment-set',
+                            sourceId: editorSource.id,
+                            definition,
+                            ...(editorSource.id === '' &&
+                            definition.method !== 'triggers' &&
+                            targetIds[0]
+                              ? { referenceId: targetIds[0] }
+                              : {}),
+                            ...(within ? { within } : {}),
+                          },
+                          'Finding segments…',
+                        )
+                      : perform(
+                          {
+                            type: 'segment',
+                            sourceId: editorSource.id,
+                            definition,
+                            targetIds,
+                            independently,
+                            scope,
+                          },
+                          'Creating derived segment signals…',
+                        )
                   }
                 />
               ) : (
@@ -3533,7 +3780,9 @@ export default function WorkflowWorkbench() {
                     valueParameters,
                     bindings,
                     extra,
+                    within,
                   ) => {
+                    const scope = within ? { within } : {};
                     if (editor.kind === 'value')
                       return perform(
                         {
@@ -3544,6 +3793,7 @@ export default function WorkflowWorkbench() {
                             ? { parameters: valueParameters }
                             : {}),
                           ...(bindings ? { bindings } : {}),
+                          ...scope,
                         },
                         'Calculating values…',
                       );
@@ -3557,6 +3807,7 @@ export default function WorkflowWorkbench() {
                             secondaryIds: [secondaryId],
                             operation,
                             parameter,
+                            ...scope,
                           },
                         },
                         'Creating derived signals…',
@@ -3569,6 +3820,7 @@ export default function WorkflowWorkbench() {
                         parameter,
                         ...(bindings ? { bindings } : {}),
                         ...extra,
+                        ...scope,
                       },
                       'Creating derived signals…',
                     );

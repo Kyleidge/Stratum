@@ -107,7 +107,8 @@ void app
           delete segment.scope;
         }
         await new Promise((resolve, reject) => {
-          const opening = indexedDB.open('stratus-workbench-v1', 1);
+          // The engine created the database; open it at its current schema.
+          const opening = indexedDB.open('stratus-workbench-v1');
           opening.onerror = () => reject(opening.error);
           opening.onsuccess = () => {
             const db = opening.result;

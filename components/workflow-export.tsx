@@ -11,6 +11,7 @@ import { stepName, WorkflowIndex } from '@/lib/workflow-history';
 import {
   exportFileName,
   reportHtml,
+  segmentsCsv,
   valuesCsv,
   type ExportKind,
 } from '@/lib/workflow-delivery';
@@ -121,14 +122,26 @@ function ExportForm({
         ? checkedIds
         : (step?.outputIds ?? []);
   const allValues = ids.length > 0 && ids.every((id) => index.values.has(id));
+  // Segments are time intervals: they export as a table of their times.
+  const allSegments =
+    ids.length > 0 && ids.every((id) => index.segments.has(id));
   const [format, setFormat] = useState<Format>('csv');
-  const kind: ExportKind =
-    format === 'csv' ? (allValues ? 'values' : 'samples') : format;
+  const kind: ExportKind = allSegments
+    ? 'segments'
+    : format === 'csv'
+      ? allValues
+        ? 'values'
+        : 'samples'
+      : format;
   const [error, setError] = useState('');
   const cancelled = useRef(false);
   const stepRef = step ? `#${String(step.sequence + 1).padStart(3, '0')}` : '';
   const viewedKind =
-    viewedId && index.values.has(viewedId) ? 'value' : 'signal';
+    viewedId && index.values.has(viewedId)
+      ? 'value'
+      : viewedId && index.segments.has(viewedId)
+        ? 'segment'
+        : 'signal';
   const checkedNoun = checkedIds.every((id) => index.values.has(id))
     ? 'value'
     : 'signal';
@@ -177,6 +190,10 @@ function ExportForm({
       let blob: Blob;
       if (kind === 'values')
         blob = new Blob([valuesCsv(project, ids)], {
+          type: 'text/csv;charset=utf-8',
+        });
+      else if (kind === 'segments')
+        blob = new Blob([segmentsCsv(project, ids)], {
           type: 'text/csv;charset=utf-8',
         });
       else if (kind === 'report') {
@@ -262,7 +279,18 @@ function ExportForm({
       </fieldset>
       <fieldset disabled={busy} className="workflow-export-choices">
         <legend>Format</legend>
-        {allValues ? (
+        {allSegments ? (
+          <Choice
+            name="export-format"
+            value="csv"
+            checked
+            title="Segments table (CSV)"
+            onChange={() => setFormat('csv')}
+          >
+            One row per segment with its start, end, duration and parent. Exact
+            times in seconds.
+          </Choice>
+        ) : allValues ? (
           <Choice
             name="export-format"
             value="csv"
@@ -300,20 +328,26 @@ function ExportForm({
             </Choice>
           </>
         )}
-        <Choice
-          name="export-format"
-          value="report"
-          checked={format === 'report'}
-          title="Quick HTML summary"
-          onChange={(value) => setFormat(value as Format)}
-        >
-          A single web page with results, simple plots and the steps behind
-          them, to view or print. For a designed PDF, use Add to report.
-        </Choice>
+        {!allSegments && (
+          <Choice
+            name="export-format"
+            value="report"
+            checked={format === 'report'}
+            title="Quick HTML summary"
+            onChange={(value) => setFormat(value as Format)}
+          >
+            A single web page with results, simple plots and the steps behind
+            them, to view or print. For a designed PDF, use Add to report.
+          </Choice>
+        )}
       </fieldset>
       <div className="workflow-export-preview">
         <strong>
-          {formatCount(ids.length, allValues ? 'value' : 'signal')} included
+          {formatCount(
+            ids.length,
+            allValues ? 'value' : allSegments ? 'segment' : 'signal',
+          )}{' '}
+          included
         </strong>
         <ul>
           {ids.slice(0, 30).map((id) => (

@@ -16,7 +16,9 @@ export function readWorkflowDrag(
       return { kind: 'step', id: target.id };
     if (
       target.kind === 'output' &&
-      (index.nodes.has(target.id) || index.values.has(target.id))
+      (index.nodes.has(target.id) ||
+        index.values.has(target.id) ||
+        index.segments.has(target.id))
     )
       return { kind: 'output', id: target.id };
   } catch {
@@ -30,9 +32,29 @@ export function targetOutputs(
 ): string[] {
   return target.kind === 'step'
     ? (index.steps.get(target.id)?.outputIds ?? [])
-    : index.nodes.has(target.id) || index.values.has(target.id)
+    : index.nodes.has(target.id) ||
+        index.values.has(target.id) ||
+        index.segments.has(target.id)
       ? [target.id]
       : [];
+}
+
+/**
+ * The signals a segment is shown and processed with by default: its
+ * triggers, its workspace reference, or its recording's original signals.
+ */
+export function segmentSignals(index: WorkflowIndex, id: string): string[] {
+  const entry = index.segments.get(id);
+  if (!entry) return [];
+  const { definition, referenceId, sourceId } = entry.set;
+  const ids =
+    definition.method === 'triggers'
+      ? [definition.start.signalId, definition.end.signalId]
+      : referenceId
+        ? [referenceId]
+        : (index.project.sources.find((source) => source.id === sourceId)
+            ?.channels ?? []);
+  return [...new Set(ids)].filter((item) => index.nodes.has(item));
 }
 
 /** Processing a member stays scoped to that member; values expose their inputs. */
@@ -44,6 +66,7 @@ export function targetSignals(
     ...new Set(
       targetOutputs(index, target).flatMap((id) => {
         if (index.nodes.has(id)) return [id];
+        if (index.segments.has(id)) return segmentSignals(index, id);
         const input = index.values.get(id)?.inputId;
         return input && index.nodes.has(input) ? [input] : [];
       }),
@@ -59,7 +82,11 @@ export function targetPlotOutputs(
   const owner =
     target.kind === 'output' ? index.owner.get(target.id) : undefined;
   const ids =
-    owner && (owner.kind === 'segment' || owner.timeSettings?.kind === 'crop')
+    owner &&
+    (owner.kind === 'segment' ||
+      owner.timeSettings?.kind === 'crop' ||
+      // Signals within segments come with their siblings, to compare runs.
+      (!!owner.within && owner.kind === 'derive'))
       ? owner.outputIds
       : targetOutputs(index, target);
   return ids.filter((id) => index.nodes.has(id) || index.values.has(id));

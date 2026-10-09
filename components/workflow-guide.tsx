@@ -131,12 +131,13 @@ export function WorkflowGuide({
               <li>
                 <strong>Process it.</strong> Select a signal in History, then
                 choose <em>Derive</em> to calculate a new signal or{' '}
-                <em>Segment</em> to cut it into runs or windows. Each dialog
-                shows a live preview before you create anything.
+                <em>Segment</em> to find runs or windows in the recording. Each
+                dialog shows a live preview before you create anything.
               </li>
               <li>
                 <strong>Measure.</strong> Choose <em>Value</em> for a minimum,
-                maximum or average of each input. Select any result to see its
+                maximum or average of each input, over the entire signal or{' '}
+                <em>Within</em> each segment. Select any result to see its
                 lineage in Details.
               </li>
               <li>
@@ -168,10 +169,18 @@ export function WorkflowGuide({
                 its settings, inputs and outputs. Steps are numbered oldest
                 first and coloured by kind.
               </dd>
-              <dt>Derived signals and segments</dt>
+              <dt>Derived signals</dt>
               <dd>
-                Derive and Segment create new signals. A segment is an ordinary
-                signal, so it can be derived, segmented again or measured.
+                Derive creates new signals from others. A derived signal can be
+                derived again, segmented or measured.
+              </dd>
+              <dt>Segments and Within</dt>
+              <dd>
+                A segment is a time interval of the whole recording, such as one
+                run, found by ranges, windows or a signal&apos;s triggers. It is
+                not a signal: Derive, Value and Segment choose <em>Within</em>{' '}
+                the entire signal, one segment or all segments of a step. Within
+                segments, filters start fresh at each segment&apos;s start.
               </dd>
               <dt>Values</dt>
               <dd>

@@ -18,7 +18,12 @@ const html = (text: string | number) =>
       ]!,
   );
 
-export type ExportKind = 'values' | 'samples' | 'summary' | 'report';
+export type ExportKind =
+  | 'values'
+  | 'samples'
+  | 'summary'
+  | 'report'
+  | 'segments';
 
 /**
  * A download name that says what the file holds: recording, scope and kind,
@@ -47,6 +52,7 @@ export function exportFileName(
     samples: 'samples.csv',
     summary: 'signal summary.csv',
     report: 'summary.html',
+    segments: 'segments.csv',
   }[kind];
   const name = [recording, scope]
     .filter(Boolean)
@@ -61,7 +67,7 @@ export function exportFileName(
 export function valuesCsv(project: Project, ids: string[]) {
   const index = new WorkflowIndex(project);
   const lines = [
-    'Value,Unit,Calculation,Result,Input,Input ID,Step,Valid samples,Valid duration (s),Occurrence (s)',
+    'Value,Unit,Calculation,Result,Input,Input ID,Step,Valid samples,Valid duration (s),Occurrence (s),Segment,Segment start (s),Segment end (s)',
   ];
   for (const id of ids) {
     const value = index.values.get(id);
@@ -80,6 +86,54 @@ export function valuesCsv(project: Project, ids: string[]) {
         value.sampleCount,
         value.validDuration,
         numeric(value.timestamp),
+        ...segmentCells(index, value.segmentId),
+      ].join(','),
+    );
+  }
+  return lines.join('\r\n');
+}
+
+/** A value's segment, or blanks for an entire signal. */
+function segmentCells(index: WorkflowIndex, id?: string): string[] {
+  const segment = id ? index.segments.get(id)?.segment : undefined;
+  return segment
+    ? [
+        csvText(index.segmentLabel(segment.id)),
+        numeric(segment.start),
+        numeric(segment.end),
+      ]
+    : ['', '', ''];
+}
+
+/** One row per file segment: its interval, parent and step. */
+export function segmentsCsv(project: Project, ids: string[]) {
+  const index = new WorkflowIndex(project);
+  const lines = [
+    'Segment,Start (s),End (s),Duration (s),End included,Parent segment,Recording,Step,Segment ID',
+  ];
+  for (const id of ids) {
+    const entry = index.segments.get(id);
+    if (!entry) throw new Error('Choose only segments for Segments CSV.');
+    const { segment, set } = entry;
+    const owner = index.owner.get(id);
+    lines.push(
+      [
+        csvText(index.segmentLabel(id)),
+        numeric(segment.start),
+        numeric(segment.end),
+        numeric(segment.end - segment.start),
+        segment.endInclusive ? 'yes' : 'no',
+        csvText(segment.parentId ? index.segmentLabel(segment.parentId) : ''),
+        csvText(
+          project.sources.find((source) => source.id === set.sourceId)?.name ??
+            'Workspace',
+        ),
+        csvText(
+          owner
+            ? `#${String(owner.sequence + 1).padStart(3, '0')} ${stepName(owner)}`
+            : '',
+        ),
+        csvText(id),
       ].join(','),
     );
   }

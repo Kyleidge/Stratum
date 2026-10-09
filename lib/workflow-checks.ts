@@ -24,6 +24,8 @@ export type CheckOutput = {
   /** Scalar outputs carry their value; signals carry statistics. */
   value?: number | null;
   statistics?: OutputStatistics;
+  /** File segments carry their interval, in seconds. */
+  interval?: { start: number; end: number };
 };
 
 export const formatNumber = (value: number) =>
@@ -90,10 +92,14 @@ export function evaluateChecks(
       });
     if (check.kind === 'count') {
       const ok = within(check, outputs.length);
+      const noun =
+        outputs.length && outputs.every((output) => output.interval)
+          ? 'segment'
+          : 'output';
       result(
         ok ? 'pass' : failed,
         outputs.length,
-        `${outputs.length} ${outputs.length === 1 ? 'output' : 'outputs'}${ok ? '' : `; expected ${describeLimits(check)}`}.`,
+        `${outputs.length} ${noun}${outputs.length === 1 ? '' : 's'}${ok ? '' : `; expected ${describeLimits(check)}`}.`,
       );
       continue;
     }
@@ -106,6 +112,26 @@ export function evaluateChecks(
         continue;
       }
       const name = output.label;
+      if (output.interval) {
+        if (check.kind !== 'duration') {
+          result(
+            failed,
+            null,
+            `${name} is a segment; ${CHECK_NAMES[check.kind].toLowerCase()} checks apply to signals.`,
+            output.id,
+          );
+          continue;
+        }
+        const duration = output.interval.end - output.interval.start;
+        const ok = within(check, duration);
+        result(
+          ok ? 'pass' : failed,
+          duration,
+          `${name} lasts ${formatNumber(duration)} s${ok ? '' : `; expected ${describeLimits(check)}`}.`,
+          output.id,
+        );
+        continue;
+      }
       if (check.kind === 'limits') {
         if (check.unit !== undefined && check.unit !== output.unit) {
           result(
@@ -304,10 +330,21 @@ export function runProblems(
   return problems.sort((a, b) => RANK[b.status] - RANK[a.status]);
 }
 
+/** What a step's outputs are, for the checks it can take. */
+export function checkTarget(
+  step: Pick<WorkflowStep, 'kind' | 'segmentSetId'>,
+): 'signals' | 'values' | 'segments' {
+  return step.segmentSetId
+    ? 'segments'
+    : step.kind === 'value'
+      ? 'values'
+      : 'signals';
+}
+
 /** Validates checks from the inspector or a restored backup. */
 export function validateChecks(
   checks: unknown,
-  outputs: 'signals' | 'values',
+  outputs: 'signals' | 'values' | 'segments',
 ): CheckDefinition[] {
   if (!Array.isArray(checks) || checks.length > 50)
     throw new Error('A step can have at most 50 checks.');
@@ -363,6 +400,11 @@ export function validateChecks(
       (check.kind === 'missing' || check.kind === 'duration')
     )
       throw new Error('Values support count and limits checks.');
+    if (
+      outputs === 'segments' &&
+      (check.kind === 'missing' || check.kind === 'limits')
+    )
+      throw new Error('Segments support count and duration checks.');
     const result: CheckDefinition = {
       kind: check.kind!,
       severity: check.severity!,
@@ -392,7 +434,7 @@ export function validateWorkflowRecords(
     )
       throw new Error('Invalid workflow run reference.');
     if (step.checks !== undefined)
-      validateChecks(step.checks, step.kind === 'value' ? 'values' : 'signals');
+      validateChecks(step.checks, checkTarget(step));
     if (step.checkResults !== undefined) {
       const results = step.checkResults;
       if (

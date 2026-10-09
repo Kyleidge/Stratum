@@ -202,7 +202,7 @@ export async function timeRangeUiSmoke(
   await delay();
   assert(
     [...modal.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.trim() === 'Create signal segments',
+      (button) => button.textContent?.trim() === 'Create segments',
     )?.disabled,
     'Zero-length ranges must be rejected before creation.',
   );

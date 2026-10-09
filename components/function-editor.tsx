@@ -40,8 +40,10 @@ import type {
   Operation,
   Plot,
   Project,
+  SegmentScope,
   SignalNode,
 } from '@/lib/signal-types';
+import WithinControl, { withinOptions } from './within-control';
 import ValueOperationPalette from './value-operation-palette';
 import { gridKey } from '@/lib/sample-grid';
 import { conversionTargets } from '@/lib/units';
@@ -92,6 +94,8 @@ export type FunctionDraft = {
   /** A formula's output unit or a conversion's target unit. */
   unit?: string;
   formula?: FormulaSettings;
+  /** The segments the step works within; absent for entire signals. */
+  within?: SegmentScope;
 };
 /** Settings beyond the single parameter: formulas and conversions. */
 type DeriveExtra = { unit?: string; formula?: FormulaSettings };
@@ -156,6 +160,7 @@ export default function FunctionEditor({
     valueParameters?: ValueParameters,
     bindings?: ParameterBindings,
     extra?: DeriveExtra,
+    within?: SegmentScope,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -175,6 +180,9 @@ export default function FunctionEditor({
     ),
   );
   const [secondaryId, setSecondaryId] = useState(editor.secondaryId ?? '');
+  const [within, setWithin] = useState(editor.within);
+  // Within segments, the value preview can focus any input and segment pair.
+  const [previewSegment, setPreviewSegment] = useState<string>();
   const [previewId, setPreviewId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
   // An untouched threshold follows the previewed input's range midpoint.
@@ -207,6 +215,13 @@ export default function FunctionEditor({
     : (SIGNAL_FUNCTIONS.find((spec) => spec.operation === operation) ??
       FUNCTIONS.find((spec) => spec.operation === operation));
   const binary = isBinaryOperation(operation);
+  const scopes = withinOptions(index, editor.ids, before);
+  const scopeSegments = within
+    ? (within.segmentIds?.length ??
+      scopes.find((option) => option.set.id === within.setId)?.set.segments
+        .length ??
+      0)
+    : 1;
   const sourceId = index.nodes.get(editor.ids[0])?.sourceId;
   const inputGrids = new Set(editor.ids.map((id) => gridKey(index.nodes, id)));
   const secondInputs = project.nodes.filter(
@@ -308,6 +323,7 @@ export default function FunctionEditor({
           ...(settings.bindings ? { bindings: settings.bindings } : {}),
         }
       : undefined,
+    within,
   );
   const bindable = !values && !!BINDABLE_DERIVE[operation as Operation];
   const deriveBound = bindable
@@ -375,6 +391,7 @@ export default function FunctionEditor({
     secondaryId: binary ? secondaryId : undefined,
     ready,
     viewport,
+    within,
   });
   const waiting = extraProblem
     ? extraProblem
@@ -394,22 +411,30 @@ export default function FunctionEditor({
   const blockedError = values
     ? !settings.waiting && !!statistics.error
     : !waiting && !!derived.error;
-  const count = editor.ids.length;
+  const inputCount = editor.ids.length;
+  // Within segments: one output per input in each segment (at most).
+  const count = inputCount * scopeSegments;
   const create = editor.editingStepId
     ? 'Save changes and recalculate'
     : values
-      ? `Create ${formatCount(count, 'value')}`
-      : `Create ${formatCount(count, 'derived signal')}`;
-  const focused = statistics.get(previewId);
+      ? `Create ${within ? 'up to ' : ''}${formatCount(count, 'value')}`
+      : `Create ${within ? 'up to ' : ''}${formatCount(count, 'derived signal')}`;
+  const focused =
+    (within &&
+      statistics.items.find(
+        (item) =>
+          item.inputId === previewId && item.segmentId === previewSegment,
+      )) ||
+    statistics.get(previewId);
   const summary = values
     ? `${formatCount(count, 'value')}${
         focused && valueSpec
-          ? ` · ${count > 1 ? `${index.label(previewId)}: ` : ''}${valueText(focused, valueSpec.operation, previewNode?.unit)}`
+          ? ` · ${count > 1 ? `${focused.segmentId ? `${index.segmentLabel(focused.segmentId)} · ` : ''}${index.label(previewId)}: ` : ''}${valueText(focused, valueSpec.operation, previewNode?.unit)}`
           : ''
       }`
     : `${formatCount(count, 'derived signal')}${
         derived.summary?.count
-          ? ` · ${formatQuantity(derived.summary.min, 4)} to ${formatQuantity(derived.summary.max, 4)}${derived.unit ? ` ${derived.unit}` : ''}${viewport ? ' in view' : ''}${count > 1 ? ` (preview of ${index.label(previewId)})` : ''}`
+          ? ` · ${formatQuantity(derived.summary.min, 4)} to ${formatQuantity(derived.summary.max, 4)}${derived.unit ? ` ${derived.unit}` : ''}${viewport ? ' in view' : ''}${count > 1 ? ` (preview of ${derived.shown?.node.segmentId ? `${index.segmentLabel(derived.shown.node.segmentId)} · ` : ''}${index.label(previewId)})` : ''}`
           : ''
       }`;
   return (
@@ -445,6 +470,7 @@ export default function FunctionEditor({
                 <div className="signal-settings-heading">
                   <strong>{valueSpec?.name}</strong>
                   <span className="value-output-count">
+                    {within ? 'up to ' : ''}
                     {formatCount(count, 'value')}
                   </span>
                 </div>
@@ -458,9 +484,26 @@ export default function FunctionEditor({
                       : 'Selected inputs must be fuel flow [kg/h]. Choose one power [kW] signal on the same sample grid.'
                     : spec?.description}
               </p>
+              <WithinControl
+                index={index}
+                options={scopes}
+                value={within}
+                onChange={(next) => {
+                  setWithin(next);
+                  setZoom(undefined);
+                }}
+                disabled={busy}
+                hint={
+                  !within
+                    ? undefined
+                    : values
+                      ? 'One value per input in each segment, from the signal as it is there.'
+                      : 'One signal per input in each segment. Filters, integrals and other running calculations start fresh at each segment’s start.'
+                }
+              />
               {values && (
                 <p className="value-output-hint">
-                  One result per input,{' '}
+                  One result per input{within ? ' in each segment' : ''},{' '}
                   {valueSpec?.result === 'level'
                     ? 'in its original unit'
                     : valueSpec?.result === 'area'
@@ -491,9 +534,9 @@ export default function FunctionEditor({
                 <div className="signal-first-input">
                   <span>Input A</span>
                   <strong>
-                    {count === 1
+                    {inputCount === 1
                       ? index.label(editor.ids[0])
-                      : `Each of ${formatCount(count, 'input')}`}
+                      : `Each of ${formatCount(inputCount, 'input')}`}
                   </strong>
                 </div>
               )}
@@ -650,14 +693,19 @@ export default function FunctionEditor({
                 previewId={previewId}
                 plot={plot}
                 plotError={plotError}
-                onPreview={setPreviewId}
+                onPreview={(id, segmentId) => {
+                  setPreviewId(id);
+                  setPreviewSegment(segmentId);
+                }}
+                focused={focused}
+                within={!!within}
               />
             ) : (
               <DerivedPreview
                 index={index}
                 inputId={previewId}
                 choices={choices}
-                total={count}
+                total={inputCount}
                 onInput={setPreviewId}
                 preview={derived}
                 viewport={viewport}
@@ -706,6 +754,7 @@ export default function FunctionEditor({
                     : undefined,
                   values ? settings.bindings : deriveBindings,
                   values ? undefined : extra,
+                  within,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
@@ -797,6 +846,7 @@ function useDerivePreview({
   secondaryId,
   ready,
   viewport,
+  within,
 }: {
   request: Request;
   inputId: string;
@@ -807,6 +857,7 @@ function useDerivePreview({
   secondaryId?: string;
   ready: boolean;
   viewport?: Range;
+  within?: SegmentScope;
 }) {
   const [result, setResult] = useState<{
     key: string;
@@ -823,21 +874,31 @@ function useDerivePreview({
         viewport,
         bindings,
         extra,
+        within,
       ])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const [id, operation, parameter, secondaryId, range, bindings, extra] =
-      JSON.parse(key) as [
-        string,
-        Operation,
-        number,
-        string | undefined,
-        Range | undefined,
-        ParameterBindings | undefined,
-        DeriveExtra | undefined,
-      ];
+    const [
+      id,
+      operation,
+      parameter,
+      secondaryId,
+      range,
+      bindings,
+      extra,
+      within,
+    ] = JSON.parse(key) as [
+      string,
+      Operation,
+      number,
+      string | undefined,
+      Range | undefined,
+      ParameterBindings | undefined,
+      DeriveExtra | undefined,
+      SegmentScope | undefined,
+    ];
     // Debounced so slider drags send one request per pause, not per pixel.
     const timer = setTimeout(() => {
       void request({
@@ -849,6 +910,7 @@ function useDerivePreview({
         ...extra,
         secondaryId,
         range,
+        ...(within ? { within } : {}),
         inspection: true,
       })
         .then((response) => {
@@ -1132,6 +1194,7 @@ function useValueStatistics(
   ids: string[],
   request: Request,
   calculation?: ValueCalculation,
+  within?: SegmentScope,
 ) {
   const [statistics, setStatistics] = useState<{
     key: string;
@@ -1139,14 +1202,19 @@ function useValueStatistics(
     error?: string;
   }>();
   const key = ids.length
-    ? JSON.stringify([ids.slice(0, VALUE_PREVIEW_LIMIT), calculation ?? null])
+    ? JSON.stringify([
+        ids.slice(0, VALUE_PREVIEW_LIMIT),
+        calculation ?? null,
+        within ?? null,
+      ])
     : '';
   useEffect(() => {
     if (!key) return;
     let alive = true;
-    const [ids, calculation] = JSON.parse(key) as [
+    const [ids, calculation, within] = JSON.parse(key) as [
       string[],
       ValueCalculation | null,
+      SegmentScope | null,
     ];
     const timer = setTimeout(
       () => {
@@ -1154,6 +1222,7 @@ function useValueStatistics(
           type: 'value-preview',
           ids,
           ...calculation,
+          ...(within ? { within } : {}),
           inspection: true,
         })
           .then((response) => {
@@ -1168,17 +1237,20 @@ function useValueStatistics(
               });
           });
       },
-      calculation ? 200 : 0,
+      calculation || within ? 200 : 0,
     );
     return () => {
       alive = false;
       clearTimeout(timer);
     };
   }, [key, request]);
+  // Within segments, an input's first segment is its focused result.
   const map = new Map<string, ValueStatistics>();
-  if (statistics?.key === key)
-    for (const item of statistics.items ?? []) map.set(item.inputId, item);
+  const items = statistics?.key === key ? (statistics.items ?? []) : [];
+  for (const item of items)
+    if (!map.has(item.inputId)) map.set(item.inputId, item);
   return Object.assign(map, {
+    items,
     error: statistics?.key === key ? statistics.error : undefined,
     loading: statistics?.key !== key,
   });
@@ -1218,6 +1290,8 @@ function ValuePreview({
   plot,
   plotError,
   onPreview,
+  focused,
+  within,
 }: {
   ids: string[];
   index: WorkflowIndex;
@@ -1227,10 +1301,13 @@ function ValuePreview({
   previewId: string;
   plot?: Plot;
   plotError?: string;
-  onPreview: (id: string) => void;
+  onPreview: (id: string, segmentId?: string) => void;
+  /** The statistics shown on the plot (an input in one segment). */
+  focused?: ValueStatistics;
+  /** Rows are input and segment pairs; the plot shows the focused segment. */
+  within?: boolean;
 }) {
   const node = index.nodes.get(previewId);
-  const focused = statistics.get(previewId);
   const value = focused ? statisticValue(focused, operation) : null;
   const time = focused ? statisticTime(focused, operation) : undefined;
   const spec = findValueSpec(operation);
@@ -1295,9 +1372,12 @@ function ValuePreview({
       });
     }
   }
-  const range: Range | undefined = plot
-    ? [plot.summary.start, plot.summary.end]
-    : undefined;
+  const range: Range | undefined =
+    within && focused?.start !== undefined && focused.end !== undefined
+      ? [focused.start, focused.end]
+      : plot
+        ? [plot.summary.start, plot.summary.end]
+        : undefined;
   const event =
     time === undefined
       ? ''
@@ -1315,6 +1395,9 @@ function ValuePreview({
           <Eye size={14} /> Preview
         </strong>
         <span className="operation-preview-subject">
+          {focused?.segmentId
+            ? `${index.segmentLabel(focused.segmentId)} · `
+            : ''}
           {index.label(previewId)}
         </span>
         {statistics.loading && <PreviewBusy />}
@@ -1350,28 +1433,55 @@ function ValuePreview({
             </tr>
           </thead>
           <tbody>
-            {ids.slice(0, VALUE_PREVIEW_LIMIT).map((id) => {
-              const item = statistics.get(id);
-              return (
-                <tr key={id} data-selected={id === previewId || undefined}>
+            {within &&
+              statistics.items.slice(0, VALUE_PREVIEW_LIMIT).map((item) => (
+                <tr
+                  key={`${item.inputId}:${item.segmentId}`}
+                  data-selected={item === focused || undefined}
+                >
                   <td>
                     <button
                       type="button"
                       className="value-preview-row"
-                      aria-pressed={id === previewId}
-                      onClick={() => onPreview(id)}
+                      aria-pressed={item === focused}
+                      onClick={() => onPreview(item.inputId, item.segmentId)}
                     >
-                      {index.label(id)}
+                      {index.segmentLabel(item.segmentId ?? '')} ·{' '}
+                      {index.label(item.inputId)}
                     </button>
                   </td>
                   <td>
-                    {item
-                      ? valueText(item, operation, index.nodes.get(id)?.unit)
-                      : '…'}
+                    {valueText(
+                      item,
+                      operation,
+                      index.nodes.get(item.inputId)?.unit,
+                    )}
                   </td>
                 </tr>
-              );
-            })}
+              ))}
+            {!within &&
+              ids.slice(0, VALUE_PREVIEW_LIMIT).map((id) => {
+                const item = statistics.get(id);
+                return (
+                  <tr key={id} data-selected={id === previewId || undefined}>
+                    <td>
+                      <button
+                        type="button"
+                        className="value-preview-row"
+                        aria-pressed={id === previewId}
+                        onClick={() => onPreview(id)}
+                      >
+                        {index.label(id)}
+                      </button>
+                    </td>
+                    <td>
+                      {item
+                        ? valueText(item, operation, index.nodes.get(id)?.unit)
+                        : '…'}
+                    </td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
         {ids.length > VALUE_PREVIEW_LIMIT && (
@@ -1457,6 +1567,11 @@ function DerivedPreview({
         ) : (
           <span className="operation-preview-subject">
             {index.label(inputId)}
+          </span>
+        )}
+        {shown?.node.segmentId && (
+          <span className="operation-preview-subject">
+            within {index.segmentLabel(shown.node.segmentId)}
           </span>
         )}
         {preview.busy && <PreviewBusy />}

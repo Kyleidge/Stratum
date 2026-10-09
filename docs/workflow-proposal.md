@@ -6,22 +6,56 @@ Implemented on `codex/workflow-history`, starting from `e6264a5` on `main`.
 
 An original signal is immutable. A derived signal has its own identity, recipe,
 and exact input IDs. Either type can feed another derivation, segmentation, or
-value calculation. A segment is a derived signal containing a time interval of
-its input. It can be segmented again, at any depth. A value is a scalar result,
-with its unit, calculation, and input identity; it is an endpoint, not a signal.
+value calculation. A **segment** is a time interval of a whole recording (or of
+a workspace time axis), found by a Segment step from time ranges, windows or a
+signal's triggers. It is not a signal: later steps choose to work **Within**
+the entire signal, one segment, chosen segments, or every segment of a Segment
+step. A value is a scalar result, with its unit, calculation, and input
+identity; it is an endpoint, not a signal.
 
 ```mermaid
 flowchart LR
   A[Original signal] --> B[Derived signal]
-  B --> C[Segment operation]
-  C --> D[Segment 1 · derived signal]
-  C --> E[Segment 2 · derived signal]
-  D --> F[Filter · derived signal]
-  F --> G[Segment again · derived signals]
-  G --> H[Time average · values]
-  E --> I[Maximum · value]
-  A --> J[Minimum · value]
+  S[Segment step · triggers on speed] --> R1[Run 1]
+  S --> R2[Run 2]
+  A -. triggers .-> S
+  B --> V[Maximum · within all runs]
+  R1 -. within .-> V
+  R2 -. within .-> V
+  B --> F[Moving average · within Run 2]
+  R2 -. within .-> F
+  R2 --> N[Nested segment step · halves of Run 2]
 ```
+
+### Segments and Within
+
+- A Segment step stores a `SegmentSet` (`project.segmentSets`): its settings
+  and `FileSegment`s with recording-time `start`/`end`. A segment's end is
+  excluded unless it is the recording's (or its parent's inclusive) end, so
+  adjacent segments never share a sample. No signals are created.
+- **Value within segments** gives one value per input per segment, read from
+  the signal as it is there: a filter keeps its state from before the
+  segment. Values carry `segmentId`; their labels read "Maximum · Run 2 ·
+  Torque".
+- **Derive within segments** gives one signal per input per segment. Each
+  output reads hidden crops (`internal` crop nodes with `segmentId`) of every
+  signal input, so filters, integrals and other running calculations start
+  fresh at the segment's start. Hidden crops never appear in History; Details
+  and lineage name the cropped signal and the segment instead.
+- A signal made within a segment belongs to it: a later Value or Derive on it
+  stays in that segment, and a nested Segment step searches each parent
+  segment (its ranges and windows are seconds from the parent's start;
+  triggers use recording time).
+- Segments apply to signals of their own recording (workspace sets: signals
+  on their time reference). Selecting a segment plots the signals that found
+  it with every segment shaded and zooms to the selected one.
+- Edit keeps outputs by what they are, not by position: a segment by its
+  place within its parent, an output by its input and segment. Re-segmenting
+  may therefore change the segment count; steps within the segments follow,
+  and a later step that used every output of a rebuilt step uses all of its
+  new outputs. A step that used a removed output on its own blocks the edit.
+- Older workspaces keep their signal segments (crop outputs) and still open,
+  edit and replay. Workspace schema 2 and backup version 2 added segments.
 
 ## History is the primary navigation
 
@@ -126,13 +160,13 @@ For example:
      Torque                               Original signal
 #002 Moving average                       From #001 Torque
      Torque · Smoothed                    Derived signal
-#003 Segment signals                      From #002 Torque · Smoothed
-     Segment 01 · 12–51 s                  Derived signal
-     Segment 02 · 70–109 s                 Derived signal
-#004 Segment signals                      From #003 Segment 01
-     Segment 03 · 15–20 s                  Derived signal
-#005 Time average                         From #004 Segment 03
-     Torque · Time average                Value
+#003 Trigger segments                     From #001 Engine speed
+     Segment 01 · 12–51 s                  Segment
+     Segment 02 · 70–109 s                 Segment
+#004 Nested time range segments           Within #003 Segment 01
+     Segment 01.01 · 15–20 s               Segment
+#005 Time average                         From #002, within #004
+     Time average · Segment 01.01 · Torque · Smoothed   Value
 ```
 
 Branches are expressed by input links, not by moving later operations underneath
@@ -182,12 +216,15 @@ and honors the output search. New batch outputs are selected together
 so the next operation can continue across that batch.
 
 The three actions are **Derive signal**, **Segment**, and **Calculate value**.
-Their dialogs show the exact input list. Segmentation defaults to the selected
-signals, with manual ranges in recording time and an interval preview. Trigger
-crossings and fixed-duration windows remain available. Time-shifted and zeroed
-signals retain their own displayed axis; segmentation ranges use recording time
-and are translated into the target recipe. Each selected batch member is scanned
-independently, clipped to its own available interval.
+Derive and Value dialogs show the exact input list and a **Within** choice:
+the entire signal, all segments of a Segment step, or chosen segments; opened
+from a segment or Segment step, Within starts there. **Find segments** names
+the recording rather than signals: manual ranges in recording time with an
+interval preview (the checked signals are plotted), fixed-duration windows,
+and trigger crossings on any signal of the recording. Its Within choice nests
+the new segments inside earlier ones. Time-shifted and zeroed signals retain
+their own displayed axis; segments stay in recording time and are translated
+when a step reads a signal within them.
 
 **New version…** appends another step. It never changes the old
 recipe, output IDs, downstream signals, or stored scalar values.
