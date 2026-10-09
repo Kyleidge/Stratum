@@ -1,7 +1,7 @@
 import type { Plot, Project } from './signal-types';
 import { SignalGraph } from './signal-graph';
 import { stepName, WorkflowIndex } from './workflow-history';
-import { VALUE_FUNCTIONS } from './workflow-types';
+import { valueSpec } from './workflow-types';
 import { formatCount } from './format-count';
 
 /** Text cells stay text when opened in a spreadsheet, including imported names. */
@@ -173,9 +173,7 @@ export function reportHtml(
       const plot = plots.find((item) => item.id === id);
       let content: string;
       if (value) {
-        const spec = VALUE_FUNCTIONS.find(
-          (item) => item.operation === value.operation,
-        );
+        const spec = valueSpec(value.operation);
         content = `<p class="result">${html(finite(value.value))} <small>${html(value.unit)}</small></p>
         <p>${html(spec?.description ?? value.operation)}</p>
         <p>${value.sampleCount} finite samples · ${value.validDuration} s of valid intervals${value.timestamp === undefined ? '' : ` · at ${value.timestamp} s`}</p>`;

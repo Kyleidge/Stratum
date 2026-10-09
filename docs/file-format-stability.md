@@ -80,7 +80,10 @@ bump.
   segment step: `sweeps`, `sweeps[2]` or a list of positions. Segment steps
   may also take `reference` (a workspace time axis), and output labels may use
   `{segment}`. A segment step cannot be used as a signal input or report
-  binding, and takes only `count` and `duration` checks.
+  binding, and takes only `count` and `duration` checks. A `value` step with
+  `function: calculate` is a formula over earlier value steps (`expression`,
+  `unit`, `values`; `a` is each input value). It was added to version 2
+  before 1.0 shipped, so 1.0 reads it.
 - **Version 1**: a `segment` step crops its `input`/`inputs` into signals
   (`independently`, `scope`). Version 1 files keep this meaning and replay as
   before; `within` is refused in them. Stratum writes version 2, except that a

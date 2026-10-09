@@ -534,6 +534,19 @@
   margin: 0;
   padding: 5px 7px;
 }
+/* Calculate from values: input, the numbers it used, result. */
+.value-math-preview th:nth-child(2),
+.value-math-preview td:nth-child(2) {
+  width: 36%;
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.value-math-preview th:last-child,
+.value-math-preview td:last-child {
+  width: 26%;
+}
 @media (max-width: 900px) {
   .operation-layout {
     grid-template-columns: minmax(0, 1fr);

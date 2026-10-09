@@ -15,6 +15,7 @@ import { unitConversion } from './units';
 import { belowNyquist } from './signal-filters';
 import { valueParameters, valueSpec, type ScalarValue } from './workflow-types';
 import { isSegmentCrop, segmentEntries, visibleInput } from './file-segments';
+import { calculatedInput, VALUE_INPUT } from './value-math';
 import {
   BINDABLE_DERIVE,
   BINDABLE_TRIGGER,
@@ -25,6 +26,29 @@ import {
 
 /** A known calculation whose saved settings are exactly its valid settings. */
 function validValueSettings(value: ScalarValue): boolean {
+  if (value.operation === 'calculate') {
+    // Bindings and numbers are checked against the values they name below.
+    if (typeof value.expression !== 'string') return false;
+    try {
+      const names = compileFormula(value.expression, 'values').values;
+      const bound = value.bindings;
+      return (
+        !!bound &&
+        typeof bound === 'object' &&
+        Object.keys(bound).length === names.length &&
+        names.every((name) => Object.hasOwn(bound, name)) &&
+        (value.parameters === undefined ||
+          (!!value.parameters &&
+            typeof value.parameters === 'object' &&
+            Object.keys(value.parameters).every((name) =>
+              names.includes(name),
+            )))
+      );
+    } catch {
+      return false;
+    }
+  }
+  if (value.expression !== undefined) return false;
   const spec = valueSpec(value.operation);
   if (!spec) return false;
   if (!spec.parameters?.length) return value.parameters === undefined;
@@ -581,20 +605,62 @@ export function validateWorkspace(value: unknown): Project {
         node.id,
       ),
     );
+  // A calculation from values binds every variable (`a`, its input, too)
+  // and holds the number of each one that is available.
+  const calculationInputs = (value: ScalarValue): string[] =>
+    Object.entries(value.bindings ?? {}).map(([name, item]) => {
+      const bound = item as { valueId?: unknown; factor?: unknown };
+      const used = values.get(
+        typeof bound?.valueId === 'string' ? bound.valueId : '',
+      );
+      const number =
+        used && used.value !== null && typeof bound.factor === 'number'
+          ? bound.factor * used.value
+          : undefined;
+      if (
+        !used ||
+        used.id === value.id ||
+        typeof bound.factor !== 'number' ||
+        !Number.isFinite(bound.factor) ||
+        (name === VALUE_INPUT && bound.factor !== 1) ||
+        value.parameters?.[name] !==
+          (number !== undefined && Number.isFinite(number) ? number : undefined)
+      )
+        throw new Error('Invalid values used by a calculation.');
+      return used.id;
+    });
   for (const value of project.values ?? [])
-    usedValues.set(
-      value.id,
-      boundSettings(
-        value.bindings,
-        Object.fromEntries(
-          (valueSpec(value.operation)?.parameters ?? [])
-            .filter((name) => BINDABLE_VALUE[name])
-            .map((name) => [name, true]),
-        ),
-        value.parameters,
+    if (value.operation === 'calculate') {
+      const input = calculatedInput(value);
+      const source = values.get(input ?? '');
+      calculationInputs(value);
+      if (
+        !source ||
+        source.inputId !== value.inputId ||
+        source.segmentId !== value.segmentId ||
+        (value.sourceId !== '' && source.sourceId !== value.sourceId)
+      )
+        throw new Error('Invalid values used by a calculation.');
+      usedValues.set(
         value.id,
-      ),
-    );
+        Object.entries(value.bindings!).flatMap(([name, bound]) =>
+          name === VALUE_INPUT ? [] : [bound.valueId],
+        ),
+      );
+    } else
+      usedValues.set(
+        value.id,
+        boundSettings(
+          value.bindings,
+          Object.fromEntries(
+            (valueSpec(value.operation)?.parameters ?? [])
+              .filter((name) => BINDABLE_VALUE[name])
+              .map((name) => [name, true]),
+          ),
+          value.parameters,
+          value.id,
+        ),
+      );
   const fileSets = new Map(
     (project.segmentSets ?? []).map((set) => [set.id, set]),
   );
@@ -654,11 +720,17 @@ export function validateWorkspace(value: unknown): Project {
       step.sequence < 0 ||
       sequences.has(step.sequence) ||
       step.outputIds.some((id) => !outputs.has(id)) ||
-      step.inputIds.some(
-        (id) =>
-          !nodes.has(id) ||
-          (step.sourceId !== '' && nodes.get(id)?.sourceId !== step.sourceId),
-      ) ||
+      step.inputIds.some((id) => {
+        // A calculation from values takes values as its inputs.
+        const input =
+          step.operation === 'calculate' ? values.get(id) : nodes.get(id);
+        return (
+          !input || (step.sourceId !== '' && input.sourceId !== step.sourceId)
+        );
+      }) ||
+      (step.operation === 'calculate'
+        ? step.kind !== 'value' || typeof step.expression !== 'string'
+        : step.expression !== undefined) ||
       (step.parameters !== undefined &&
         (!step.parameters ||
           typeof step.parameters !== 'object' ||
@@ -716,7 +788,9 @@ export function validateWorkspace(value: unknown): Project {
         throw new Error('Invalid output recording.');
       if (
         step.kind === 'value'
-          ? !value || value.operation !== step.operation
+          ? !value ||
+            value.operation !== step.operation ||
+            value.expression !== step.expression
           : !node ||
             (step.kind === 'import'
               ? node.operation !== 'raw'
@@ -727,9 +801,10 @@ export function validateWorkspace(value: unknown): Project {
                   ['raw', 'crop'].includes(node.operation))
       )
         throw new Error('Operation kind does not match its outputs.');
-      (node?.parents ?? (value ? [value.inputId] : [])).forEach((id) =>
-        dependencies.add(visibleInput(nodes, id)),
-      );
+      (
+        node?.parents ??
+        (value ? [calculatedInput(value) ?? value.inputId] : [])
+      ).forEach((id) => dependencies.add(visibleInput(nodes, id)));
     }
     if (step.kind === 'regions') {
       const set = regionSets.get(step.regionSetId ?? '');

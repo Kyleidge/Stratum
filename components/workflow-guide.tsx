@@ -137,8 +137,10 @@ export function WorkflowGuide({
               <li>
                 <strong>Measure.</strong> Choose <em>Value</em> for a minimum,
                 maximum or average of each input, over the entire signal or{' '}
-                <em>Within</em> each segment. Select any result to see its
-                lineage in Details.
+                <em>Within</em> each segment. With values selected,{' '}
+                <em>Value</em> calculates from them with a formula, such as a
+                speed from a duration. Select any result to see its lineage in
+                Details.
               </li>
               <li>
                 <strong>Share it.</strong> <em>Export data…</em> downloads
@@ -185,7 +187,10 @@ export function WorkflowGuide({
               <dt>Values</dt>
               <dd>
                 One number per input signal. A time average weights by elapsed
-                time; a sample average weights each sample equally.
+                time; a sample average weights each sample equally. Values can
+                be calculated from other values with a formula: <em>a</em> is
+                each input value, and other names take values matched to it by
+                segment.
               </dd>
               <dt>Apply to</dt>
               <dd>

@@ -7,6 +7,7 @@ import { savedBindings } from './value-bindings';
 import { compileFormula } from './formula';
 import { isSegmentCrop, visibleInput } from './file-segments';
 import { isBinaryOperation } from './signal-arithmetic';
+import { calculatedInput, VALUE_INPUT } from './value-math';
 
 const withBindings = (
   bindings: import('./workflow-types').ParameterBindings | undefined,
@@ -267,6 +268,25 @@ export function savedCommand(
     };
   }
   const within = step.within ? { within: structuredClone(step.within) } : {};
+  if (step.kind === 'value' && step.operation === 'calculate') {
+    const outputs = step.outputIds.flatMap(
+      (id) => project.values?.find((value) => value.id === id) ?? [],
+    );
+    // `a` is each input value; the other variables are bindings.
+    const others = Object.fromEntries(
+      Object.entries(savedBindings(outputs) ?? {}).filter(
+        ([name]) => name !== VALUE_INPUT,
+      ),
+    );
+    return {
+      type: 'calculate-values',
+      inputIds: step.inputIds,
+      operation: 'calculate',
+      expression: step.expression ?? outputs[0]?.expression ?? '',
+      unit: outputs[0]?.unit ?? '',
+      ...withBindings(Object.keys(others).length ? others : undefined),
+    };
+  }
   if (step.kind === 'value')
     return {
       ...within,
@@ -429,7 +449,7 @@ export function segmentOutputKeys(
     const value = values.get(id);
     const input = node
       ? visibleInput(nodes, node.parents[0])
-      : (value?.inputId ?? id);
+      : ((value && calculatedInput(value)) ?? value?.inputId ?? id);
     return `${input}\n${(node ?? value)?.segmentId ?? ''}`;
   });
   // Other steps match by position.

@@ -211,8 +211,8 @@ within (for nested segments, their parent segment); on a segment step,
 Value functions are `time-average`, `sample-average`, `minimum`, `maximum`,
 `start-value`, `end-value`, `value-at`, `rms`, `standard-deviation`,
 `peak-to-peak`, `area`, `duration`, `time-of-minimum`, `time-of-maximum`,
-`time-above`, `time-below`, `first-crossing` and `crossing-count`. Some take
-settings, and any other setting is rejected:
+`time-above`, `time-below`, `first-crossing`, `crossing-count` and
+`calculate` (below). Some take settings, and any other setting is rejected:
 
 - `value-at`: `time`, seconds from the input's start (default 0).
 - `time-above`, `time-below`: `threshold`, in the input's unit (required).
@@ -226,6 +226,30 @@ meaning as in the Segment dialog's **Ignore chatter** section.
 ```yaml
 - id: spin-up
   value: { function: first-crossing, input: speed, threshold: 850 }
+```
+
+`calculate` is a formula over values rather than a statistic of a signal. Its
+`input` or `inputs` are earlier value steps; `a` in the `expression` is each
+input value, and any other lowercase name is listed under `values` (a value
+step, matched to each input by segment and lineage, as in the app). Numbers,
+`+ - * / % ^`, comparisons and the formula functions are allowed; capital
+letters (signals) are not. `unit` is free text and is never inferred. Each
+result keeps its input value's segment, so `calculate` takes no `within`. A
+value that is unavailable, or a result that is not finite, is stored as
+unavailable.
+
+```yaml
+- id: run-time
+  value: { function: duration, input: speed, within: runs }
+- id: run-distance
+  value: { function: area, input: speed, within: runs }
+- id: mean-speed
+  value:
+    function: calculate
+    input: run-time
+    expression: d / a / 60
+    unit: rev/s
+    values: { d: run-distance } # Matched to each run
 ```
 
 Formulas and conversions are derive functions with their own settings:
