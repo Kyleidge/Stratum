@@ -646,9 +646,62 @@ export async function workflowUiSmoke() {
       'input[aria-label="Search workflow"]',
     )!;
     setValue(search, name);
-    (await until(() => outputRow(name), `output ${name}`)).click();
+    // Outputs within segments have no History row: their step's one row
+    // matches, and the Outputs table selects the output.
+    const found = await until(
+      () =>
+        outputRow(name) ??
+        (document.querySelectorAll('.workflow-tree-row').length === 1 &&
+          document.querySelector<HTMLElement>(
+            '.workflow-tree-row[data-kind="step"]',
+          )) ??
+        undefined,
+      `output ${name}`,
+    );
+    found.click();
     await delay();
     setValue(search, '');
+    await delay();
+    if (found.getAttribute('data-kind') === 'step') {
+      await outputsTab();
+      (
+        await until(
+          () =>
+            [
+              ...document.querySelectorAll<HTMLButtonElement>(
+                '.workflow-output-name',
+              ),
+            ].find((item) => item.title === name),
+          `output ${name} in its step`,
+        )
+      ).click();
+      await delay();
+    }
+  }
+  /** The viewed member's row in the Outputs table (members within segments
+   * have no History row). */
+  async function memberRow() {
+    const find = () =>
+      document.querySelector<HTMLElement>(
+        '.workflow-output-table tr[data-state="selected"]',
+      ) ?? undefined;
+    // A saved plot tab hides the dock; Active shows it again.
+    if (!find())
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')]
+        .find((tab) => tab.textContent?.trim() === 'Active')
+        ?.click();
+    return until(find, 'the viewed member in the Outputs table');
+  }
+  /** Checks only the viewed member, through the Outputs table. */
+  async function checkOnlyMember() {
+    const uncheck = [
+      ...document.querySelectorAll<HTMLButtonElement>('.workflow-link'),
+    ].find((item) => item.textContent?.trim() === 'Uncheck all');
+    if (uncheck && !uncheck.disabled) uncheck.click();
+    await delay();
+    (await memberRow())
+      .querySelector<HTMLElement>('[aria-label^="Check "]')!
+      .click();
     await delay();
   }
   function selectedHistoryRow() {
@@ -1842,7 +1895,8 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('2 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
-    await contextAction(selectedHistoryRow(), 'View samples');
+    // The member has no History row of its own; the toolbar inspects it.
+    await menuAction('View samples');
     const contextSamples = await dialog();
     await until(
       () => contextSamples.querySelectorAll('tbody tr').length > 0,
@@ -1868,7 +1922,11 @@ export async function workflowUiSmoke() {
         ?.getAttribute('data-checked') === 'false' &&
         document
           .querySelector('.workflow-input-scope')
-          ?.textContent?.includes(selectedHistoryRow().title),
+          ?.textContent?.includes(
+            (await memberRow())
+              .querySelector('.workflow-output-name')!
+              .getAttribute('title')!,
+          ),
       'Follow selection did not return to the viewed member.',
     );
     // Explicitly empty input scope disables creation rather than falling back silently.
@@ -1891,9 +1949,9 @@ export async function workflowUiSmoke() {
       button('Derive signal'),
       'Empty input scope cannot return to the current selection.',
     );
-    await contextAction(selectedHistoryRow(), 'Check only');
+    await checkOnlyMember();
     // A signal within a segment brings its siblings, to compare segments.
-    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await dragItem(await memberRow(), button('New plot')!);
     setValue(searchBox(), '');
     await until(
       () => document.querySelectorAll('.scratchpad-trace').length === 2,
@@ -1927,9 +1985,10 @@ export async function workflowUiSmoke() {
       ),
       'Segments did not share the zero origin.',
     );
+    await closePlot();
     // A processing tool receives this member, without adding its siblings.
     await dragItem(
-      selectedHistoryRow(),
+      await memberRow(),
       document.querySelector<HTMLElement>('[data-action="value"]')!,
     );
     const memberModal = await dialog();
@@ -1938,8 +1997,7 @@ export async function workflowUiSmoke() {
       'Segment drop kept stale checked siblings.',
     );
     await click('Close', memberModal);
-    await closePlot();
-    await contextAction(selectedHistoryRow(), 'Check only');
+    await checkOnlyMember();
     await exportFile();
     await click('Calculate value');
     await click('Create 1 value', await dialog());
@@ -2281,9 +2339,59 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('9–16 of 40'),
       'Stacked comparison pages cannot be reached.',
     );
-    // Full membership stays in the sidebar and preserves the current inspection.
+    // A step within segments is one History row; its members are chosen on
+    // the plot or in the Outputs table.
     const historyTree = document.querySelector<HTMLElement>('[role="tree"]')!;
-    // The derived step is the last; its 40 segments' step also has a link.
+    const derivedRow = selectedHistoryRow();
+    assert(
+      derivedRow.getAttribute('data-kind') === 'step' &&
+        derivedRow.querySelector('small')?.textContent === '40 signals' &&
+        !derivedRow.hasAttribute('aria-expanded'),
+      'A step within segments must be one History row.',
+    );
+    await closePlot();
+    await outputsTab();
+    await click('Calculate value');
+    const valueModal = await dialog();
+    // Values open on the last-used calculation; Level holds the averages
+    // and extremes as directly selectable cards.
+    await click('Level', valueModal);
+    await until(
+      () => valueModal.querySelectorAll('[role="radio"]').length === 7,
+      'seven Level value cards',
+    );
+    valueModal
+      .querySelector<HTMLElement>(
+        '[role="radio"][aria-label="Sample average"]',
+      )!
+      .click();
+    await delay();
+    assert(
+      valueModal
+        .querySelector('.signal-operation-settings')
+        ?.textContent?.includes('Each sample has equal weight'),
+      'Sample-average card did not update the explanation.',
+    );
+    valueModal
+      .querySelector<HTMLElement>('[role="radio"][aria-label="Maximum"]')!
+      .click();
+    await delay();
+    await click('Create 40 values', valueModal);
+    await settled();
+    // Values of signals that are each within one segment (no Within on the
+    // step) open as a list, which pages every member.
+    await until(
+      () =>
+        document.querySelectorAll('.workflow-output-name').length === 30 ||
+        undefined,
+      'value list',
+    );
+    assert(
+      !document.querySelector('.segment-value-table'),
+      'Only steps within segments open as a grid by segment.',
+    );
+    // Full membership of an ordinary large step stays in the sidebar and
+    // preserves the current inspection.
     const allOutputs = () =>
       [...historyTree.querySelectorAll<HTMLElement>('[data-kind="more"]')].at(
         -1,
@@ -2298,7 +2406,6 @@ export async function workflowUiSmoke() {
     const previousSelection = document.querySelector(
       '.workflow-status-selection',
     )?.textContent;
-    const previousPlot = plotTab()?.textContent;
     const previousInputs = document.querySelector(
       '.workflow-input-scope',
     )?.textContent;
@@ -2313,7 +2420,6 @@ export async function workflowUiSmoke() {
     assert(
       document.querySelector('.workflow-status-selection')?.textContent ===
         previousSelection &&
-        plotTab()?.textContent === previousPlot &&
         document.querySelector('.workflow-input-scope')?.textContent ===
           previousInputs,
       'Opening the output tree changed the inspection, plot or processing inputs.',
@@ -2358,47 +2464,12 @@ export async function workflowUiSmoke() {
       !button('Back to history') && document.activeElement === allOutputs(),
       'Escape must return keyboard focus to the history link.',
     );
-    await closePlot();
+    // Back to the whole values step, whose list pages every member.
+    [...historyTree.querySelectorAll<HTMLElement>('[data-kind="step"]')]
+      .at(-1)!
+      .click();
+    await delay();
     await outputsTab();
-    await click('Calculate value');
-    const valueModal = await dialog();
-    // Values open on the last-used calculation; Level holds the averages
-    // and extremes as directly selectable cards.
-    await click('Level', valueModal);
-    await until(
-      () => valueModal.querySelectorAll('[role="radio"]').length === 7,
-      'seven Level value cards',
-    );
-    valueModal
-      .querySelector<HTMLElement>(
-        '[role="radio"][aria-label="Sample average"]',
-      )!
-      .click();
-    await delay();
-    assert(
-      valueModal
-        .querySelector('.signal-operation-settings')
-        ?.textContent?.includes('Each sample has equal weight'),
-      'Sample-average card did not update the explanation.',
-    );
-    valueModal
-      .querySelector<HTMLElement>('[role="radio"][aria-label="Maximum"]')!
-      .click();
-    await delay();
-    await click('Create 40 values', valueModal);
-    await settled();
-    // Values of signals that are each within one segment (no Within on the
-    // step) open as a list, which pages every member.
-    await until(
-      () =>
-        document.querySelectorAll('.workflow-output-name').length === 30 ||
-        undefined,
-      'value list',
-    );
-    assert(
-      !document.querySelector('.segment-value-table'),
-      'Only steps within segments open as a grid by segment.',
-    );
     assert(
       document.querySelectorAll('.workflow-output-name').length === 30,
       'Value batch membership was lost.',

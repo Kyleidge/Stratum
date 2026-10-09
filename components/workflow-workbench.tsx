@@ -81,6 +81,7 @@ import type {
   SegmentationOperation,
   SegmentScope,
   SegmentSet,
+  FileSegment,
 } from '@/lib/signal-types';
 import { segmentationOperation } from '@/lib/segmentation-operation';
 import { segmentInterval, visibleInput } from '@/lib/file-segments';
@@ -116,6 +117,7 @@ import {
 import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
 import SegmentValueTable from './segment-value-table';
+import { MAX_ALIGNED } from './aligned-segments-plot';
 import OperationInputs, { editImpact, editTitle } from './operation-inputs';
 import { RegionSelect } from './region-controls';
 import WorkflowExport from './workflow-export';
@@ -1599,24 +1601,23 @@ export default function WorkflowWorkbench() {
   // Active plots the selection: a signal, a value over its input, or up to
   // ACTIVE_LIMIT outputs of an operation. Colours follow each output's position
   // in its operation, so a member keeps its colour alone or with siblings.
-  // Segment steps drawn aligned from each segment's start, by set ID.
-  const [alignedSets, setAlignedSets] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  // The Active segment chooser: all segments, aligned, or one segment.
-  function chooseSegments(set: SegmentSet, value: string) {
-    if (value !== 'all' && value !== 'aligned') {
+  // How Active shows a step's segments, by step ID: 'all', 'aligned' or,
+  // for steps within segments, one segment's ID.
+  const [segmentViews, setSegmentViews] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  // The Active segment chooser. A Segment step selects one segment; a step
+  // within segments stays selected and shows that segment's outputs.
+  function chooseSegments(stepId: string, value: string) {
+    const owner = index.steps.get(stepId);
+    if (!owner) return;
+    if (owner.segmentSetId && value !== 'all' && value !== 'aligned') {
       select({ kind: 'output', id: value });
       return;
     }
-    setAlignedSets((old) => {
-      const next = new Set(old);
-      if (value === 'aligned') next.add(set.id);
-      else next.delete(set.id);
-      return next;
-    });
-    const owner = index.owner.get(set.segments[0]?.id ?? '');
-    if (owner) select({ kind: 'step', id: owner.id });
+    setSegmentViews((old) => ({ ...old, [stepId]: value }));
+    if (selection.kind !== 'step' || selection.id !== stepId)
+      select({ kind: 'step', id: stepId });
   }
   const selectionKind = selection.kind,
     selectionId = selection.id,
@@ -1651,6 +1652,109 @@ export default function WorkflowWorkbench() {
         })),
       ];
     };
+    const segmentOptions = (segments: FileSegment[]) => [
+      {
+        value: 'all',
+        label: `All ${formatCount(segments.length, 'segment')}`,
+      },
+      { value: 'aligned', label: 'Aligned from start' },
+      ...segments.slice(0, 500).map((item) => ({
+        value: item.id,
+        label: `${index.segmentLabel(item.id)} · ${segmentInterval(item, 2)}`,
+      })),
+    ];
+    const segmentNames = (segments: FileSegment[]) =>
+      segments.map((item) => ({
+        id: item.id,
+        name: index.segmentLabel(item.id),
+      }));
+    // A derive step within segments: every segment's outputs, one segment's,
+    // or each input's outputs aligned from their segments' starts.
+    const withinPlot = (owner: WorkflowStep): ActivePlot | undefined => {
+      const outputs = owner.outputIds.flatMap((id) => {
+        const node = index.nodes.get(id);
+        return node?.segmentId ? [node] : [];
+      });
+      if (outputs.length < 2) return undefined;
+      const order = new Map(
+        [...index.segments.keys()].map((id, k) => [id, k] as const),
+      );
+      const segments = [...new Set(outputs.map((node) => node.segmentId!))]
+        .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+        .flatMap((id) => index.segments.get(id)?.segment ?? []);
+      const inputs = [
+        ...new Set(
+          outputs.map((node) => visibleInput(index.nodes, node.parents[0])),
+        ),
+      ];
+      const inputOf = (id: string) =>
+        visibleInput(index.nodes, index.nodes.get(id)!.parents[0]);
+      const view = segmentViews[owner.id] ?? 'all';
+      const chosen = segments.find((segment) => segment.id === view);
+      const choice = chosen ? chosen.id : view === 'aligned' ? view : 'all';
+      // One colour per input; segments are told apart by their bands.
+      const colorOfInput = (id: string) =>
+        TRACE_COLORS[Math.max(0, inputs.indexOf(id)) % TRACE_COLORS.length];
+      const members = outputs.filter(
+        (node) => !chosen || node.segmentId === chosen.id,
+      );
+      const shown = members.slice(0, MAX_ALIGNED);
+      const shift = (id: string) => graph.offsets.get(id) ?? 0;
+      const first = shown[0]?.id ?? outputs[0].id;
+      return {
+        key: `step:${owner.id}:${choice}`,
+        title: chosen
+          ? `${stepName(owner)} · ${index.segmentLabel(chosen.id)}`
+          : stepName(owner),
+        segments: {
+          value: choice,
+          options: segmentOptions(segments),
+          onChange: () => {},
+          ...(choice === 'aligned'
+            ? {
+                aligned: {
+                  segments: segmentNames(segments),
+                  groups: inputs.map((input) => ({
+                    id: input,
+                    traces: outputs
+                      .filter((node) => inputOf(node.id) === input)
+                      .map((node) => ({
+                        segmentId: node.segmentId!,
+                        signalId: node.id,
+                        start:
+                          graph.ranges.get(node.id)?.[0] ??
+                          index.segments.get(node.segmentId!)!.segment.start,
+                      })),
+                  })),
+                },
+              }
+            : {}),
+        },
+        traces: shown.map((node) => ({
+          id: node.id,
+          color: colorOfInput(inputOf(node.id)),
+        })),
+        bands: segments.map((segment) => ({
+          id: segment.id,
+          name: index.segmentLabel(segment.id),
+          start: segment.start + shift(first),
+          end: segment.end + shift(first),
+          selected: segment.id === chosen?.id,
+        })),
+        ...(chosen
+          ? {
+              focus: [
+                chosen.start + shift(first),
+                chosen.end + shift(first),
+              ] as [number, number],
+            }
+          : {}),
+        note:
+          members.length > shown.length
+            ? `Showing ${shown.length} of ${members.length} signals. Choose a segment, or Aligned from start, to see others.`
+            : undefined,
+      };
+    };
     // Segments are shown over the signals that found them, shaded.
     const segmentPlot = (set: SegmentSet, selected?: string): ActivePlot => {
       // Checked signals of the recording are drawn; otherwise the signals
@@ -1665,33 +1769,38 @@ export default function WorkflowWorkbench() {
       const offset = set.sourceId ? (graph.offsets.get(shown[0]) ?? 0) : 0;
       const segment = set.segments.find((item) => item.id === selected);
       const owner = index.owner.get(set.segments[0]?.id ?? '');
-      const aligned = !selected && alignedSets.has(set.id);
+      const aligned =
+        !selected && !!owner && segmentViews[owner.id] === 'aligned';
       const choice = selected ?? (aligned ? 'aligned' : 'all');
       return {
         key: aligned ? `${key}:aligned` : key,
         segments: {
           value: choice,
-          options: [
-            {
-              value: 'all',
-              label: `All ${formatCount(set.segments.length, 'segment')}`,
-            },
-            { value: 'aligned', label: 'Aligned from start' },
-            ...set.segments.slice(0, 500).map((item) => ({
-              value: item.id,
-              label: `${index.segmentLabel(item.id)} · ${segmentInterval(item, 2)}`,
-            })),
-          ],
+          options: segmentOptions(set.segments),
           // Set outside the memo, where it can select.
           onChange: () => {},
           ...(aligned
             ? {
-                aligned: set.segments.map((item) => ({
-                  id: item.id,
-                  name: index.segmentLabel(item.id),
-                  start: item.start,
-                  end: item.end,
-                })),
+                aligned: {
+                  segments: segmentNames(set.segments),
+                  groups: shown.map((id) => {
+                    const shift = set.sourceId
+                      ? (graph.offsets.get(id) ?? 0)
+                      : 0;
+                    return {
+                      id,
+                      traces: set.segments.map((item) => ({
+                        segmentId: item.id,
+                        signalId: id,
+                        window: [item.start + shift, item.end + shift] as [
+                          number,
+                          number,
+                        ],
+                        start: item.start + shift,
+                      })),
+                    };
+                  }),
+                },
               }
             : {}),
         },
@@ -1737,6 +1846,9 @@ export default function WorkflowWorkbench() {
       ? index.project.segmentSets?.find((set) => set.id === owner.segmentSetId)
       : undefined;
     if (ownSet) return segmentPlot(ownSet);
+    const within =
+      owner.kind === 'derive' && owner.within ? withinPlot(owner) : undefined;
+    if (within) return within;
     const values = owner.outputIds.filter((id) => index.values.has(id));
     const signals = owner.outputIds.filter((id) => index.nodes.has(id));
     const members = values.length ? values : signals;
@@ -1752,20 +1864,17 @@ export default function WorkflowWorkbench() {
           ? `Showing ${shown.length} of ${members.length} outputs. Create a plot from History to compare all of them.`
           : undefined,
     };
-  }, [selectionKind, selectionId, index, graph, alignedSets, checkedInputs]);
-  const chooserSet =
-    selectionKind === 'output'
-      ? index.segments.get(selectionId)?.set
-      : project.segmentSets?.find(
-          (set) => set.id === index.steps.get(selectionId)?.segmentSetId,
-        );
+  }, [selectionKind, selectionId, index, graph, segmentViews, checkedInputs]);
+  // The step whose segments the chooser shows.
+  const chooserStep =
+    selectionKind === 'output' ? index.owner.get(selectionId) : step;
   const activePlot: ActivePlot =
-    plainActivePlot.segments && chooserSet
+    plainActivePlot.segments && chooserStep
       ? {
           ...plainActivePlot,
           segments: {
             ...plainActivePlot.segments,
-            onChange: (value) => chooseSegments(chooserSet, value),
+            onChange: (value) => chooseSegments(chooserStep.id, value),
           },
         }
       : plainActivePlot;

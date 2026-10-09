@@ -108,12 +108,16 @@ There are no server API routes or cloud signal uploads.
   segment place within its parent, or input + segment), so the segment count
   may change; `followRebuiltBatches` lets later steps that used a whole
   rebuilt batch follow it. Old crop-segment steps (`segmentationId`) still
-  open, edit and replay. History shows a Segment step as one row, never its
-  segments (`workflowRows`); a selected segment highlights that row. Active
+  open, edit and replay. History shows a Segment step, and a step with
+  several outputs within segments, as one row (`oneRowStep` in
+  `lib/workflow-tree.ts`); a selected member highlights that row. Active
   shades segments over the checked signals of the recording, or the signals
   that found them (`ActivePlot.bands`/`focus`), and its `segments` chooser
   picks all segments, one (selecting and zooming to it) or "Aligned from
   start" (`components/aligned-segments-plot.tsx`, `view` with `windows`).
+  A derive step within segments gets the same chooser (`segmentViews`, by
+  step): all its outputs with bands, one segment's, or each input's outputs
+  aligned; values within segments use the dock's By segment table.
 - First run: `components/workflow-welcome.tsx` is the empty state and the
   post-import next-steps strip; `components/example-tour.tsx` only changes the
   selection and stores dismissal under `stratum-example-tour-v1`;

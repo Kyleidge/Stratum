@@ -13,6 +13,13 @@ export type WorkflowRow = {
 };
 
 /**
+ * Steps History shows as one row, never listing their outputs: Segment steps
+ * and steps with several outputs within segments. The plot chooses among them.
+ */
+export const oneRowStep = (step: WorkflowStep) =>
+  !!step.segmentSetId || (!!step.within && step.outputIds.length > 1);
+
+/**
  * Two levels with bounded previews, or every member of one focused operation.
  * A step with exactly one output is a single row that stands for both.
  */
@@ -54,9 +61,9 @@ export function workflowRows(
           )
         : candidates;
     if (search && !matchesStep && !outputs.length) continue;
-    // A Segment step is one row: its segments are chosen on the plot, not
-    // listed, however many there are.
-    if (step.segmentSetId) {
+    // A Segment step, or a step within segments, is one row: its outputs are
+    // chosen on the plot, not listed, however many there are.
+    if (oneRowStep(step)) {
       rows.push({ key: step.id, kind: 'step', step, label });
       continue;
     }

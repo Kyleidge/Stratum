@@ -3,26 +3,26 @@
 import { useEffect, useState } from 'react';
 import SignalChart from './signal-chart';
 import { seriesColor, TRACE_COLORS } from '@/lib/plot-scratchpad';
-import type { SignalGraph } from '@/lib/signal-graph';
 import type { WorkflowIndex } from '@/lib/workflow-history';
-import type {
-  EngineRequest,
-  EngineResponse,
-  Plot,
-} from '@/lib/signal-types';
+import type { EngineRequest, EngineResponse, Plot } from '@/lib/signal-types';
 
-/** Segments overlaid at once; the rest are named in a note. */
-const MAX_SEGMENTS = 100;
-/** Signals shown, one chart each. */
-const MAX_SIGNALS = 4;
+/** Traces overlaid per chart; the rest are named in a note. */
+export const MAX_ALIGNED = 100;
+/** Charts shown, one per signal. */
+const MAX_GROUPS = 4;
 
-export type AlignedWindow = {
-  id: string;
-  name: string;
-  /** Recording (or workspace) time of the segment. */
+/** One segment's trace: a window of a signal, or a signal within it. */
+export type AlignedTrace = {
+  /** The segment, which also keys the trace's colour. */
+  segmentId: string;
+  signalId: string;
+  /** Display-time window of `signalId` to draw; all of it when absent. */
+  window?: [number, number];
+  /** Display time drawn as t = 0. */
   start: number;
-  end: number;
 };
+/** One chart: a signal's traces in every segment. */
+export type AlignedGroup = { id: string; traces: AlignedTrace[] };
 
 /**
  * Each segment's part of a signal drawn from its own start (t = 0), so runs
@@ -30,57 +30,62 @@ export type AlignedWindow = {
  */
 export default function AlignedSegmentsPlot({
   index,
-  graph,
   request,
-  signalIds,
-  windows,
+  groups,
+  segments,
   onSegment,
 }: {
   index: WorkflowIndex;
-  graph: SignalGraph;
   request: (message: EngineRequest) => Promise<EngineResponse>;
-  signalIds: string[];
-  windows: AlignedWindow[];
+  groups: AlignedGroup[];
+  /** The segments drawn, in order, for the legend and colours. */
+  segments: { id: string; name: string }[];
   onSegment: (id: string) => void;
 }) {
-  const shownWindows = windows.slice(0, MAX_SEGMENTS);
-  const shownSignals = signalIds.slice(0, MAX_SIGNALS);
-  const key = JSON.stringify([shownSignals, shownWindows]);
+  const shown = groups.slice(0, MAX_GROUPS).map((group) => ({
+    ...group,
+    traces: group.traces.slice(0, MAX_ALIGNED),
+  }));
+  const key = JSON.stringify(shown);
   const [plots, setPlots] = useState<{
     key: string;
-    bySignal: Record<string, Plot[]>;
+    byGroup: Record<string, Plot[]>;
     error?: string;
   }>();
   useEffect(() => {
-    const [ids, segments] = JSON.parse(key) as [string[], AlignedWindow[]];
+    const groups = JSON.parse(key) as AlignedGroup[];
     let alive = true;
     void (async () => {
-      const bySignal: Record<string, Plot[]> = {};
+      const byGroup: Record<string, Plot[]> = {};
       try {
-        for (const id of ids) {
-          const node = graph.nodes.get(id);
-          const offset = node?.sourceId ? (graph.offsets.get(id) ?? 0) : 0;
-          const response = await request({
-            type: 'view',
-            ids: [id],
-            windows: segments.map(
-              (segment) =>
-                [segment.start + offset, segment.end + offset] as [
-                  number,
-                  number,
-                ],
-            ),
-          });
+        for (const group of groups) {
+          // Windows of one signal in one request, or several whole signals.
+          const windows = group.traces.every(
+            (trace) =>
+              trace.window && trace.signalId === group.traces[0].signalId,
+          );
+          const response = await request(
+            windows
+              ? {
+                  type: 'view',
+                  ids: [group.traces[0].signalId],
+                  windows: group.traces.map((trace) => trace.window!),
+                }
+              : {
+                  type: 'view',
+                  ids: group.traces.map((trace) => trace.signalId),
+                },
+          );
           if (response.type !== 'plots')
             throw new Error('No plots were returned for these segments.');
-          bySignal[id] = response.plots;
-          if (alive) setPlots({ key, bySignal: { ...bySignal } });
+          byGroup[group.id] = response.plots;
+          if (alive) setPlots({ key, byGroup: { ...byGroup } });
         }
       } catch (caught) {
         if (alive)
           setPlots({
             key,
-            bySignal,
+            byGroup,
             error:
               caught instanceof Error
                 ? caught.message
@@ -91,18 +96,28 @@ export default function AlignedSegmentsPlot({
     return () => {
       alive = false;
     };
-  }, [key, graph, request]);
+  }, [key, request]);
   const current = plots?.key === key ? plots : undefined;
+  const position = new Map(segments.map((segment, k) => [segment.id, k]));
+  const color = (segmentId: string) =>
+    seriesColor(
+      TRACE_COLORS[(position.get(segmentId) ?? 0) % TRACE_COLORS.length],
+    );
   const longest = Math.max(
     1e-9,
-    ...shownWindows.map((segment) => segment.end - segment.start),
+    ...shown.flatMap((group) =>
+      group.traces.map((trace, k) => {
+        const plot = current?.byGroup[group.id]?.[k];
+        const end = trace.window?.[1] ?? plot?.summary.end ?? trace.start;
+        return end - trace.start;
+      }),
+    ),
   );
-  const color = (position: number) =>
-    seriesColor(TRACE_COLORS[position % TRACE_COLORS.length]);
+  const total = Math.max(0, ...groups.map((group) => group.traces.length));
   return (
     <div className="aligned-segments">
       <ul className="aligned-segments-legend" aria-label="Segments">
-        {shownWindows.slice(0, 24).map((segment, position) => (
+        {segments.slice(0, 24).map((segment) => (
           <li key={segment.id}>
             <button
               type="button"
@@ -110,15 +125,13 @@ export default function AlignedSegmentsPlot({
               title={`Show ${segment.name} alone`}
               onClick={() => onSegment(segment.id)}
             >
-              <i style={{ background: color(position) }} />
+              <i style={{ background: color(segment.id) }} />
               {segment.name}
             </button>
           </li>
         ))}
-        {shownWindows.length > 24 && (
-          <li className="workflow-muted">
-            and {shownWindows.length - 24} more
-          </li>
+        {segments.length > 24 && (
+          <li className="workflow-muted">and {segments.length - 24} more</li>
         )}
       </ul>
       {current?.error && (
@@ -126,30 +139,33 @@ export default function AlignedSegmentsPlot({
           {current.error}
         </p>
       )}
-      {shownSignals.map((id) => {
-        const node = index.nodes.get(id);
-        const signalPlots = current?.bySignal[id];
-        const offset = node?.sourceId ? (graph.offsets.get(id) ?? 0) : 0;
+      {shown.map((group) => {
+        const node = index.nodes.get(group.traces[0]?.signalId ?? group.id);
+        const groupPlots = current?.byGroup[group.id];
         return (
-          <section key={id} className="aligned-segments-chart">
+          <section key={group.id} className="aligned-segments-chart">
             <h3>
-              {index.label(id)}
+              {index.label(group.id)}
               {node?.unit ? ` [${node.unit}]` : ''}
             </h3>
-            {node && signalPlots ? (
+            {node && groupPlots ? (
               <SignalChart
-                traces={signalPlots.map((plot, position) => ({
-                  node: { ...node, id: `${id}:${shownWindows[position].id}` },
-                  plot,
-                  offset: shownWindows[position].start + offset,
-                  color: color(position),
-                  label: shownWindows[position].name,
-                }))}
+                traces={groupPlots.map((plot, k) => {
+                  const trace = group.traces[k];
+                  const traceNode = index.nodes.get(trace.signalId) ?? node;
+                  return {
+                    node: { ...traceNode, id: `${group.id}:${k}` },
+                    plot,
+                    offset: trace.start,
+                    color: color(trace.segmentId),
+                    label: index.segmentLabel(trace.segmentId),
+                  };
+                })}
                 segments={[]}
                 range={[0, longest]}
                 onSegment={() => {}}
                 fluid
-                height={signalIds.length > 1 ? 180 : 320}
+                height={shown.length > 1 ? 180 : 320}
                 heading={false}
                 includeZero={false}
               />
@@ -161,11 +177,11 @@ export default function AlignedSegmentsPlot({
       })}
       <p className="input-hint">
         Time from each segment&apos;s start.
-        {windows.length > shownWindows.length
-          ? ` Showing the first ${MAX_SEGMENTS} of ${windows.length} segments.`
+        {total > MAX_ALIGNED
+          ? ` Showing the first ${MAX_ALIGNED} of ${total} segments.`
           : ''}
-        {signalIds.length > shownSignals.length
-          ? ` Showing ${MAX_SIGNALS} of ${signalIds.length} signals.`
+        {groups.length > shown.length
+          ? ` Showing ${MAX_GROUPS} of ${groups.length} signals.`
           : ''}
       </p>
     </div>

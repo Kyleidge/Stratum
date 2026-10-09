@@ -24,7 +24,11 @@ import {
   Waves,
   X,
 } from 'lucide-react';
-import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
+import {
+  oneRowStep,
+  workflowRows,
+  type WorkflowRow,
+} from '@/lib/workflow-tree';
 import { formatCount } from '@/lib/format-count';
 import { segmentInterval } from '@/lib/file-segments';
 import {
@@ -153,12 +157,15 @@ export default function WorkflowHistory({
   const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [outputsCollapsed, setOutputsCollapsed] = useState(false);
   const focusedStepId = outputView?.stepId;
-  // A selected segment is shown by its Segment step's row.
+  // A selected segment, or an output within segments, is shown by its
+  // step's one row.
+  const selectedOwnerStep =
+    selection.kind === 'output' ? index.owner.get(selection.id) : undefined;
   const rawSelectedKey =
     selection.kind === 'step'
       ? selection.id
-      : index.segments.has(selection.id)
-        ? (index.owner.get(selection.id)?.id ?? `output:${selection.id}`)
+      : selectedOwnerStep && oneRowStep(selectedOwnerStep)
+        ? selectedOwnerStep.id
         : `output:${selection.id}`;
   const selectedOwner =
     selection.kind === 'output' ? index.owner.get(selection.id)?.id : undefined;
@@ -589,7 +596,7 @@ export default function WorkflowHistory({
                 aria-expanded={
                   row.kind === 'step' &&
                   step.outputIds.length > 0 &&
-                  !step.segmentSetId
+                  !oneRowStep(step)
                     ? expanded
                     : undefined
                 }
@@ -717,7 +724,7 @@ export default function WorkflowHistory({
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
-                    if (step.segmentSetId) return;
+                    if (oneRowStep(step)) return;
                     if (row.kind === 'step' && !expanded)
                       setExpanded(step.id, true);
                     else if (row.kind === 'step' && step.outputIds.length)
@@ -735,7 +742,7 @@ export default function WorkflowHistory({
                   }
                 }}
               >
-                {row.kind === 'step' && !step.segmentSetId ? (
+                {row.kind === 'step' && !oneRowStep(step) ? (
                   <button
                     tabIndex={-1}
                     className="workflow-disclosure"

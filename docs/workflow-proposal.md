@@ -55,6 +55,11 @@ flowchart LR
   between all segments, **Aligned from start** (each segment's part of each
   signal overlaid from t = 0, up to 100 segments) and one segment, which it
   selects and zooms to. The Outputs table still lists every segment.
+- Steps within segments with several outputs are also one History row ("6
+  signals", "3 values"). A derive step's chooser shows all its outputs with
+  the segments shaded, one segment's outputs, or each input's outputs aligned
+  from their segments' starts; values within segments read best in the By
+  segment table below the plot.
 - Edit keeps outputs by what they are, not by position: a segment by its
   place within its parent, an output by its input and segment. Re-segmenting
   may therefore change the segment count; steps within the segments follow,

@@ -528,3 +528,28 @@ void test('History shows a Segment step as one row, however many segments', asyn
   assert.equal(workflowRows([step], index, new Set(), 'Segment 05').length, 1);
   engine.close();
 });
+
+void test('History shows steps within segments as one row when they have several outputs', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+    ],
+  });
+  await engine.calculateValues([torque], 'maximum', undefined, undefined, {
+    setId: set.id,
+  });
+  await engine.deriveMany([torque], 'smooth', 2, true, undefined, {
+    within: { setId: set.id, segmentIds: [set.segments[0].id] },
+  });
+  const index = new WorkflowIndex(engine.project);
+  const [values, single] = engine.project.workflowSteps!.slice(-2);
+  assert.deepEqual(
+    workflowRows([values, single], index, new Set()).map((row) => row.kind),
+    ['step', 'single'],
+  );
+  engine.close();
+});
