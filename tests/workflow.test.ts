@@ -60,6 +60,7 @@ import {
   readWorkflowDrag,
   targetSignals,
   targetPlotOutputs,
+  segmentSetSignals,
   targetOutputs,
 } from '../lib/workflow-drag';
 
@@ -678,6 +679,27 @@ void test('workflow drops preserve member inputs, exact segment families and sca
     assert.deepEqual(targetSignals(index, run), runs.inputIds);
     assert.deepEqual(targetOutputs(index, run), [run.id]);
     assert.deepEqual(targetPlotOutputs(index, run), []);
+    // Segments are intervals of the whole recording: any of its visible
+    // signals, original or derived, may be plotted over them.
+    const runSet = index.segments.get(run.id)!.set;
+    const offered = segmentSetSignals(
+      index,
+      new SignalGraph(engine.project).timeReferences,
+      runSet,
+    );
+    const recording = engine.project.nodes.filter(
+      (node) => node.sourceId === runSet.sourceId,
+    );
+    assert.deepEqual(
+      offered,
+      recording.filter((node) => !node.internal).map((node) => node.id),
+    );
+    assert.ok(runs.inputIds.every((id) => offered.includes(id)));
+    assert.ok(
+      engine.project.nodes.some(
+        (node) => node.parents.length && offered.includes(node.id),
+      ),
+    );
     const valueStep = engine.project.workflowSteps!.find(
       (step) => step.kind === 'value',
     )!;

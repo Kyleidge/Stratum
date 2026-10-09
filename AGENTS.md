@@ -108,8 +108,11 @@ There are no server API routes or cloud signal uploads.
   segment place within its parent, or input + segment), so the segment count
   may change; `followRebuiltBatches` lets later steps that used a whole
   rebuilt batch follow it. Old crop-segment steps (`segmentationId`) still
-  open, edit and replay. Active shades segments over the signals that found
-  them (`ActivePlot.bands`/`focus`) and zooms to a selected one.
+  open, edit and replay. Active shades segments (`ActivePlot.bands`/`focus`)
+  and zooms to a selected one. Its "Choose signals" offers every visible
+  signal on the set's axis (`segmentSetSignals`), remembered per set on the
+  device (`stratum-segment-signals-v1`); by default the signals that found
+  them.
 - First run: `components/workflow-welcome.tsx` is the empty state and the
   post-import next-steps strip; `components/example-tour.tsx` only changes the
   selection and stores dismissal under `stratum-example-tour-v1`;

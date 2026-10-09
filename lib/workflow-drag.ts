@@ -1,3 +1,4 @@
+import type { SegmentSet } from './signal-types';
 import type { WorkflowIndex } from './workflow-history';
 
 export type WorkflowTarget = { kind: 'step' | 'output'; id: string };
@@ -55,6 +56,27 @@ export function segmentSignals(index: WorkflowIndex, id: string): string[] {
         : (index.project.sources.find((source) => source.id === sourceId)
             ?.channels ?? []);
   return [...new Set(ids)].filter((item) => index.nodes.has(item));
+}
+
+/**
+ * Every visible signal a segment set's intervals apply to: those of its
+ * recording, or for workspace sets those on its time reference, in workflow
+ * order. Hidden segment crops are never offered.
+ */
+export function segmentSetSignals(
+  index: WorkflowIndex,
+  timeReferences: ReadonlyMap<string, { id: string }>,
+  set: SegmentSet,
+): string[] {
+  return index.project.nodes
+    .filter(
+      (node) =>
+        !node.internal &&
+        node.sourceId === set.sourceId &&
+        (set.sourceId !== '' ||
+          timeReferences.get(node.id)?.id === set.timeReferenceId),
+    )
+    .map((node) => node.id);
 }
 
 /** Processing a member stays scoped to that member; values expose their inputs. */

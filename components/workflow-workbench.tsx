@@ -107,6 +107,7 @@ import WorkflowToolbar, { type ToolbarAction } from './workflow-toolbar';
 import {
   readWorkflowDrag,
   startWorkflowDrag,
+  segmentSetSignals,
   segmentSignals,
   targetOutputs,
   targetSignals,
@@ -232,6 +233,29 @@ function readStoredSelection(): WorkflowSelection | undefined {
     // A missing or unreadable preference opens the default selection.
   }
   return undefined;
+}
+/**
+ * Signals chosen to show over each segment set's bands, by set ID; device
+ * preferences, never workflow history. Missing signals are ignored on use.
+ */
+const SEGMENT_SIGNALS_STORAGE_KEY = 'stratum-segment-signals-v1';
+function readStoredSegmentSignals(): Record<string, string[]> {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(SEGMENT_SIGNALS_STORAGE_KEY) ?? 'null',
+    );
+    if (saved && typeof saved === 'object')
+      return Object.fromEntries(
+        Object.entries(saved).filter(
+          (entry): entry is [string, string[]] =>
+            Array.isArray(entry[1]) &&
+            entry[1].every((id) => typeof id === 'string'),
+        ),
+      );
+  } catch {
+    // A missing or unreadable preference shows the default signals.
+  }
+  return {};
 }
 const number = (value: number) => formatValue(value, 3);
 const reference = (step?: WorkflowStep) =>
@@ -510,6 +534,21 @@ export default function WorkflowWorkbench() {
       // The selection still applies for this session.
     }
   }, [chosen]);
+  const [segmentSignalChoice, setSegmentSignalChoice] = useState(
+    readStoredSegmentSignals,
+  );
+  const chooseSegmentSignals = useCallback((setId: string, ids: string[]) => {
+    setSegmentSignalChoice((old) => {
+      const next = { ...old, [setId]: ids };
+      if (!ids.length) delete next[setId];
+      try {
+        localStorage.setItem(SEGMENT_SIGNALS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // The choice still applies for this session.
+      }
+      return next;
+    });
+  }, []);
   const file = useRef<HTMLInputElement>(null);
   const workflowInput = useRef<HTMLInputElement>(null);
   const [storageOpen, setStorageOpen] = useState(false);
@@ -1631,9 +1670,16 @@ export default function WorkflowWorkbench() {
         })),
       ];
     };
-    // Segments are shown over the signals that found them, shaded.
+    // Segments are intervals of the whole recording, shaded over any of its
+    // signals: those chosen for the set, else the signals that found them.
     const segmentPlot = (set: SegmentSet, selected?: string): ActivePlot => {
-      const signals = segmentSignals(index, set.segments[0]?.id ?? '');
+      const choices = segmentSetSignals(index, graph.timeReferences, set);
+      const chosen = (segmentSignalChoice[set.id] ?? []).filter((id) =>
+        choices.includes(id),
+      );
+      const signals = chosen.length
+        ? chosen
+        : segmentSignals(index, set.segments[0]?.id ?? '');
       const shown = signals.slice(0, ACTIVE_LIMIT);
       const offset = set.sourceId ? (graph.offsets.get(shown[0]) ?? 0) : 0;
       const segment = set.segments.find((item) => item.id === selected);
@@ -1656,6 +1702,11 @@ export default function WorkflowWorkbench() {
         ...(segment
           ? { focus: [segment.start + offset, segment.end + offset] }
           : {}),
+        signals: {
+          choices,
+          limit: ACTIVE_LIMIT,
+          onChange: (ids) => chooseSegmentSignals(set.id, ids),
+        },
         note:
           signals.length > shown.length
             ? `Showing ${shown.length} of ${signals.length} signals of this recording.`
@@ -1697,7 +1748,14 @@ export default function WorkflowWorkbench() {
           ? `Showing ${shown.length} of ${members.length} outputs. Create a plot from History to compare all of them.`
           : undefined,
     };
-  }, [selectionKind, selectionId, index, graph]);
+  }, [
+    selectionKind,
+    selectionId,
+    index,
+    graph,
+    segmentSignalChoice,
+    chooseSegmentSignals,
+  ]);
   const traceColor = new Map(
     activePlot.traces.map((trace) => [trace.id, trace.color]),
   );
