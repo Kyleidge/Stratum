@@ -23,6 +23,7 @@ import {
   valueSourceOptions,
   ValueSourceSelect,
 } from './value-binding-control';
+import NameField from './name-field';
 
 /** A calculation from values being created or edited. */
 export type ValueMathDraft = {
@@ -107,6 +108,8 @@ export default function ValueMathEditor({
     expression: string,
     unit: string,
     bindings?: ParameterBindings,
+    /** A name chosen for a new step (`chosenNames`). */
+    name?: string,
   ) => Promise<void>;
   /** Opens Calculate values for the inputs' signals instead. */
   onSignals?: () => void;
@@ -127,6 +130,7 @@ export default function ValueMathEditor({
   );
   const [focusedId, setFocusedId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
+  const [name, setName] = useState('');
   // When editing, only values calculated before the step can be used.
   const before = editor.editingStepId
     ? index.steps.get(editor.editingStepId)?.sequence
@@ -262,6 +266,20 @@ export default function ValueMathEditor({
                   </p>
                 </details>
               </div>
+              {!editor.editingStepId && (
+                <NameField
+                  value={name}
+                  onChange={setName}
+                  kind="value"
+                  count={count}
+                  placeholder={
+                    count === 1 && focused
+                      ? `Calculate ${expression.trim()} · ${index.label(focused.input.id)}`
+                      : undefined
+                  }
+                  disabled={busy}
+                />
+              )}
               {onSignals && (
                 <p className="signal-math-hint">
                   Want a statistic of their signals instead?{' '}
@@ -364,6 +382,7 @@ export default function ValueMathEditor({
               expression,
               shownUnit,
               Object.keys(bindings).length ? bindings : undefined,
+              editor.editingStepId ? undefined : name,
             ).catch((caught: unknown) =>
               setError(message(caught, 'Calculation failed.')),
             );

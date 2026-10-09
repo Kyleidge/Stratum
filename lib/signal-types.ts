@@ -260,6 +260,12 @@ export type EngineRequest =
       command: import('./workflow-lifecycle').WorkflowCommand;
     }
   | { type: 'rename'; id: string; name: string }
+  /** Create a step with the name chosen in its dialog (`chosenNames`). */
+  | {
+      type: 'create-named';
+      command: import('./workflow-lifecycle').WorkflowCommand;
+      name: string;
+    }
   | {
       type: 'run-workflow';
       /** Workflow file text; the worker validates it again. */

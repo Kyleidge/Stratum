@@ -25,6 +25,7 @@ import {
   statisticValue,
   VALUE_FUNCTIONS,
   valueSpec as findValueSpec,
+  valueTitle,
   valueUnit,
   type ParameterBindings,
   type ValueOperation,
@@ -79,6 +80,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatCount } from '@/lib/format-count';
+import NameField from './name-field';
 
 export type FunctionDraft = {
   editingStepId?: string;
@@ -161,6 +163,8 @@ export default function FunctionEditor({
     bindings?: ParameterBindings,
     extra?: DeriveExtra,
     within?: SegmentScope,
+    /** A name chosen for a new step (`chosenNames`). */
+    name?: string,
   ) => Promise<void>;
   /** Opens Compare & align for inputs from other recordings or time grids. */
   onCompare?: () => void;
@@ -185,6 +189,7 @@ export default function FunctionEditor({
   const [previewSegment, setPreviewSegment] = useState<string>();
   const [previewId, setPreviewId] = useState(editor.ids[0]);
   const [error, setError] = useState('');
+  const [name, setName] = useState('');
   // An untouched threshold follows the previewed input's range midpoint.
   const [valueForm, setValueForm] = useState<ValueForm>(() =>
     initialValueForm(index, editor.valueParameters, editor.bindings),
@@ -680,6 +685,23 @@ export default function FunctionEditor({
                   {unitError}
                 </p>
               )}
+              {!editor.editingStepId && (
+                <NameField
+                  value={name}
+                  onChange={setName}
+                  kind={values ? 'value' : 'signal'}
+                  count={count}
+                  placeholder={
+                    count !== 1
+                      ? undefined
+                      : values
+                        ? valueSpec &&
+                          `${valueTitle(valueSpec.operation, settings.parameters, previewNode?.unit)} · ${index.label(previewId)}`
+                        : derived.shown?.node.name
+                  }
+                  disabled={busy}
+                />
+              )}
             </div>
           </fieldset>
           <section className="operation-preview" aria-label="Preview">
@@ -755,6 +777,7 @@ export default function FunctionEditor({
                   values ? settings.bindings : deriveBindings,
                   values ? undefined : extra,
                   within,
+                  editor.editingStepId ? undefined : name,
                 );
                 if (!editor.editingStepId)
                   rememberOperation(values ? 'value' : 'derive', operation);
