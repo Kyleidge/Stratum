@@ -203,6 +203,13 @@ export type ActivePlot = {
       segments: { id: string; name: string }[];
     };
   };
+  /** Signals that may be shown instead, such as a segment's recording's. */
+  signals?: {
+    choices: string[];
+    limit: number;
+    /** An empty choice restores the default signals. */
+    onChange: (ids: string[]) => void;
+  };
 };
 const initialSheet: PlotSheet = {
   id: 'result',
@@ -1113,14 +1120,24 @@ export default function PlotScratchpad({
     setPickerPage(0);
     setPicker(true);
   }
-  const matches = useMemo(
-    () =>
-      [...project.nodes, ...(project.values ?? [])].filter((node) =>
+  // Active offers only its own choices; saved plots any signal or value.
+  const activeChoice = isActive ? active.signals : undefined;
+  const choices = activeChoice?.choices;
+  const pickLimit = activeChoice?.limit ?? MAX_PLOT_TRACES;
+  const matches = useMemo(() => {
+    const allowed = choices && new Set(choices);
+    return [...project.nodes, ...(project.values ?? [])].filter(
+      (node) =>
+        (allowed
+          ? allowed.has(node.id)
+          : !('internal' in node && node.internal)) &&
         `${index.label(node.id)} ${node.unit} ${graph.timeReferences.get(index.values.get(node.id)?.inputId ?? node.id)?.name ?? ''}`
           .toLowerCase()
           .includes(query.toLowerCase()),
-      ),
-    [project, index, graph, query],
+    );
+  }, [project, index, graph, query, choices]);
+  const pickable = [...new Set(checkedIds)].filter(
+    (id) => !choices || choices.includes(id),
   );
   const safePage = Math.min(
     pickerPage,
@@ -1280,6 +1297,15 @@ export default function PlotScratchpad({
                     </Select>
                   )}
                 </div>
+                {isActive && active.signals && (
+                  <button
+                    className="secondary-button"
+                    title="Choose which signals of this recording are shown over its segments"
+                    onClick={openPicker}
+                  >
+                    <ListPlus size={16} /> Choose signals
+                  </button>
+                )}
                 {isActive ? (
                   <button
                     className="secondary-button"
@@ -2847,11 +2873,15 @@ export default function PlotScratchpad({
       </Dialog>
       <Dialog open={picker} onOpenChange={setPicker}>
         <DialogContent className="workflow-dialog scratchpad-picker">
-          <DialogTitle>Signals in this plot</DialogTitle>
+          <DialogTitle>
+            {activeChoice
+              ? 'Signals over these segments'
+              : 'Signals in this plot'}
+          </DialogTitle>
           <DialogDescription>
-            Choose signals or scalar values. Each unit gets its own Y axis.
-            Unrelated time references use stacked plots until starts are
-            aligned.
+            {activeChoice
+              ? `Segments are time intervals of the whole recording. Choose up to ${activeChoice.limit} of its signals to show under them; with none chosen, the signals that found the segments are shown.`
+              : 'Choose signals or scalar values. Each unit gets its own Y axis. Unrelated time references use stacked plots until starts are aligned.'}
           </DialogDescription>
           <label className="scratchpad-search">
             <Search size={16} />
@@ -2869,15 +2899,11 @@ export default function PlotScratchpad({
             <span>{draft.length} selected</span>
             <button
               className="workflow-link"
-              disabled={!checkedIds.length}
-              onClick={() =>
-                setDraft([...new Set(checkedIds)].slice(0, MAX_PLOT_TRACES))
-              }
+              disabled={!pickable.length}
+              onClick={() => setDraft(pickable.slice(0, pickLimit))}
             >
               Use checked inputs
-              {checkedIds.length > MAX_PLOT_TRACES
-                ? ` (first ${MAX_PLOT_TRACES})`
-                : ''}
+              {pickable.length > pickLimit ? ` (first ${pickLimit})` : ''}
             </button>
             <button className="workflow-link" onClick={() => setDraft([])}>
               Clear
@@ -2890,7 +2916,7 @@ export default function PlotScratchpad({
                   id={`plot-choice-${node.id}`}
                   checked={draft.includes(node.id)}
                   disabled={
-                    !draft.includes(node.id) && draft.length >= MAX_PLOT_TRACES
+                    !draft.includes(node.id) && draft.length >= pickLimit
                   }
                   onCheckedChange={(checked) =>
                     setDraft((old) =>
@@ -2941,7 +2967,8 @@ export default function PlotScratchpad({
             <button
               className="primary-button"
               onClick={() => {
-                if (saved)
+                if (activeChoice) activeChoice.onChange(draft);
+                else if (saved)
                   update({
                     traces: draft.map(
                       (id, i) =>

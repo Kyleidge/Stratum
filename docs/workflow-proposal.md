@@ -49,9 +49,9 @@ flowchart LR
 - Segments apply to signals of their own recording (workspace sets: signals
   on their time reference).
 - History shows a Segment step as one row ("40 segments"); segments are not
-  listed there, however many there are. Selecting the step plots the checked
-  signals of its recording (otherwise the signals that found the segments)
-  with every segment shaded. A chooser beside the Active title switches
+  listed there, however many there are. Selecting the step plots the signals
+  chosen with **Choose signals** (otherwise the signals that found the
+  segments) with every segment shaded. A chooser beside the Active title switches
   between all segments, **Aligned from start** (each segment's part of each
   signal overlaid from t = 0, up to 100 segments) and one segment, which it
   selects and zooms to. The Outputs table still lists every segment.
