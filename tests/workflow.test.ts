@@ -1084,6 +1084,133 @@ async function samples(engine: SignalEngine, id: string) {
   return values;
 }
 
+void test('a name chosen at creation names the outputs in the same Undo entry', async () => {
+  const { engine, source } = await fixture();
+  const [torque, speed] = source.channels;
+  const newest = () => engine.project.workflowSteps!.at(-1)!;
+  const label = (id: string) => new WorkflowIndex(engine.project).label(id);
+  try {
+    // One output takes the name exactly; the step keeps its own.
+    await engine.createNamed(
+      {
+        type: 'derive-many',
+        parentIds: [torque],
+        operation: 'scale',
+        parameter: 2,
+      },
+      '  Doubled torque ',
+    );
+    const single = newest();
+    assert.equal(label(single.outputIds[0]), 'Doubled torque');
+    assert.equal(single.name, undefined);
+    assert.equal(engine.undoLabel, `Add #002 ${stepName(single)}`);
+    await engine.travel('undo');
+    assert.equal(engine.project.workflowSteps!.length, 1);
+    assert.deepEqual(engine.project.labels ?? {}, {});
+    await engine.travel('redo');
+
+    // Several outputs: the name replaces each automatic title and names
+    // the step.
+    await engine.createNamed(
+      {
+        type: 'derive-many',
+        parentIds: [torque, speed],
+        operation: 'offset',
+        parameter: 1,
+      },
+      'Shifted',
+    );
+    const batch = newest();
+    assert.deepEqual(batch.outputIds.map(label), [
+      `${label(torque)} · Shifted`,
+      `${label(speed)} · Shifted`,
+    ]);
+    assert.equal(batch.name, 'Shifted');
+    await engine.createNamed(
+      {
+        type: 'calculate-values',
+        inputIds: [torque, speed],
+        operation: 'maximum',
+      },
+      'Peak',
+    );
+    assert.deepEqual(newest().outputIds.map(label), [
+      `Peak · ${label(torque)}`,
+      `Peak · ${label(speed)}`,
+    ]);
+
+    // Placeholders arrange the name and leave the step's automatic name.
+    await engine.createNamed(
+      {
+        type: 'derive-many',
+        parentIds: [torque, speed],
+        operation: 'scale',
+        parameter: 3,
+      },
+      '{n}: {input} ×3',
+    );
+    assert.deepEqual(newest().outputIds.map(label), [
+      `1: ${label(torque)} ×3`,
+      `2: ${label(speed)} ×3`,
+    ]);
+    assert.equal(newest().name, undefined);
+
+    // A Segment step takes the name; its segments stay numbered.
+    await engine.createNamed(
+      {
+        type: 'segment-set',
+        sourceId: source.id,
+        definition: {
+          method: 'ranges',
+          boundary: 'clip',
+          ranges: [
+            [0, 2],
+            [4, 8],
+          ],
+        },
+      },
+      'Test phases',
+    );
+    assert.equal(newest().name, 'Test phases');
+    assert.match(label(newest().outputIds[0]), /^Segment 01/);
+    const phases = newest();
+    await engine.createNamed(
+      {
+        type: 'derive-many',
+        parentIds: [torque],
+        operation: 'integral',
+        parameter: 0,
+        within: { setId: phases.segmentSetId! },
+      },
+      'Area',
+    );
+    const index = new WorkflowIndex(engine.project);
+    assert.deepEqual(
+      newest().outputIds.map(label),
+      phases.outputIds.map(
+        (id) => `${index.segmentLabel(id)} · ${label(torque)} · Area`,
+      ),
+    );
+
+    const before = engine.project;
+    await assert.rejects(
+      engine.createNamed(
+        {
+          type: 'derive-many',
+          parentIds: [torque],
+          operation: 'scale',
+          parameter: 2,
+        },
+        'x'.repeat(161),
+      ),
+      /at most 160/,
+    );
+    assert.equal(engine.project, before);
+  } finally {
+    engine.close();
+  }
+});
+
 void test('Undo and Redo name each action and keep the names across restarts', async () => {
   const { engine, source, database } = await fixture();
   assert.equal(engine.undoLabel, 'Import workflow.csv');

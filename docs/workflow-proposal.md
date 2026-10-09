@@ -97,6 +97,10 @@ Exact samples and exports still come from evaluated engine data, never the previ
 One top bar holds labelled Derive, Segment, Value and Compare actions, the
 "Apply to" processing scope and an inspection/export menu. Edit, duplicate,
 rename and delete live in each History item's context menu and in the inspector.
+Creation dialogs also offer an optional Name, committed with the step (one Undo
+entry): one output takes it exactly; several outputs fill `{input}`, `{segment}`
+and `{n}`, or otherwise read "input · Name" (values "Name · input") and the step
+takes the name; a Segment step takes it as its own name. Edit keeps names.
 Inspection preserves checked scope; an explicitly empty scope disables creation.
 The input review's Follow selection, or the × on Apply to, returns to automatic
 inputs. The footer shows selection, notifications with Undo, totals and progress.

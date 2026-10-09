@@ -102,7 +102,7 @@ import {
 } from './workflow-types';
 import { ValueAccumulator } from './value-statistics';
 import { compileFormula } from './formula';
-import { calculatedInput, VALUE_INPUT, valueMathResults } from './value-math';
+import { VALUE_INPUT, valueMathResults } from './value-math';
 import { belowNyquist } from './signal-filters';
 import { unitConversion } from './units';
 import {
@@ -170,6 +170,11 @@ import type {
   Source,
 } from './signal-types';
 import { randomId } from './random-id';
+import {
+  chosenNames,
+  outputInputLabel,
+  outputSegmentLabel,
+} from './output-names';
 
 const CHUNK_SIZE = 16384;
 // Index read cache. A packed root costs 104 bytes per 4,096 samples.
@@ -800,6 +805,47 @@ export class SignalEngine {
         break;
     }
   }
+  /**
+   * Create a step with a name chosen in its dialog, in one commit (and one
+   * Undo entry) with its outputs. See `chosenNames` for how it applies.
+   */
+  async createNamed(command: WorkflowCommand, name: string) {
+    name = name.trim();
+    if (name.length > 160)
+      throw new Error('Enter a name of at most 160 characters.');
+    if (!name) return this.applyCommand(command);
+    const before = this.project;
+    let next: Project;
+    this.staging = true;
+    try {
+      const prior = new Set(this.project.workflowSteps?.map((step) => step.id));
+      await this.applyCommand(command);
+      const created = this.project.workflowSteps?.filter(
+        (step) => !prior.has(step.id),
+      );
+      if (created?.length !== 1)
+        throw new Error('This operation did not produce exactly one step.');
+      const { labels, stepName } = chosenNames(
+        new WorkflowIndex(this.project),
+        created[0],
+        name,
+      );
+      next = {
+        ...this.project,
+        labels: { ...this.project.labels, ...labels },
+        workflowSteps: this.project.workflowSteps!.map((step) =>
+          step.id === created[0].id && stepName
+            ? { ...step, name: stepName }
+            : step,
+        ),
+      };
+    } finally {
+      this.staging = false;
+      this.project = before;
+      this.invalidate();
+    }
+    await this.save(next);
+  }
   async editOperation(stepId: string, command: WorkflowCommand) {
     const before = this.project;
     const affected = affectedOperations(before, stepId);
@@ -1216,23 +1262,8 @@ export class SignalEngine {
           step,
           created.outputIds.length,
           itemId,
-          (position) => {
-            const id = created.outputIds[position];
-            const node = index.nodes.get(id);
-            const value = index.values.get(id);
-            const parent = node
-              ? node.parents[0] && visibleInput(index.nodes, node.parents[0])
-              : value && (calculatedInput(value) ?? value.inputId);
-            return parent ? index.label(parent) : '';
-          },
-          (position) => {
-            const id = created.outputIds[position];
-            const segment =
-              index.nodes.get(id)?.segmentId ??
-              index.values.get(id)?.segmentId ??
-              index.segments.get(id)?.segment.parentId;
-            return segment ? index.segmentLabel(segment) : '';
-          },
+          (position) => outputInputLabel(index, created.outputIds[position]),
+          (position) => outputSegmentLabel(index, created.outputIds[position]),
         );
         const tagged: WorkflowStep = {
           ...created,

@@ -354,6 +354,25 @@
   flex-direction: column;
   gap: 6px;
 }
+/* The optional name of a new step or its outputs, last in the settings. */
+.name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.name-field .number-field input {
+  min-width: 0;
+  width: 100%;
+  padding: 4px 8px;
+  font-family: inherit;
+}
+.name-field .parameter-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
 .formula-settings .number-field input {
   min-width: 0;
   padding: 4px 8px;

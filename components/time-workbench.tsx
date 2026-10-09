@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { formatCount } from '@/lib/format-count';
+import NameField from './name-field';
 import { SignalGraph } from '@/lib/signal-graph';
 import { WorkflowIndex } from '@/lib/workflow-history';
 import type {
@@ -116,7 +117,8 @@ export default function TimeWorkbench({
   editing?: { title: string; impact: string };
   busy: boolean;
   request: (message: EngineRequest) => Promise<EngineResponse>;
-  onApply: (settings: TimeSettings) => Promise<void>;
+  /** `name`: a name chosen for a new step (`chosenNames`). */
+  onApply: (settings: TimeSettings, name?: string) => Promise<void>;
   onClose: () => void;
   onCancel: () => void;
 }) {
@@ -133,6 +135,7 @@ export default function TimeWorkbench({
   const [query, setQuery] = useState(''),
     [page, setPage] = useState(0);
   const [error, setError] = useState('');
+  const [stepName, setStepName] = useState('');
   const [bySignal, setBySignal] = useState(
     saved?.kind === 'align' &&
       saved.groups.every((g) => g.inputIds.length === 1),
@@ -424,7 +427,7 @@ export default function TimeWorkbench({
     setError('');
     try {
       const next = build();
-      if (next) await onApply(next);
+      if (next) await onApply(next, editing ? undefined : stepName);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : 'Unable to process signals.',
@@ -789,6 +792,15 @@ export default function TimeWorkbench({
                         and division by zero give missing values.
                       </p>
                     </>
+                  )}
+                  {!editing && mode !== 'overlay' && (
+                    <NameField
+                      value={stepName}
+                      onChange={setStepName}
+                      kind="signal"
+                      count={outputs}
+                      disabled={busy}
+                    />
                   )}
                 </div>
               </fieldset>

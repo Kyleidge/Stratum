@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import WithinControl, { type WithinOption } from './within-control';
+import NameField from './name-field';
 import type {
   Segment,
   SegmentationDefinition,
@@ -104,7 +105,11 @@ type Props = {
     independently: boolean,
     scope: SegmentationScope,
     within?: SegmentScope,
+    /** A name chosen for a new step (`chosenNames`). */
+    name?: string,
   ) => Promise<void>;
+  /** Offer a name for the new step; Edit uses Rename instead. */
+  nameable?: boolean;
 };
 
 function Choice({
@@ -214,8 +219,10 @@ export default function SegmentationEditor({
   fileSegments,
   onPreview,
   onCreate,
+  nameable = false,
 }: Props) {
   const partialId = useId();
+  const [name, setName] = useState('');
   const [within, setWithin] = useState(fileSegments?.within);
   const parents = fileSegments?.options.find(
     (option) => option.set.id === within?.setId,
@@ -547,7 +554,7 @@ export default function SegmentationEditor({
     try {
       const settings = request();
       if (previewOnly) setPreview({ key, plan: await onPreview(...settings) });
-      else await onCreate(...settings);
+      else await onCreate(...settings, nameable ? name : undefined);
     } catch (error) {
       setError(
         error instanceof Error
@@ -1140,6 +1147,15 @@ export default function SegmentationEditor({
           </div>
         </div>
         {workflowMode && scopeHint}
+        {nameable && (
+          <NameField
+            value={name}
+            onChange={setName}
+            kind="segments"
+            count={1}
+            disabled={busy}
+          />
+        )}
         {!workflowMode &&
           target === 'selection' &&
           selectedIds.length > 1 &&

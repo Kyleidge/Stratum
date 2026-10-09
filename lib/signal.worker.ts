@@ -54,6 +54,7 @@ const COMMITS = new Set<string>([
   'region-function',
   'time-operation',
   'edit-operation',
+  'create-named',
 ]);
 globalThis.onmessage = (
   event: MessageEvent<EngineRequest & { requestId: number }>,
@@ -132,6 +133,9 @@ globalThis.onmessage = (
             break;
           case 'rename':
             await engine.rename(r.id, r.name);
+            break;
+          case 'create-named':
+            await engine.createNamed(r.command, r.name);
             break;
           case 'run-workflow':
             await engine.runWorkflow(r);

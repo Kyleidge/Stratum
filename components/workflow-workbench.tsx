@@ -838,7 +838,12 @@ export default function WorkflowWorkbench() {
       `${reference(last)} ${stepName(last)} created ${formatCount(last.outputIds.length, last.kind === 'value' ? 'value' : last.segmentSetId ? 'segment' : 'signal')}.`,
     );
   }
-  async function perform(message: EngineRequest, label: string) {
+  async function perform(
+    message: EngineRequest,
+    label: string,
+    /** A name chosen in a creation dialog; Edit keeps names. */
+    name?: string,
+  ) {
     if (editorOpen && editor?.editingStepId) {
       const editedId = editor.editingStepId;
       const updated = await engine.mutate(
@@ -871,7 +876,18 @@ export default function WorkflowWorkbench() {
       announceChange('Operation updated and dependent results recalculated.');
       return;
     }
-    reveal(await engine.mutate(message, label));
+    reveal(
+      await engine.mutate(
+        name?.trim()
+          ? {
+              type: 'create-named',
+              command: message as WorkflowCommand,
+              name: name.trim(),
+            }
+          : message,
+        label,
+      ),
+    );
   }
   async function manage(
     message: EngineRequest,
@@ -3793,7 +3809,7 @@ export default function WorkflowWorkbench() {
                           );
                         }
                   }
-                  onApply={(expression, unit, bindings) =>
+                  onApply={(expression, unit, bindings, name) =>
                     perform(
                       {
                         type: 'calculate-values',
@@ -3804,6 +3820,7 @@ export default function WorkflowWorkbench() {
                         ...(bindings ? { bindings } : {}),
                       },
                       'Calculating values…',
+                      name,
                     )
                   }
                 />
@@ -3894,12 +3911,14 @@ export default function WorkflowWorkbench() {
                       throw new Error('Unexpected preview response.');
                     return response.plan;
                   }}
+                  nameable={!editor.editingStepId}
                   onCreate={(
                     definition,
                     targetIds,
                     independently,
                     scope,
                     within,
+                    name,
                   ) =>
                     editor.segmentSet
                       ? perform(
@@ -3915,6 +3934,7 @@ export default function WorkflowWorkbench() {
                             ...(within ? { within } : {}),
                           },
                           'Finding segments…',
+                          name,
                         )
                       : perform(
                           {
@@ -3926,6 +3946,7 @@ export default function WorkflowWorkbench() {
                             scope,
                           },
                           'Creating derived segment signals…',
+                          name,
                         )
                   }
                 />
@@ -3957,6 +3978,7 @@ export default function WorkflowWorkbench() {
                     bindings,
                     extra,
                     within,
+                    name,
                   ) => {
                     const scope = within ? { within } : {};
                     if (editor.kind === 'value')
@@ -3972,6 +3994,7 @@ export default function WorkflowWorkbench() {
                           ...scope,
                         },
                         'Calculating values…',
+                        name,
                       );
                     if (isBinaryOperation(operation))
                       return perform(
@@ -3987,6 +4010,7 @@ export default function WorkflowWorkbench() {
                           },
                         },
                         'Creating derived signals…',
+                        name,
                       );
                     return perform(
                       {
@@ -3999,6 +4023,7 @@ export default function WorkflowWorkbench() {
                         ...scope,
                       },
                       'Creating derived signals…',
+                      name,
                     );
                   }}
                 />
@@ -4029,7 +4054,7 @@ export default function WorkflowWorkbench() {
             setTimeEditor(undefined);
             setDropNote('');
           }}
-          onApply={async (settings) => {
+          onApply={async (settings, name) => {
             const editingId = timeEditor.editingId;
             const next = await engine.mutate(
               editingId
@@ -4038,7 +4063,13 @@ export default function WorkflowWorkbench() {
                     stepId: editingId,
                     command: { type: 'time-operation', settings },
                   }
-                : { type: 'time-operation', settings },
+                : name?.trim()
+                  ? {
+                      type: 'create-named',
+                      command: { type: 'time-operation', settings },
+                      name: name.trim(),
+                    }
+                  : { type: 'time-operation', settings },
               'Processing time bases…',
             );
             setTimeEditor(undefined);

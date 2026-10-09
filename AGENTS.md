@@ -97,7 +97,9 @@ There are no server API routes or cloud signal uploads.
   use a header with "Applies to" chips (`components/operation-inputs.tsx`, which
   also builds edit titles and impact text), a scrolling `.operation-body` and a
   sticky `.operation-footer` with a one-line summary. Create stays disabled while
-  the preview reports an error. Derive and Value remember the last operation in
+  the preview reports an error. New steps take an optional name
+  (`components/name-field.tsx`; `chosenNames` in `lib/output-names.ts`), sent
+  as `create-named` so it commits with the step; Edit hides it. Derive and Value remember the last operation in
   localStorage; trigger thresholds default to the input's range midpoint with
   offset 0. New segments are numbered per step ("Segment 01"; nested ones after
   their parent, "Segment 01.02"); saved names never change. Compare & align
