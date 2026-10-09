@@ -102,6 +102,7 @@ import {
 } from './workflow-types';
 import { ValueAccumulator } from './value-statistics';
 import { compileFormula } from './formula';
+import { calculatedInput, VALUE_INPUT, valueMathResults } from './value-math';
 import { belowNyquist } from './signal-filters';
 import { unitConversion } from './units';
 import {
@@ -773,6 +774,8 @@ export class SignalEngine {
           command.parameters,
           command.bindings,
           command.within,
+          command.expression,
+          command.unit,
         );
         break;
       case 'segment-set':
@@ -908,9 +911,10 @@ export class SignalEngine {
       for (const step of this.project.workflowSteps ?? [])
         if (
           affected.some((item) => item.id === step.id) &&
-          step.valueInputIds?.some(
-            (id) => (sequences.get(id) ?? Infinity) >= step.sequence,
-          )
+          [
+            ...(step.operation === 'calculate' ? step.inputIds : []),
+            ...(step.valueInputIds ?? []),
+          ].some((id) => (sequences.get(id) ?? Infinity) >= step.sequence)
         )
           throw new Error(
             'A step can only use values calculated before it. Choose an earlier value, or create a new step instead. Existing work is unchanged.',
@@ -1205,8 +1209,9 @@ export class SignalEngine {
         outputs.set(step.id, created.outputIds);
         stepMap[step.id] = created.id;
         const index = new WorkflowIndex(this.project);
-        // `{input}` names the signal chosen (never a hidden segment crop);
-        // `{segment}` the segment an output was made within.
+        // `{input}` names the signal chosen (never a hidden segment crop),
+        // or the value calculated from; `{segment}` the segment an output
+        // was made within.
         const names = outputLabels(
           step,
           created.outputIds.length,
@@ -1214,9 +1219,10 @@ export class SignalEngine {
           (position) => {
             const id = created.outputIds[position];
             const node = index.nodes.get(id);
+            const value = index.values.get(id);
             const parent = node
               ? node.parents[0] && visibleInput(index.nodes, node.parents[0])
-              : index.values.get(id)?.inputId;
+              : value && (calculatedInput(value) ?? value.inputId);
             return parent ? index.label(parent) : '';
           },
           (position) => {
@@ -1952,7 +1958,23 @@ export class SignalEngine {
     parameters?: ValueParameters,
     bindings?: ParameterBindings,
     within?: SegmentScope,
+    expression?: string,
+    unit?: string,
   ) {
+    if (operation === 'calculate') {
+      if (within || parameters)
+        throw new Error(
+          'Calculations from values follow their input values; they take no segments or settings.',
+        );
+      return this.calculateFromValues(
+        inputIds,
+        expression ?? '',
+        unit ?? '',
+        bindings,
+      );
+    }
+    if (expression !== undefined || unit !== undefined)
+      throw new Error('Only calculations from values take a formula.');
     const spec = valueSpec(operation);
     if (!spec) throw new Error('Choose a supported value calculation.');
     this.checkBindings(bindings, spec.parameters ?? [], spec.name);
@@ -2059,6 +2081,82 @@ export class SignalEngine {
     await this.save({
       ...this.project,
       values: [...(this.project.values ?? []), ...values],
+    });
+    return values;
+  }
+  /**
+   * A formula over calculated values: one result per input value (`a`),
+   * other variables matched to each input by segment and lineage. Results
+   * keep their input's signal, segment and interval; the unit is as chosen.
+   */
+  async calculateFromValues(
+    inputIds: string[],
+    expression: string,
+    unit: string,
+    bindings?: ParameterBindings,
+  ) {
+    const before = this.project;
+    if (inputIds.length > 10000)
+      throw new Error('Limit a calculation to 10,000 values.');
+    if (unit.trim().length > 40)
+      throw new Error('Keep the output unit to 40 characters.');
+    const results = valueMathResults(
+      this.bindingContext(),
+      inputIds,
+      expression,
+      bindings,
+    );
+    const batchId = uid(),
+      createdAt = new Date().toISOString();
+    const mixedSources =
+      new Set(results.map((result) => result.input.sourceId)).size !== 1;
+    const title = valueTitle('calculate', {}, '', expression);
+    const values: ScalarValue[] = results.map(
+      ({ input, value, parameters, bindings: bound }) => ({
+        ...(input.segmentId ? { segmentId: input.segmentId } : {}),
+        id: uid(),
+        sourceId: mixedSources ? '' : input.sourceId,
+        inputId: input.inputId,
+        batchId,
+        name: `${input.name} · ${title}`,
+        unit: unit.trim(),
+        operation: 'calculate',
+        expression,
+        ...(Object.keys(parameters).length ? { parameters } : {}),
+        bindings: bound,
+        value,
+        sampleCount: input.sampleCount,
+        validDuration: input.validDuration,
+        start: input.start,
+        end: input.end,
+        createdAt,
+      }),
+    );
+    const others = [
+      ...new Set(
+        values.flatMap((value) =>
+          Object.entries(value.bindings!).flatMap(([name, bound]) =>
+            name === VALUE_INPUT ? [] : [bound.valueId],
+          ),
+        ),
+      ),
+    ];
+    const step: WorkflowStep = {
+      id: uid(),
+      sourceId: values[0].sourceId,
+      sequence: nextStepSequence(before),
+      createdAt,
+      kind: 'value',
+      operation: 'calculate',
+      inputIds: [...inputIds],
+      outputIds: values.map((value) => value.id),
+      ...withValueInputs(others),
+      expression,
+    };
+    await this.save({
+      ...before,
+      values: [...(before.values ?? []), ...values],
+      workflowSteps: [...(before.workflowSteps ?? []), step],
     });
     return values;
   }

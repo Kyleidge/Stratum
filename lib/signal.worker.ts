@@ -165,6 +165,8 @@ globalThis.onmessage = (
               r.parameters,
               r.bindings,
               r.within,
+              r.expression,
+              r.unit,
             );
             break;
           case 'segment-set':

@@ -367,6 +367,19 @@ export function extractWorkflow(
           break;
         }
         case 'calculate-values':
+          if (command.operation === 'calculate') {
+            operation = {
+              kind: 'value',
+              operation: 'calculate',
+              inputs: many(command.inputIds),
+              expression: command.expression ?? '',
+              unit: command.unit ?? '',
+              ...(command.bindings
+                ? { bindings: bound(command.bindings) }
+                : {}),
+            };
+            break;
+          }
           operation = {
             kind: 'value',
             operation: command.operation,

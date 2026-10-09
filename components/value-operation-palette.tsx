@@ -4,6 +4,7 @@ import { useState } from 'react';
 import {
   Activity,
   AlarmClock,
+  Calculator,
   ArrowDownToLine,
   ArrowUpToLine,
   ChartNoAxesCombined,
@@ -49,6 +50,8 @@ const visuals: Record<ValueOperation, { icon: LucideIcon; hint: string }> = {
   'time-below': { icon: TimerOff, hint: 'Seconds below a threshold' },
   'first-crossing': { icon: MoveHorizontal, hint: 'Seconds to a crossing' },
   'crossing-count': { icon: Hash, hint: 'Crossings of a threshold' },
+  // Calculations from values have their own dialog.
+  calculate: { icon: Calculator, hint: 'A formula over values' },
 };
 const groups: ValueGroup[] = ['Level', 'Spread', 'Time', 'Events'];
 

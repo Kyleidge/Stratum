@@ -7,12 +7,13 @@ import { operationLabels } from '@/lib/signal-explorer';
 import type { Operation, SegmentationDefinition } from '@/lib/signal-types';
 import { stepName, type WorkflowIndex } from '@/lib/workflow-history';
 import {
-  VALUE_FUNCTIONS,
+  valueSpec,
   type ParameterBindings,
   type ValueBinding,
   type WorkflowStep,
 } from '@/lib/workflow-types';
 import { savedBindings } from '@/lib/value-bindings';
+import { VALUE_INPUT } from '@/lib/value-math';
 import { formatValue } from './signal-chart';
 import { SIGNAL_FUNCTIONS } from './signal-operation-palette';
 
@@ -105,9 +106,7 @@ const humanize = (key: string) => {
 /** The step's function as named in the Derive and Value catalogs. */
 export function stepFunctionName(step: WorkflowStep): string {
   return (
-    (step.kind === 'value'
-      ? VALUE_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name
-      : undefined) ??
+    (step.kind === 'value' ? valueSpec(step.operation)?.name : undefined) ??
     SIGNAL_FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     operationLabels[step.operation as Operation] ??
     step.operation
@@ -245,6 +244,17 @@ export function WorkflowStepSettings({
   }
   if (step.kind === 'derive' && output?.operation === 'convert')
     general.push(['Converts to', output.unit]);
+  if (step.kind === 'value' && step.operation === 'calculate') {
+    general.push([
+      'Formula',
+      <code key="formula">{step.expression}</code>,
+      step.expression,
+    ]);
+    general.push([
+      'Output unit',
+      index.values.get(step.outputIds[0])?.unit || 'None',
+    ]);
+  }
   general.push(['Inputs', formatCount(step.inputIds.length, 'input')]);
   if (step.valueInputIds?.length)
     general.push([
@@ -280,6 +290,14 @@ export function WorkflowStepSettings({
           ]
         : [parameterLabel(key), formatValue(value, 6)],
   );
+  // A calculation from values: what each name in its formula is.
+  const formulaValues: Row[] =
+    step.operation === 'calculate'
+      ? Object.entries(bindings ?? {}).map(([name, binding]) => [
+          name,
+          name === VALUE_INPUT ? 'Each input value' : describe(binding),
+        ])
+      : [];
   const triggerBindings: Row[] =
     step.kind === 'segment'
       ? Object.entries(bindings ?? {}).map(([key, binding]) => [
@@ -291,6 +309,7 @@ export function WorkflowStepSettings({
     ...(step.parameters && { parameters: step.parameters }),
     ...(step.definition && { definition: step.definition }),
     ...(step.timeSettings && { timeSettings: step.timeSettings }),
+    ...(step.expression && { expression: step.expression }),
   };
   return (
     <section className="workflow-dock-settings">
@@ -303,6 +322,9 @@ export function WorkflowStepSettings({
           title="Segmentation"
           rows={segmentationRows(step.definition, signal)}
         />
+      )}
+      {!!formulaValues.length && (
+        <SettingsTable title="Values in the formula" rows={formulaValues} />
       )}
       {!!triggerBindings.length && (
         <SettingsTable title="Taken from values" rows={triggerBindings} />

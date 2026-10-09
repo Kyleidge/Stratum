@@ -1,7 +1,8 @@
 /**
  * Formula expressions for derived signals: arithmetic over signals (single
- * capital letters, A being each input) and values (lowercase names). Parsed
- * to a tree and compiled to closures; never evaluated as JavaScript.
+ * capital letters, A being each input) and values (lowercase names). Value
+ * formulas use only values, `a` being each input value. Parsed to a tree and
+ * compiled to closures; never evaluated as JavaScript.
  */
 
 export const MAX_FORMULA_LENGTH = 500;
@@ -256,9 +257,18 @@ export type Formula = {
 
 const cache = new Map<string, Formula>();
 
-/** Parse, check and compile a formula. Throws FormulaError when invalid. */
-export function compileFormula(expression: string): Formula {
-  const cached = cache.get(expression);
+/**
+ * Parse, check and compile a formula. Throws FormulaError when invalid.
+ * Signal formulas use A, each input signal. Value formulas (`'values'`) are
+ * arithmetic over values only: `a` is each input value, and capital letters
+ * are not allowed.
+ */
+export function compileFormula(
+  expression: string,
+  mode: 'signals' | 'values' = 'signals',
+): Formula {
+  const key = `${mode}\n${expression}`;
+  const cached = cache.get(key);
   if (cached) return cached;
   const tree = parse(expression);
   const signals = new Set<string>(),
@@ -272,7 +282,14 @@ export function compileFormula(expression: string): Formula {
     else if (node.kind === 'binary') stack.push(node.left, node.right);
     else if (node.kind === 'call') stack.push(...node.args);
   }
-  if (!signals.has('A'))
+  if (mode === 'values') {
+    if (signals.size)
+      throw new FormulaError(
+        `Use lowercase names for values; ${[...signals].sort()[0]} would be a signal.`,
+      );
+    if (!values.has('a'))
+      throw new FormulaError('Use a, the input value, in the formula.');
+  } else if (!signals.has('A'))
     throw new FormulaError('Use A, the input signal, in the formula.');
   const signalOrder = [...signals].sort();
   const valueOrder = [...values].sort();
@@ -348,14 +365,17 @@ export function compileFormula(expression: string): Formula {
     },
   };
   if (cache.size > 200) cache.clear();
-  cache.set(expression, formula);
+  cache.set(key, formula);
   return formula;
 }
 
 /** The problem with a formula, or '' when it is valid. */
-export function formulaProblem(expression: string): string {
+export function formulaProblem(
+  expression: string,
+  mode: 'signals' | 'values' = 'signals',
+): string {
   try {
-    compileFormula(expression);
+    compileFormula(expression, mode);
     return '';
   } catch (error) {
     return error instanceof Error ? error.message : 'Invalid formula.';

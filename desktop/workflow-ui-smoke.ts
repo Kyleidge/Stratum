@@ -1902,6 +1902,27 @@ export async function workflowUiSmoke() {
         document.querySelector<HTMLElement>(`[data-action="${action}"]`)!,
       );
       const dropModal = await dialog();
+      if (action === 'value') {
+        // Values open Calculate from values, one click from their signals.
+        assert(
+          dropModal.querySelector('input[aria-label="Formula"]'),
+          'Value drop onto value did not open Calculate from values.',
+        );
+        await click('Calculate from the input signals', dropModal);
+        const signalModal = await until(
+          () =>
+            document
+              .querySelector('[role="dialog"][data-open] .workflow-drop-note')
+              ?.textContent?.includes('input signal')
+              ? document.querySelector<HTMLElement>(
+                  '[role="dialog"][data-open]',
+                )!
+              : undefined,
+          'value statistics of the input signals',
+        );
+        await click('Close', signalModal);
+        continue;
+      }
       assert(
         dropModal
           .querySelector('.workflow-drop-note')
