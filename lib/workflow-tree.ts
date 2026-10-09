@@ -54,6 +54,12 @@ export function workflowRows(
           )
         : candidates;
     if (search && !matchesStep && !outputs.length) continue;
+    // A Segment step is one row: its segments are chosen on the plot, not
+    // listed, however many there are.
+    if (step.segmentSetId) {
+      rows.push({ key: step.id, kind: 'step', step, label });
+      continue;
+    }
     if (!focusedStepId && step.outputIds.length === 1 && outputs.length) {
       const id = outputs[0];
       const output = index.label(id);

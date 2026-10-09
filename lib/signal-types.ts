@@ -385,6 +385,8 @@ export type EngineRequest =
       ids: string[];
       range?: [number, number];
       ranges?: Record<string, [number, number]>;
+      /** One plot of `ids[0]` per window, in order, such as each segment. */
+      windows?: [number, number][];
       inspection?: boolean;
     }
   | {

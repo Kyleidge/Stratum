@@ -47,8 +47,14 @@ flowchart LR
   segment (its ranges and windows are seconds from the parent's start;
   triggers use recording time).
 - Segments apply to signals of their own recording (workspace sets: signals
-  on their time reference). Selecting a segment plots the signals that found
-  it with every segment shaded and zooms to the selected one.
+  on their time reference).
+- History shows a Segment step as one row ("40 segments"); segments are not
+  listed there, however many there are. Selecting the step plots the checked
+  signals of its recording (otherwise the signals that found the segments)
+  with every segment shaded. A chooser beside the Active title switches
+  between all segments, **Aligned from start** (each segment's part of each
+  signal overlaid from t = 0, up to 100 segments) and one segment, which it
+  selects and zooms to. The Outputs table still lists every segment.
 - Edit keeps outputs by what they are, not by position: a segment by its
   place within its parent, an output by its input and segment. Re-segmenting
   may therefore change the segment count; steps within the segments follow,

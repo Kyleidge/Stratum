@@ -475,39 +475,47 @@ void app
     await setField('Height', 240);
 
     // Carry the actual history row's drag payload through the workspace switch.
-    const dropHistoryRow = async (title) => {
+    const dropHistoryRow = async (title, kind = 'output') => {
       await click('Data Inspector', '.workflow-workspaces');
       // History mounts only the rows in view; search brings this one there.
       await setField('Search workflow', title);
-      await evaluate((title) => {
-        const row = [
-          ...document.querySelectorAll('[role="treeitem"][data-kind="output"]'),
-        ].find((item) => item.title === title);
-        if (!row)
-          throw new Error(
-            'Missing the history row ' +
-              title +
-              ': ' +
-              [...document.querySelectorAll('[role="treeitem"]')]
-                .map((item) => item.title)
-                .join(' / '),
+      await evaluate(
+        ([title, kind]) => {
+          const row = [
+            ...document.querySelectorAll(
+              `[role="treeitem"][data-kind="${kind}"]`,
+            ),
+          ].find((item) => item.title === title);
+          if (!row)
+            throw new Error(
+              'Missing the history row ' +
+                title +
+                ': ' +
+                [...document.querySelectorAll('[role="treeitem"]')]
+                  .map((item) => item.title)
+                  .join(' / '),
+            );
+          const transfer = new DataTransfer();
+          row.dispatchEvent(
+            new DragEvent('dragstart', {
+              bubbles: true,
+              dataTransfer: transfer,
+            }),
           );
-        const transfer = new DataTransfer();
-        row.dispatchEvent(
-          new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }),
-        );
-        globalThis.reportSmokeDrag = transfer;
-        const reports = [
-          ...document.querySelectorAll('.workflow-workspaces button'),
-        ].find((button) => button.textContent.trim() === 'Reports');
-        reports.dispatchEvent(
-          new DragEvent('dragover', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer: transfer,
-          }),
-        );
-      }, title);
+          globalThis.reportSmokeDrag = transfer;
+          const reports = [
+            ...document.querySelectorAll('.workflow-workspaces button'),
+          ].find((button) => button.textContent.trim() === 'Reports');
+          reports.dispatchEvent(
+            new DragEvent('dragover', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer,
+            }),
+          );
+        },
+        [title, kind],
+      );
       await waitFor(
         reportsVisible,
         'Dragging over Reports did not open the report workspace',
@@ -528,13 +536,14 @@ void app
         delete globalThis.reportSmokeDrag;
       });
     };
-    // A segment is a time interval, not data: dropping one adds nothing.
-    await dropHistoryRow('Run 1');
+    // Segments are time intervals, not data: dropping a Segment step (its
+    // one History row) adds nothing.
+    await dropHistoryRow('Find the three runs', 'step');
     await pause(300);
     assert.equal(
       await blockCount(),
       1,
-      'A dropped segment must not add a report block',
+      'A dropped Segment step must not add a report block',
     );
     // One value of a three-value step is captured without its siblings.
     await dropHistoryRow('Run 2 · Average product');

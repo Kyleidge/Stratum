@@ -83,7 +83,7 @@ import type {
   SegmentSet,
 } from '@/lib/signal-types';
 import { segmentationOperation } from '@/lib/segmentation-operation';
-import { visibleInput } from '@/lib/file-segments';
+import { segmentInterval, visibleInput } from '@/lib/file-segments';
 import { withinFromSelection, withinOptions } from './within-control';
 import WorkflowHistory, { type WorkflowSelection } from './workflow-history';
 import { formatValue } from './signal-chart';
@@ -1599,9 +1599,29 @@ export default function WorkflowWorkbench() {
   // Active plots the selection: a signal, a value over its input, or up to
   // ACTIVE_LIMIT outputs of an operation. Colours follow each output's position
   // in its operation, so a member keeps its colour alone or with siblings.
+  // Segment steps drawn aligned from each segment's start, by set ID.
+  const [alignedSets, setAlignedSets] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  // The Active segment chooser: all segments, aligned, or one segment.
+  function chooseSegments(set: SegmentSet, value: string) {
+    if (value !== 'all' && value !== 'aligned') {
+      select({ kind: 'output', id: value });
+      return;
+    }
+    setAlignedSets((old) => {
+      const next = new Set(old);
+      if (value === 'aligned') next.add(set.id);
+      else next.delete(set.id);
+      return next;
+    });
+    const owner = index.owner.get(set.segments[0]?.id ?? '');
+    if (owner) select({ kind: 'step', id: owner.id });
+  }
   const selectionKind = selection.kind,
-    selectionId = selection.id;
-  const activePlot = useMemo<ActivePlot>(() => {
+    selectionId = selection.id,
+    checkedInputs = inputs;
+  const plainActivePlot = useMemo<ActivePlot>(() => {
     const key = `${selectionKind}:${selectionId}`;
     const colorOf = (id: string, ids: string[]) => {
       const owners = new Set(ids.map((item) => index.owner.get(item)?.id));
@@ -1633,13 +1653,48 @@ export default function WorkflowWorkbench() {
     };
     // Segments are shown over the signals that found them, shaded.
     const segmentPlot = (set: SegmentSet, selected?: string): ActivePlot => {
-      const signals = segmentSignals(index, set.segments[0]?.id ?? '');
+      // Checked signals of the recording are drawn; otherwise the signals
+      // that found the segments.
+      const checked = (checkedInputs ?? []).filter(
+        (id) => index.nodes.get(id)?.sourceId === set.sourceId,
+      );
+      const signals = checked.length
+        ? checked
+        : segmentSignals(index, set.segments[0]?.id ?? '');
       const shown = signals.slice(0, ACTIVE_LIMIT);
       const offset = set.sourceId ? (graph.offsets.get(shown[0]) ?? 0) : 0;
       const segment = set.segments.find((item) => item.id === selected);
       const owner = index.owner.get(set.segments[0]?.id ?? '');
+      const aligned = !selected && alignedSets.has(set.id);
+      const choice = selected ?? (aligned ? 'aligned' : 'all');
       return {
-        key,
+        key: aligned ? `${key}:aligned` : key,
+        segments: {
+          value: choice,
+          options: [
+            {
+              value: 'all',
+              label: `All ${formatCount(set.segments.length, 'segment')}`,
+            },
+            { value: 'aligned', label: 'Aligned from start' },
+            ...set.segments.slice(0, 500).map((item) => ({
+              value: item.id,
+              label: `${index.segmentLabel(item.id)} · ${segmentInterval(item, 2)}`,
+            })),
+          ],
+          // Set outside the memo, where it can select.
+          onChange: () => {},
+          ...(aligned
+            ? {
+                aligned: set.segments.map((item) => ({
+                  id: item.id,
+                  name: index.segmentLabel(item.id),
+                  start: item.start,
+                  end: item.end,
+                })),
+              }
+            : {}),
+        },
         title: selected
           ? index.label(selected)
           : owner
@@ -1697,7 +1752,23 @@ export default function WorkflowWorkbench() {
           ? `Showing ${shown.length} of ${members.length} outputs. Create a plot from History to compare all of them.`
           : undefined,
     };
-  }, [selectionKind, selectionId, index, graph]);
+  }, [selectionKind, selectionId, index, graph, alignedSets, checkedInputs]);
+  const chooserSet =
+    selectionKind === 'output'
+      ? index.segments.get(selectionId)?.set
+      : project.segmentSets?.find(
+          (set) => set.id === index.steps.get(selectionId)?.segmentSetId,
+        );
+  const activePlot: ActivePlot =
+    plainActivePlot.segments && chooserSet
+      ? {
+          ...plainActivePlot,
+          segments: {
+            ...plainActivePlot.segments,
+            onChange: (value) => chooseSegments(chooserSet, value),
+          },
+        }
+      : plainActivePlot;
   const traceColor = new Map(
     activePlot.traces.map((trace) => [trace.id, trace.color]),
   );

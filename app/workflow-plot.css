@@ -521,3 +521,53 @@
 fieldset.workflow-layout-toggle {
   min-width: 0;
 }
+
+/* A Segment step's chooser beside the Active title, and its aligned view */
+.scratchpad-plot-title .scratchpad-segment-select {
+  max-width: 260px;
+  min-height: 28px;
+  margin-left: 10px;
+}
+.aligned-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow: auto;
+}
+.aligned-segments h3 {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.aligned-segments-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+}
+.aligned-segments-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+}
+.aligned-segments-legend i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+.scratchpad-plot-title:has(.scratchpad-segment-select) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.scratchpad-plot-title .scratchpad-segment-select {
+  margin-left: 0;
+}

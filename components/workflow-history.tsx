@@ -153,8 +153,13 @@ export default function WorkflowHistory({
   const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [outputsCollapsed, setOutputsCollapsed] = useState(false);
   const focusedStepId = outputView?.stepId;
+  // A selected segment is shown by its Segment step's row.
   const rawSelectedKey =
-    selection.kind === 'step' ? selection.id : `output:${selection.id}`;
+    selection.kind === 'step'
+      ? selection.id
+      : index.segments.has(selection.id)
+        ? (index.owner.get(selection.id)?.id ?? `output:${selection.id}`)
+        : `output:${selection.id}`;
   const selectedOwner =
     selection.kind === 'output' ? index.owner.get(selection.id)?.id : undefined;
   // Following an input or revealing another operation leaves the focused tree.
@@ -582,7 +587,9 @@ export default function WorkflowHistory({
                 aria-posinset={positions.get(row.key)?.position}
                 aria-setsize={positions.get(row.key)?.size}
                 aria-expanded={
-                  row.kind === 'step' && step.outputIds.length > 0
+                  row.kind === 'step' &&
+                  step.outputIds.length > 0 &&
+                  !step.segmentSetId
                     ? expanded
                     : undefined
                 }
@@ -710,6 +717,7 @@ export default function WorkflowHistory({
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
+                    if (step.segmentSetId) return;
                     if (row.kind === 'step' && !expanded)
                       setExpanded(step.id, true);
                     else if (row.kind === 'step' && step.outputIds.length)
@@ -727,7 +735,7 @@ export default function WorkflowHistory({
                   }
                 }}
               >
-                {row.kind === 'step' ? (
+                {row.kind === 'step' && !step.segmentSetId ? (
                   <button
                     tabIndex={-1}
                     className="workflow-disclosure"
@@ -745,7 +753,7 @@ export default function WorkflowHistory({
                       <ChevronRight size={14} />
                     )}
                   </button>
-                ) : single ? (
+                ) : single || row.kind === 'step' ? (
                   <span className="workflow-single-spacer" aria-hidden="true" />
                 ) : (
                   <span className="workflow-branch" aria-hidden="true" />

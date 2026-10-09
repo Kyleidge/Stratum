@@ -5,6 +5,7 @@ import { SignalEngine } from '../lib/signal-engine';
 import { stepName, WorkflowIndex } from '../lib/workflow-history';
 import { isSegmentCrop } from '../lib/file-segments';
 import { validateWorkspace } from '../lib/workspace-archive';
+import { workflowRows } from '../lib/workflow-tree';
 
 // 1 Hz for 40 s: torque equals time; speed is high from 5 s to 12 s and
 // from 20 s to 30 s.
@@ -501,5 +502,29 @@ void test('a formula within segments skips segments where a signal has no sample
   );
   assert.equal(sums.length, 1);
   assert.equal(sums[0].segmentId, set.segments[0].id);
+  engine.close();
+});
+
+void test('History shows a Segment step as one row, however many segments', async () => {
+  const { engine, source } = await fixture();
+  await engine.segmentSet(source.id, {
+    method: 'windows',
+    boundary: 'clip',
+    start: 0,
+    end: 39,
+    duration: 1,
+    step: 1,
+    includePartial: false,
+  });
+  const index = new WorkflowIndex(engine.project);
+  const step = engine.project.workflowSteps!.at(-1)!;
+  assert.equal(step.outputIds.length, 39);
+  const rows = workflowRows([step], index, new Set(), '', step.outputIds[4]);
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.key]),
+    [['step', step.id]],
+  );
+  // Searching for a segment finds its step.
+  assert.equal(workflowRows([step], index, new Set(), 'Segment 05').length, 1);
   engine.close();
 });

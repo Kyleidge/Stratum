@@ -387,18 +387,27 @@ export async function workflowUiSmoke() {
   const selectedBand = () =>
     plotBands().find((band) => band.hasAttribute('data-selected'));
   /**
-   * A selected segment: a scissors row without a check box, Details with its
-   * times, and the plot of its signals zoomed to its shaded band.
+   * A selected segment: its Segment step's single History row (segments are
+   * not listed), the plot chooser naming it, Details with its times, and the
+   * plot of its signals zoomed to its shaded band.
    */
   async function checkSegmentSelection(name: string, duration?: number) {
     const row = selectedHistoryRow();
     assert(
-      row.title.startsWith(name) &&
-        row.querySelector('.workflow-icon.segment') &&
-        !row.hasAttribute('aria-checked') &&
-        !row.querySelector('.workflow-row-check') &&
-        /^[\d.]+–[\d.]+ s$/.test(row.querySelector('small')?.textContent ?? ''),
-      `History did not show ${name} as a segment: ${row.getAttribute('aria-label')}.`,
+      row.getAttribute('data-kind') === 'step' &&
+        !row.hasAttribute('aria-expanded') &&
+        / segments?$/.test(row.querySelector('small')?.textContent ?? '') &&
+        !document.querySelector(
+          '.workflow-tree-row[data-kind="output"] .workflow-icon.segment',
+        ),
+      `History did not show ${name} by its Segment step: ${row.getAttribute('aria-label')}.`,
+    );
+    await until(
+      () =>
+        document
+          .querySelector('.scratchpad-segment-select')
+          ?.textContent?.startsWith(`${name} · `),
+      `plot chooser naming ${name}`,
     );
     await until(
       () => details().querySelector('h2')?.textContent?.startsWith(name),
@@ -425,12 +434,47 @@ export async function workflowUiSmoke() {
       (await stepSummary('Find the three runs')) === '3 segments',
       'The example must find three run segments.',
     );
-    await openOutput('Run 2');
+    await openSegment('Find the three runs', 'Run 2');
     await checkSegmentSelection('Run 2');
     assert(
       detail('Crossings') && plotBands().length === 3,
       'The example runs must come from speed triggers.',
     );
+    // The plot chooser shows every segment, aligned segments, or one.
+    async function chooseSegments(text: string) {
+      document
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Segments to plot"]',
+        )!
+        .click();
+      await delay();
+      (
+        await until(
+          () =>
+            [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+              (option) => option.textContent?.trim().startsWith(text),
+            ),
+          `segment choice ${text}`,
+        )
+      ).click();
+      await delay();
+    }
+    await chooseSegments('Aligned from start');
+    await until(
+      () =>
+        document.querySelectorAll('.aligned-segments-legend button').length ===
+          3 &&
+        document.querySelector('.aligned-segments .signal-chart svg') &&
+        selectedHistoryRow().getAttribute('data-kind') === 'step',
+      'segments aligned from their starts',
+    );
+    await chooseSegments('All 3 segments');
+    await until(
+      () => plotBands().length === 3 && !selectedBand(),
+      'every segment over the recording',
+    );
+    await chooseSegments('Run 2 · ');
+    await checkSegmentSelection('Run 2');
     // Value while viewing a segment works within it.
     await click('Calculate value');
     const modal = await dialog();
@@ -446,7 +490,7 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close segment value editor',
     );
-    await openOutput('Run 2 · First half');
+    await openSegment('Split Run 2 into two halves', 'Run 2 · First half');
     await checkSegmentSelection('Run 2 · First half', 20);
     await openOutput('Run 2 · Average product');
     (
@@ -577,6 +621,26 @@ export async function workflowUiSmoke() {
       ),
     ].find((row) => row.title === name);
   /** Filters History to an output by name, selects it and clears the filter. */
+  /** Selects a segment through its step's Outputs table. */
+  async function openSegment(step: string, name: string) {
+    (await stepRow(step)).click();
+    await delay();
+    setValue(searchBox(), '');
+    await delay();
+    await outputsTab();
+    (
+      await until(
+        () =>
+          [
+            ...document.querySelectorAll<HTMLButtonElement>(
+              '.workflow-output-name',
+            ),
+          ].find((item) => item.title === name),
+        `segment ${name}`,
+      )
+    ).click();
+    await delay();
+  }
   async function openOutput(name: string) {
     const search = document.querySelector<HTMLInputElement>(
       'input[aria-label="Search workflow"]',

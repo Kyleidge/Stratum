@@ -128,6 +128,16 @@ import {
   type WorkflowTarget,
 } from '@/lib/workflow-drag';
 import { randomId } from '@/lib/random-id';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import AlignedSegmentsPlot, {
+  type AlignedWindow,
+} from './aligned-segments-plot';
 
 export type PlotScratchpadHandle = {
   createPlot: (target: WorkflowTarget) => void;
@@ -179,6 +189,17 @@ export type ActivePlot = {
   }[];
   /** A time interval Active first zooms to, such as a selected segment. */
   focus?: [number, number];
+  /**
+   * A Segment step's chooser: every segment over the recording, the
+   * segments aligned from their starts, or one segment.
+   */
+  segments?: {
+    value: string;
+    options: { value: string; label: string }[];
+    onChange: (value: string) => void;
+    /** Aligned from their starts: the segments drawn, in recording time. */
+    aligned?: AlignedWindow[];
+  };
 };
 const initialSheet: PlotSheet = {
   id: 'result',
@@ -1232,6 +1253,29 @@ export default function PlotScratchpad({
                   ) : (
                     <h1>{activeId ? active.title : 'Select a signal'}</h1>
                   )}
+                  {isActive && active.segments && (
+                    <Select
+                      value={active.segments.value}
+                      items={active.segments.options}
+                      onValueChange={(next) => {
+                        if (next !== null) active.segments!.onChange(next);
+                      }}
+                    >
+                      <SelectTrigger
+                        className="workbench-select scratchpad-segment-select"
+                        aria-label="Segments to plot"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {active.segments.options.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 {isActive ? (
                   <button
@@ -1348,6 +1392,18 @@ export default function PlotScratchpad({
                   </button>
                 </div>
               )}
+              {isActive && active.segments?.aligned ? (
+                <div className="scratchpad-canvas" data-aligned>
+                  <AlignedSegmentsPlot
+                    index={index}
+                    graph={graph}
+                    request={request}
+                    signalIds={active.traces.map((trace) => trace.id)}
+                    windows={active.segments.aligned}
+                    onSegment={active.segments.onChange}
+                  />
+                </div>
+              ) : (
               <div
                 className="scratchpad-canvas"
                 {...dropProps(selectedTab)}
@@ -1936,6 +1992,7 @@ export default function PlotScratchpad({
                   )}
                 </div>
               </div>
+              )}
               {measuring && clocks.size <= 1 && (
                 <PlotMeasurements
                   key={windowKey}
