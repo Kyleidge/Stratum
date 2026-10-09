@@ -288,14 +288,18 @@ globalThis.onmessage = (
             break;
           case 'view': {
             const plots = [];
-            for (const id of r.ids)
-              plots.push(
-                await engine.plot(
-                  id,
-                  r.ranges?.[id] ?? r.range,
-                  !!r.ranges?.[id],
-                ),
-              );
+            if (r.windows)
+              for (const window of r.windows.slice(0, 100))
+                plots.push(await engine.plot(r.ids[0], window));
+            else
+              for (const id of r.ids)
+                plots.push(
+                  await engine.plot(
+                    id,
+                    r.ranges?.[id] ?? r.range,
+                    !!r.ranges?.[id],
+                  ),
+                );
             send({ type: 'plots', requestId, plots });
             return;
           }

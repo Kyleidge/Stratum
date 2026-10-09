@@ -5,6 +5,7 @@ import { SignalEngine } from '../lib/signal-engine';
 import { stepName, WorkflowIndex } from '../lib/workflow-history';
 import { isSegmentCrop } from '../lib/file-segments';
 import { validateWorkspace } from '../lib/workspace-archive';
+import { workflowRows } from '../lib/workflow-tree';
 
 // 1 Hz for 40 s: torque equals time; speed is high from 5 s to 12 s and
 // from 20 s to 30 s.
@@ -501,5 +502,100 @@ void test('a formula within segments skips segments where a signal has no sample
   );
   assert.equal(sums.length, 1);
   assert.equal(sums[0].segmentId, set.segments[0].id);
+  engine.close();
+});
+
+void test('History shows a Segment step as one row, however many segments', async () => {
+  const { engine, source } = await fixture();
+  await engine.segmentSet(source.id, {
+    method: 'windows',
+    boundary: 'clip',
+    start: 0,
+    end: 39,
+    duration: 1,
+    step: 1,
+    includePartial: false,
+  });
+  const index = new WorkflowIndex(engine.project);
+  const step = engine.project.workflowSteps!.at(-1)!;
+  assert.equal(step.outputIds.length, 39);
+  const rows = workflowRows([step], index, new Set(), '', step.outputIds[4]);
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.key]),
+    [['step', step.id]],
+  );
+  // Searching for a segment finds its step.
+  assert.equal(workflowRows([step], index, new Set(), 'Segment 05').length, 1);
+  engine.close();
+});
+
+void test('History shows steps within segments as one row when they have several outputs', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+    ],
+  });
+  await engine.calculateValues([torque], 'maximum', undefined, undefined, {
+    setId: set.id,
+  });
+  await engine.deriveMany([torque], 'smooth', 2, true, undefined, {
+    within: { setId: set.id, segmentIds: [set.segments[0].id] },
+  });
+  const index = new WorkflowIndex(engine.project);
+  const [values, single] = engine.project.workflowSteps!.slice(-2);
+  assert.deepEqual(
+    workflowRows([values, single], index, new Set()).map((row) => row.kind),
+    ['step', 'single'],
+  );
+  engine.close();
+});
+
+void test('values calculated from per-segment values are one History row, naming their inputs', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+      [25, 30],
+    ],
+  });
+  const maxima = await engine.calculateValues(
+    [torque],
+    'maximum',
+    undefined,
+    undefined,
+    { setId: set.id },
+  );
+  const ratios = await engine.calculateFromValues(
+    maxima.map((value) => value.id),
+    '20 / a',
+    '',
+  );
+  assert.ok(ratios.every((value) => value.segmentId));
+  const index = new WorkflowIndex(engine.project);
+  const [segmentStep, maximumStep, ratioStep] =
+    engine.project.workflowSteps!.slice(-3);
+  const rows = workflowRows(
+    [segmentStep, maximumStep, ratioStep],
+    index,
+    new Set(),
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.inputs]),
+    [
+      ['step', 'rig.csv'],
+      ['step', 'from Torque'],
+      [
+        'step',
+        `from ${index.label(maxima[0].id)}, ${index.label(maxima[1].id)} and 1 more input`,
+      ],
+    ],
+  );
   engine.close();
 });

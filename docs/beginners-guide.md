@@ -128,8 +128,10 @@ updates automatically.
 _Figure 3. The shaded band and exact fields describe the same interval. The
 preview confirms one segment from 10 s to 50 s, with no clipped intervals._
 
-Check the preview boundaries, then choose **Create segments**. Select the new
-segment in History: the plot shades it over the recording and zooms to it.
+Check the preview boundaries, then choose **Create segments**. History shows
+the new step as one row; select it to see its segments shaded over the
+recording. The menu beside the plot title shows all segments, one segment, or
+**Aligned from start** to overlay them from their starts.
 **Within** in the same dialog finds segments inside earlier ones, such as
 10-second windows within each run.
 
@@ -144,8 +146,9 @@ Time ranges while learning the workflow.
 
 ## 4. Turn a signal into a value
 
-Check the box beside the smoothed signal in History, select the segment you
-just created, then choose **Value > Time average**. **Within** already names
+Check the box beside the smoothed signal in History, select your segment step
+and choose the segment in the menu beside the plot title, then choose
+**Value > Time average**. **Within** already names
 your segment and **Applies to** the smoothed signal; choose **Create 1 value**.
 Each calculation card already shows its result, and the preview draws the
 selected value over the signal in that segment. With **Within** set to all

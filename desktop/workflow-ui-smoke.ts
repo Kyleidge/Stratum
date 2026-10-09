@@ -387,18 +387,27 @@ export async function workflowUiSmoke() {
   const selectedBand = () =>
     plotBands().find((band) => band.hasAttribute('data-selected'));
   /**
-   * A selected segment: a scissors row without a check box, Details with its
-   * times, and the plot of its signals zoomed to its shaded band.
+   * A selected segment: its Segment step's single History row (segments are
+   * not listed), the plot chooser naming it, Details with its times, and the
+   * plot of its signals zoomed to its shaded band.
    */
   async function checkSegmentSelection(name: string, duration?: number) {
     const row = selectedHistoryRow();
     assert(
-      row.title.startsWith(name) &&
-        row.querySelector('.workflow-icon.segment') &&
-        !row.hasAttribute('aria-checked') &&
-        !row.querySelector('.workflow-row-check') &&
-        /^[\d.]+–[\d.]+ s$/.test(row.querySelector('small')?.textContent ?? ''),
-      `History did not show ${name} as a segment: ${row.getAttribute('aria-label')}.`,
+      row.getAttribute('data-kind') === 'step' &&
+        !row.hasAttribute('aria-expanded') &&
+        / segments?$/.test(row.querySelector('small')?.textContent ?? '') &&
+        !document.querySelector(
+          '.workflow-tree-row[data-kind="output"] .workflow-icon.segment',
+        ),
+      `History did not show ${name} by its Segment step: ${row.getAttribute('aria-label')}.`,
+    );
+    await until(
+      () =>
+        document
+          .querySelector('.scratchpad-segment-select')
+          ?.textContent?.startsWith(`${name} · `),
+      `plot chooser naming ${name}`,
     );
     await until(
       () => details().querySelector('h2')?.textContent?.startsWith(name),
@@ -425,12 +434,47 @@ export async function workflowUiSmoke() {
       (await stepSummary('Find the three runs')) === '3 segments',
       'The example must find three run segments.',
     );
-    await openOutput('Run 2');
+    await openSegment('Find the three runs', 'Run 2');
     await checkSegmentSelection('Run 2');
     assert(
       detail('Crossings') && plotBands().length === 3,
       'The example runs must come from speed triggers.',
     );
+    // The plot chooser shows every segment, aligned segments, or one.
+    async function chooseSegments(text: string) {
+      document
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Segments to plot"]',
+        )!
+        .click();
+      await delay();
+      (
+        await until(
+          () =>
+            [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+              (option) => option.textContent?.trim().startsWith(text),
+            ),
+          `segment choice ${text}`,
+        )
+      ).click();
+      await delay();
+    }
+    await chooseSegments('Aligned from start');
+    await until(
+      () =>
+        document.querySelectorAll('.aligned-segments-legend button').length ===
+          3 &&
+        document.querySelector('.aligned-segments .signal-chart svg') &&
+        selectedHistoryRow().getAttribute('data-kind') === 'step',
+      'segments aligned from their starts',
+    );
+    await chooseSegments('All 3 segments');
+    await until(
+      () => plotBands().length === 3 && !selectedBand(),
+      'every segment over the recording',
+    );
+    await chooseSegments('Run 2 · ');
+    await checkSegmentSelection('Run 2');
     // Value while viewing a segment works within it.
     await click('Calculate value');
     const modal = await dialog();
@@ -446,7 +490,7 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close segment value editor',
     );
-    await openOutput('Run 2 · First half');
+    await openSegment('Split Run 2 into two halves', 'Run 2 · First half');
     await checkSegmentSelection('Run 2 · First half', 20);
     await openOutput('Run 2 · Average product');
     (
@@ -577,14 +621,87 @@ export async function workflowUiSmoke() {
       ),
     ].find((row) => row.title === name);
   /** Filters History to an output by name, selects it and clears the filter. */
+  /** Selects a segment through its step's Outputs table. */
+  async function openSegment(step: string, name: string) {
+    (await stepRow(step)).click();
+    await delay();
+    setValue(searchBox(), '');
+    await delay();
+    await outputsTab();
+    (
+      await until(
+        () =>
+          [
+            ...document.querySelectorAll<HTMLButtonElement>(
+              '.workflow-output-name',
+            ),
+          ].find((item) => item.title === name),
+        `segment ${name}`,
+      )
+    ).click();
+    await delay();
+  }
   async function openOutput(name: string) {
     const search = document.querySelector<HTMLInputElement>(
       'input[aria-label="Search workflow"]',
     )!;
     setValue(search, name);
-    (await until(() => outputRow(name), `output ${name}`)).click();
+    // Outputs within segments have no History row: their step's one row
+    // matches, and the Outputs table selects the output.
+    const found = await until(
+      () =>
+        outputRow(name) ??
+        (document.querySelectorAll('.workflow-tree-row').length === 1 &&
+          document.querySelector<HTMLElement>(
+            '.workflow-tree-row[data-kind="step"]',
+          )) ??
+        undefined,
+      `output ${name}`,
+    );
+    found.click();
     await delay();
     setValue(search, '');
+    await delay();
+    if (found.getAttribute('data-kind') === 'step') {
+      await outputsTab();
+      (
+        await until(
+          () =>
+            [
+              ...document.querySelectorAll<HTMLButtonElement>(
+                '.workflow-output-name',
+              ),
+            ].find((item) => item.title === name),
+          `output ${name} in its step`,
+        )
+      ).click();
+      await delay();
+    }
+  }
+  /** The viewed member's row in the Outputs table (members within segments
+   * have no History row). */
+  async function memberRow() {
+    const find = () =>
+      document.querySelector<HTMLElement>(
+        '.workflow-output-table tr[data-state="selected"]',
+      ) ?? undefined;
+    // A saved plot tab hides the dock; Active shows it again.
+    if (!find())
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')]
+        .find((tab) => tab.textContent?.trim() === 'Active')
+        ?.click();
+    return until(find, 'the viewed member in the Outputs table');
+  }
+  /** Checks only the viewed member, through the Outputs table. */
+  async function checkOnlyMember() {
+    const uncheck = [
+      ...document.querySelectorAll<HTMLButtonElement>('.workflow-link'),
+    ].find((item) => item.textContent?.trim() === 'Uncheck all');
+    if (uncheck && !uncheck.disabled) uncheck.click();
+    await delay();
+    (await memberRow())
+      .querySelector<HTMLElement>('[aria-label^="Check "]')!
+      .click();
     await delay();
   }
   function selectedHistoryRow() {
@@ -1778,7 +1895,8 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('2 checked'),
       'Inspecting a member silently replaced the checked batch.',
     );
-    await contextAction(selectedHistoryRow(), 'View samples');
+    // The member has no History row of its own; the toolbar inspects it.
+    await menuAction('View samples');
     const contextSamples = await dialog();
     await until(
       () => contextSamples.querySelectorAll('tbody tr').length > 0,
@@ -1804,7 +1922,11 @@ export async function workflowUiSmoke() {
         ?.getAttribute('data-checked') === 'false' &&
         document
           .querySelector('.workflow-input-scope')
-          ?.textContent?.includes(selectedHistoryRow().title),
+          ?.textContent?.includes(
+            (await memberRow())
+              .querySelector('.workflow-output-name')!
+              .getAttribute('title')!,
+          ),
       'Follow selection did not return to the viewed member.',
     );
     // Explicitly empty input scope disables creation rather than falling back silently.
@@ -1827,9 +1949,9 @@ export async function workflowUiSmoke() {
       button('Derive signal'),
       'Empty input scope cannot return to the current selection.',
     );
-    await contextAction(selectedHistoryRow(), 'Check only');
+    await checkOnlyMember();
     // A signal within a segment brings its siblings, to compare segments.
-    await dragItem(selectedHistoryRow(), button('New plot')!);
+    await dragItem(await memberRow(), button('New plot')!);
     setValue(searchBox(), '');
     await until(
       () => document.querySelectorAll('.scratchpad-trace').length === 2,
@@ -1863,9 +1985,10 @@ export async function workflowUiSmoke() {
       ),
       'Segments did not share the zero origin.',
     );
+    await closePlot();
     // A processing tool receives this member, without adding its siblings.
     await dragItem(
-      selectedHistoryRow(),
+      await memberRow(),
       document.querySelector<HTMLElement>('[data-action="value"]')!,
     );
     const memberModal = await dialog();
@@ -1874,8 +1997,7 @@ export async function workflowUiSmoke() {
       'Segment drop kept stale checked siblings.',
     );
     await click('Close', memberModal);
-    await closePlot();
-    await contextAction(selectedHistoryRow(), 'Check only');
+    await checkOnlyMember();
     await exportFile();
     await click('Calculate value');
     await click('Create 1 value', await dialog());
@@ -2238,82 +2360,14 @@ export async function workflowUiSmoke() {
         ?.textContent?.includes('9–16 of 40'),
       'Stacked comparison pages cannot be reached.',
     );
-    // Full membership stays in the sidebar and preserves the current inspection.
-    const historyTree = document.querySelector<HTMLElement>('[role="tree"]')!;
-    // The derived step is the last; its 40 segments' step also has a link.
-    const allOutputs = () =>
-      [...historyTree.querySelectorAll<HTMLElement>('[data-kind="more"]')].at(
-        -1,
-      );
-    const moreOutputs = await until(allOutputs, 'full output tree link');
+    // A step within segments is one History row; its members are chosen on
+    // the plot or in the Outputs table.
+    const derivedRow = selectedHistoryRow();
     assert(
-      moreOutputs.title === 'View all 40 outputs',
-      'The large operation must offer its complete membership.',
-    );
-    const previousScroll = historyTree.scrollTop;
-    const previousRows = historyTree.textContent;
-    const previousSelection = document.querySelector(
-      '.workflow-status-selection',
-    )?.textContent;
-    const previousPlot = plotTab()?.textContent;
-    const previousInputs = document.querySelector(
-      '.workflow-input-scope',
-    )?.textContent;
-    moreOutputs.click();
-    await delay();
-    assert(
-      historyTree.getAttribute('aria-label') === 'Step outputs' &&
-        historyTree.querySelectorAll('[data-kind="step"]').length === 1 &&
-        !allOutputs(),
-      'View all must show only the operation and its full output tree.',
-    );
-    assert(
-      document.querySelector('.workflow-status-selection')?.textContent ===
-        previousSelection &&
-        plotTab()?.textContent === previousPlot &&
-        document.querySelector('.workflow-input-scope')?.textContent ===
-          previousInputs,
-      'Opening the output tree changed the inspection, plot or processing inputs.',
-    );
-    await click('Back to history');
-    assert(
-      historyTree.textContent === previousRows &&
-        Math.abs(historyTree.scrollTop - previousScroll) < 1 &&
-        document.activeElement === allOutputs(),
-      'Returning lost the history rows, scroll position or keyboard focus.',
-    );
-    allOutputs()!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
-    );
-    await delay();
-    document.activeElement!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
-    );
-    await until(
-      () => document.activeElement?.getAttribute('aria-posinset') === '40',
-      'last member in the full output tree',
-    );
-    assert(
-      document.activeElement?.getAttribute('aria-setsize') === '40' &&
-        historyTree.querySelectorAll('[data-kind="output"]').length < 40,
-      'The focused tree must expose every member while keeping mounted rows bounded.',
-    );
-    document.activeElement!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
-    );
-    await delay();
-    assert(
-      historyTree.getAttribute('aria-label') === 'Step outputs' &&
-        document.activeElement?.getAttribute('aria-selected') === 'true',
-      'Selecting a late member must keep the focused output tree open.',
-    );
-    document.activeElement!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
-    await delay();
-    assert(
-      !button('Back to history') && document.activeElement === allOutputs(),
-      'Escape must return keyboard focus to the history link.',
+      derivedRow.getAttribute('data-kind') === 'step' &&
+        derivedRow.querySelector('small')?.textContent === '40 signals' &&
+        !derivedRow.hasAttribute('aria-expanded'),
+      'A step within segments must be one History row.',
     );
     await closePlot();
     await outputsTab();
@@ -2371,8 +2425,12 @@ export async function workflowUiSmoke() {
       'Second output page is incorrect.',
     );
     await openFirstOutput();
+    // A member of a step within segments is shown by its step's one row.
     assert(
-      selectedHistoryRow().getAttribute('aria-label')?.includes('Value'),
+      document
+        .querySelector('.workflow-properties .workflow-kind')
+        ?.textContent?.includes('Value') &&
+        selectedHistoryRow().getAttribute('data-kind') === 'step',
       'A late batch member cannot be selected.',
     );
     await exportFile();
@@ -2684,6 +2742,112 @@ export async function workflowUiSmoke() {
       () => !document.querySelector('[role="dialog"]'),
       'close final dialog',
     );
+    // An ordinary large step lists a preview in History, with its full
+    // membership one link away: a recording with 40 channels.
+    const wideFile = new DataTransfer();
+    wideFile.items.add(
+      new File(
+        [
+          [
+            ['t', ...Array.from({ length: 40 }, (_, k) => `wide-${k + 1} [V]`)],
+            ...[0, 1, 2].map((t) => [
+              t,
+              ...Array.from({ length: 40 }, () => t),
+            ]),
+          ]
+            .map((row) => row.join(','))
+            .join('\n'),
+        ],
+        'Wide.csv',
+      ),
+    );
+    const wideImport = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Import recordings"]',
+    )!;
+    wideImport.files = wideFile.files;
+    wideImport.dispatchEvent(new Event('change', { bubbles: true }));
+    await until(
+      () =>
+        [...document.querySelectorAll<HTMLElement>('[data-kind="more"]')].some(
+          (row) => row.title === 'View all 40 outputs',
+        ),
+      'wide recording imported',
+    );
+    await settled();
+    const wideTree = document.querySelector<HTMLElement>('[role="tree"]')!;
+    // Full membership of an ordinary large step stays in the sidebar and
+    // preserves the current inspection.
+    const allOutputs = () =>
+      [...wideTree.querySelectorAll<HTMLElement>('[data-kind="more"]')].at(-1);
+    const moreOutputs = await until(allOutputs, 'full output tree link');
+    assert(
+      moreOutputs.title === 'View all 40 outputs',
+      'The large operation must offer its complete membership.',
+    );
+    const previousScroll = wideTree.scrollTop;
+    const previousRows = wideTree.textContent;
+    const previousSelection = document.querySelector(
+      '.workflow-status-selection',
+    )?.textContent;
+    const previousInputs = document.querySelector(
+      '.workflow-input-scope',
+    )?.textContent;
+    moreOutputs.click();
+    await delay();
+    assert(
+      wideTree.getAttribute('aria-label') === 'Step outputs' &&
+        wideTree.querySelectorAll('[data-kind="step"]').length === 1 &&
+        !allOutputs(),
+      'View all must show only the operation and its full output tree.',
+    );
+    assert(
+      document.querySelector('.workflow-status-selection')?.textContent ===
+        previousSelection &&
+        document.querySelector('.workflow-input-scope')?.textContent ===
+          previousInputs,
+      'Opening the output tree changed the inspection, plot or processing inputs.',
+    );
+    await click('Back to history');
+    assert(
+      wideTree.textContent === previousRows &&
+        Math.abs(wideTree.scrollTop - previousScroll) < 1 &&
+        document.activeElement === allOutputs(),
+      'Returning lost the history rows, scroll position or keyboard focus.',
+    );
+    allOutputs()!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await delay();
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
+    );
+    await until(
+      () => document.activeElement?.getAttribute('aria-posinset') === '40',
+      'last member in the full output tree',
+    );
+    assert(
+      document.activeElement?.getAttribute('aria-setsize') === '40' &&
+        wideTree.querySelectorAll('[data-kind="output"]').length < 40,
+      'The focused tree must expose every member while keeping mounted rows bounded.',
+    );
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await delay();
+    assert(
+      wideTree.getAttribute('aria-label') === 'Step outputs' &&
+        document.activeElement?.getAttribute('aria-selected') === 'true',
+      'Selecting a late member must keep the focused output tree open.',
+    );
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await delay();
+    assert(
+      !button('Back to history') && document.activeElement === allOutputs(),
+      'Escape must return keyboard focus to the history link.',
+    );
+
     // Cross-file processing through the real worker and dialogs.
     const timeFiles = new DataTransfer();
     timeFiles.items.add(

@@ -24,7 +24,11 @@ import {
   Waves,
   X,
 } from 'lucide-react';
-import { workflowRows, type WorkflowRow } from '@/lib/workflow-tree';
+import {
+  oneRowStep,
+  workflowRows,
+  type WorkflowRow,
+} from '@/lib/workflow-tree';
 import { formatCount } from '@/lib/format-count';
 import { segmentInterval } from '@/lib/file-segments';
 import {
@@ -153,8 +157,16 @@ export default function WorkflowHistory({
   const [outputView, setOutputView] = useState<OutputView | null>(null);
   const [outputsCollapsed, setOutputsCollapsed] = useState(false);
   const focusedStepId = outputView?.stepId;
+  // A selected segment, or an output within segments, is shown by its
+  // step's one row.
+  const selectedOwnerStep =
+    selection.kind === 'output' ? index.owner.get(selection.id) : undefined;
   const rawSelectedKey =
-    selection.kind === 'step' ? selection.id : `output:${selection.id}`;
+    selection.kind === 'step'
+      ? selection.id
+      : selectedOwnerStep && oneRowStep(selectedOwnerStep, index)
+        ? selectedOwnerStep.id
+        : `output:${selection.id}`;
   const selectedOwner =
     selection.kind === 'output' ? index.owner.get(selection.id)?.id : undefined;
   // Following an input or revealing another operation leaves the focused tree.
@@ -249,6 +261,7 @@ export default function WorkflowHistory({
     for (const row of rows) {
       const tall =
         !!row.stepLabel ||
+        !!row.inputs ||
         ((row.kind === 'step' || row.kind === 'single') &&
           !!metrics.font &&
           textWidth(row.label, metrics.font) >
@@ -582,7 +595,9 @@ export default function WorkflowHistory({
                 aria-posinset={positions.get(row.key)?.position}
                 aria-setsize={positions.get(row.key)?.size}
                 aria-expanded={
-                  row.kind === 'step' && step.outputIds.length > 0
+                  row.kind === 'step' &&
+                  step.outputIds.length > 0 &&
+                  !oneRowStep(step, index)
                     ? expanded
                     : undefined
                 }
@@ -628,7 +643,9 @@ export default function WorkflowHistory({
                       : row.label
                 }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
                 data-wrap={
-                  (!row.stepLabel && rowHeight(position) > ROW_HEIGHT) ||
+                  (!row.stepLabel &&
+                    !row.inputs &&
+                    rowHeight(position) > ROW_HEIGHT) ||
                   undefined
                 }
                 style={{
@@ -710,6 +727,7 @@ export default function WorkflowHistory({
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
+                    if (oneRowStep(step, index)) return;
                     if (row.kind === 'step' && !expanded)
                       setExpanded(step.id, true);
                     else if (row.kind === 'step' && step.outputIds.length)
@@ -727,7 +745,7 @@ export default function WorkflowHistory({
                   }
                 }}
               >
-                {row.kind === 'step' ? (
+                {row.kind === 'step' && !oneRowStep(step, index) ? (
                   <button
                     tabIndex={-1}
                     className="workflow-disclosure"
@@ -745,7 +763,7 @@ export default function WorkflowHistory({
                       <ChevronRight size={14} />
                     )}
                   </button>
-                ) : single ? (
+                ) : single || row.kind === 'step' ? (
                   <span className="workflow-single-spacer" aria-hidden="true" />
                 ) : (
                   <span className="workflow-branch" aria-hidden="true" />
@@ -767,11 +785,21 @@ export default function WorkflowHistory({
                     )}
                     {flagged && <StatusIcon status={flagged} size={12} />}
                     <span className="workflow-row-copy">
-                      {row.stepLabel ? (
+                      {row.stepLabel || row.inputs ? (
                         <span className="workflow-row-title">
                           <strong>{row.label}</strong>
-                          <em title={`${reference} ${row.stepLabel}`}>
-                            {row.stepLabel}
+                          <em
+                            title={[
+                              row.stepLabel && `${reference} ${row.stepLabel}`,
+                              row.inputs,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          >
+                            {/* Inputs first: they matter most when space is short. */}
+                            {[row.inputs, row.stepLabel]
+                              .filter(Boolean)
+                              .join(' · ')}
                           </em>
                         </span>
                       ) : (

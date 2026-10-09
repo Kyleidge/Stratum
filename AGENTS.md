@@ -38,8 +38,10 @@ There are no server API routes or cloud signal uploads.
   and row check boxes in History edit only the checked inputs. A plain check box
   starts from the explicit checks; only Ctrl/Shift+click extends from the viewed
   signal. The Outputs table's Input column ticks only explicit inputs and marks
-  the viewed row "in view". Rows are 28 px, or 44 px when a step name wraps to
-  two lines, virtualized with prefix offsets. The last selection is stored per
+  the viewed row "in view". Step rows carry a small second line naming their
+  inputs (`stepInputSummary`: a Segment step's recording, otherwise "from" its
+  first two input signals or values). Rows are 28 px, or 44 px with a second
+  line or a step name that wraps, virtualized with prefix offsets. The last selection is stored per
   device (`stratum-workflow-selection-v1`), restored only if it still exists,
   and never journaled. Explicit parent
   navigation clears search; opening a search result preserves matching context.
@@ -116,11 +118,21 @@ There are no server API routes or cloud signal uploads.
   segment place within its parent, or input + segment), so the segment count
   may change; `followRebuiltBatches` lets later steps that used a whole
   rebuilt batch follow it. Old crop-segment steps (`segmentationId`) still
-  open, edit and replay. Active shades segments (`ActivePlot.bands`/`focus`)
-  and zooms to a selected one. Its "Choose signals" offers every visible
-  signal on the set's axis (`segmentSetSignals`), remembered per set on the
-  device (`stratum-segment-signals-v1`); by default the signals that found
-  them.
+  open, edit and replay. History shows a Segment step, and a step whose
+  several outputs all belong to segments (within them, or from signals or
+  values that were), as one row (`oneRowStep` in `lib/workflow-tree.ts`); a
+  selected member highlights that row. Value steps whose values fill a
+  segment × input grid open on the By segment table (`segmentGridFits`). Active
+  shades segments (`ActivePlot.bands`/`focus`) over the signals chosen with
+  "Choose signals" (any visible signal on the set's axis,
+  `segmentSetSignals`, remembered per set on the device in
+  `stratum-segment-signals-v1`), by default the signals that found them. Its
+  `segments` chooser picks all segments, one (selecting and zooming to it) or
+  "Aligned from start" (`components/aligned-segments-plot.tsx`, `view` with
+  `windows`). A derive step within segments gets the same chooser
+  (`segmentViews`, by step): all its outputs with bands, one segment's, or
+  each input's outputs aligned; values within segments use the dock's By
+  segment table.
 - First run: `components/workflow-welcome.tsx` is the empty state and the
   post-import next-steps strip; `components/example-tour.tsx` only changes the
   selection and stores dismissal under `stratum-example-tour-v1`;

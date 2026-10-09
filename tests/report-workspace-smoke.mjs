@@ -475,39 +475,86 @@ void app
     await setField('Height', 240);
 
     // Carry the actual history row's drag payload through the workspace switch.
-    const dropHistoryRow = async (title) => {
+    // With `step`, the member is dragged from that step's Outputs list,
+    // since outputs within segments have no History row of their own.
+    const dropHistoryRow = async (title, kind = 'output', step) => {
       await click('Data Inspector', '.workflow-workspaces');
       // History mounts only the rows in view; search brings this one there.
-      await setField('Search workflow', title);
-      await evaluate((title) => {
-        const row = [
-          ...document.querySelectorAll('[role="treeitem"][data-kind="output"]'),
-        ].find((item) => item.title === title);
-        if (!row)
-          throw new Error(
-            'Missing the history row ' +
-              title +
-              ': ' +
-              [...document.querySelectorAll('[role="treeitem"]')]
-                .map((item) => item.title)
-                .join(' / '),
+      await setField('Search workflow', step ?? title);
+      if (step) {
+        await evaluate((step) => {
+          const row = [
+            ...document.querySelectorAll('[role="treeitem"][data-kind="step"]'),
+          ].find((item) => item.title === step);
+          if (!row) throw new Error('Missing the step row ' + step);
+          row.click();
+          // A saved plot tab hides the dock; Active shows the step's outputs.
+          [...document.querySelectorAll('[role="tab"]')]
+            .find((tab) => tab.textContent.trim() === 'Active')
+            ?.click();
+        }, step);
+        await pause(400);
+        // Values within segments open as a grid; the list rows drag.
+        await evaluate(() =>
+          [...document.querySelectorAll('.workflow-layout-toggle button')]
+            .find((button) => button.textContent.trim() === 'List')
+            ?.click(),
+        );
+        await pause(300);
+      }
+      await evaluate(
+        ([title, kind, step]) => {
+          const row = step
+            ? [...document.querySelectorAll('.workflow-output-table tr')].find(
+                (item) =>
+                  item.querySelector('.workflow-output-name')?.title === title,
+              )
+            : [
+                ...document.querySelectorAll(
+                  `[role="treeitem"][data-kind="${kind}"]`,
+                ),
+              ].find((item) => item.title === title);
+          if (!row)
+            throw new Error(
+              'Missing the history row ' +
+                title +
+                ': ' +
+                [...document.querySelectorAll('[role="treeitem"]')]
+                  .map((item) => item.title)
+                  .join(' / ') +
+                ' | ' +
+                (document
+                  .querySelector('.workflow-output-panel')
+                  ?.textContent?.slice(0, 300) ??
+                  'no outputs panel: ' +
+                    (document
+                      .querySelector('.plot-output-dock')
+                      ?.outerHTML.slice(0, 400) ?? 'no dock') +
+                    ' status ' +
+                    document.querySelector('.workflow-status-selection')
+                      ?.textContent),
+            );
+          const transfer = new DataTransfer();
+          row.dispatchEvent(
+            new DragEvent('dragstart', {
+              bubbles: true,
+              dataTransfer: transfer,
+            }),
           );
-        const transfer = new DataTransfer();
-        row.dispatchEvent(
-          new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }),
-        );
-        globalThis.reportSmokeDrag = transfer;
-        const reports = [
-          ...document.querySelectorAll('.workflow-workspaces button'),
-        ].find((button) => button.textContent.trim() === 'Reports');
-        reports.dispatchEvent(
-          new DragEvent('dragover', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer: transfer,
-          }),
-        );
-      }, title);
+          globalThis.reportSmokeDrag = transfer;
+          const reports = [
+            ...document.querySelectorAll('.workflow-workspaces button'),
+          ].find((button) => button.textContent.trim() === 'Reports');
+          reports.dispatchEvent(
+            new DragEvent('dragover', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer,
+            }),
+          );
+        },
+        [title, kind, step],
+      );
       await waitFor(
         reportsVisible,
         'Dragging over Reports did not open the report workspace',
@@ -528,16 +575,21 @@ void app
         delete globalThis.reportSmokeDrag;
       });
     };
-    // A segment is a time interval, not data: dropping one adds nothing.
-    await dropHistoryRow('Run 1');
+    // Segments are time intervals, not data: dropping a Segment step (its
+    // one History row) adds nothing.
+    await dropHistoryRow('Find the three runs', 'step');
     await pause(300);
     assert.equal(
       await blockCount(),
       1,
-      'A dropped segment must not add a report block',
+      'A dropped Segment step must not add a report block',
     );
     // One value of a three-value step is captured without its siblings.
-    await dropHistoryRow('Run 2 · Average product');
+    await dropHistoryRow(
+      'Run 2 · Average product',
+      'output',
+      'Average product per run',
+    );
     await waitFor(
       () => document.querySelectorAll('.rb-paper .rb-block').length === 2,
       'Individual history member drop did not add one exact snapshot',
