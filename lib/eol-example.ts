@@ -69,7 +69,7 @@ export const EOL_COMPONENTS: {
 ];
 
 /** Small seeded generator so every serial produces the same file each time. */
-function random(seed: string) {
+export function random(seed: string) {
   let state = 2166136261;
   for (const char of seed)
     state = Math.imul(state ^ char.charCodeAt(0), 16777619);

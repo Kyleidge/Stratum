@@ -1,0 +1,261 @@
+# Stratum workflow · Cam phaser static EOL test
+# Inputs bind by CSV column name. Steps refer to channels and earlier steps
+# by id; step[2] is the second output of a step. Open it in Stratum with
+# Import → Open a workflow file…, or edit it in any text editor.
+format: stratum-workflow
+version: 2
+name: Cam phaser static EOL test
+revision: '1'
+description: >-
+  Static full-range test of a vane-type cam phaser. With the camshaft held
+  still and oil supplied at 3 bar and 70 °C, the oil control valve is stepped
+  0 → 100 → 0 % five times, driving the phaser from end stop to end stop.
+  Checks cover authority, response in both directions, lock-pin release,
+  leakage at the end stops, OCV current and the rig's test conditions.
+item:
+  label: Serial number
+  id: { from: file-name, pattern: '^(?<id>CP-[0-9]+)' }
+input:
+  channels:
+    duty: { name: OCV duty cycle, unit: '%' }
+    current: { name: OCV current, unit: A }
+    angle: { name: Phaser angle, unit: ° }
+    pressure: { name: Oil pressure, unit: bar }
+    flow: { name: Oil flow, unit: L/min }
+    oil: { name: Oil temperature, unit: °C }
+steps:
+  # Each valve step starts a segment that lasts until the next step.
+  - id: advance-steps
+    name: Find the advance steps (0 → 100 %)
+    segment:
+      triggers:
+        start: { signal: duty, edge: rising, threshold: 50 }
+        end: { signal: duty, edge: falling, threshold: 50 }
+        minimum-duration: 0.5
+      boundary: discard
+    outputs: Advance {n}
+    checks:
+      - count: 5
+        severity: fail
+        message: The rig should step the valve to 100 % five times.
+    on-fail: stop
+
+  # The last hold runs to the end of the recording, so a retard step ends
+  # 0.85 s after the phaser is back within 0.5° of its base stop.
+  - id: retard-steps
+    name: Find the retard steps (100 → 0 %)
+    segment:
+      triggers:
+        start: { signal: duty, edge: falling, threshold: 50 }
+        end: { signal: angle, edge: falling, threshold: 0.5, offset: 0.85 }
+        minimum-duration: 0.5
+      boundary: discard
+    outputs: Retard {n}
+    checks:
+      - count: 5
+        severity: fail
+        message: The rig should step the valve back to 0 % five times.
+    on-fail: stop
+
+  # One 0.4 s window from 0.5 s after each valve step, once the phaser
+  # has settled at its stop.
+  - id: advance-held
+    name: Settled at the advance stop
+    segment:
+      within: advance-steps
+      windows: { start: 0.5, end: 0.95, duration: 0.4, step: 1 }
+      boundary: clip
+    outputs: '{segment} · Held'
+
+  - id: retard-held
+    name: Settled at the base stop
+    segment:
+      within: retard-steps
+      windows: { start: 0.5, end: 0.95, duration: 0.4, step: 1 }
+      boundary: clip
+    outputs: '{segment} · Held'
+
+  - id: authority
+    name: Authority (advance stop angle)
+    value: { function: time-average, input: angle, within: advance-held }
+    outputs: '{segment} · Authority'
+    checks:
+      - limits: { min: 23.5, max: 26, unit: ° }
+        severity: fail
+        message: The phaser does not reach its full advance stop.
+
+  - id: base-angle
+    name: Base stop angle
+    value: { function: time-average, input: angle, within: retard-held }
+    outputs: '{segment} · Base angle'
+    checks:
+      - limits: { min: -0.3, max: 0.3, unit: ° }
+        severity: warning
+        message: The phaser does not return to its locked base position.
+
+  # Times are seconds from each valve step.
+  - id: advance-dead-time
+    name: Advance dead time (to 0.5°)
+    value:
+      function: first-crossing
+      input: angle
+      within: advance-steps
+      threshold: 0.5
+    outputs: '{segment} · Dead time'
+    checks:
+      - limits: { max: 0.08, unit: s }
+        severity: warning
+        message: Slow lock-pin release.
+
+  - id: advance-response
+    name: Advance response (to 90 % of stroke)
+    value:
+      function: first-crossing
+      input: angle
+      within: advance-steps
+      threshold: { value: 'authority[1]', factor: 0.9 }
+    outputs: '{segment} · Response time'
+    checks:
+      - limits: { max: 0.22, unit: s }
+        severity: fail
+        message: The phaser responds too slowly.
+
+  - id: retard-response
+    name: Retard response (to 10 % of stroke)
+    value:
+      function: first-crossing
+      input: angle
+      within: retard-steps
+      threshold: { value: 'authority[1]', factor: 0.1 }
+      edge: falling
+    outputs: '{segment} · Response time'
+    checks:
+      - limits: { max: 0.22, unit: s }
+        severity: fail
+        message: The phaser responds too slowly.
+
+  - id: advance-leakage
+    name: Leakage at the advance stop
+    value: { function: time-average, input: flow, within: advance-held }
+    outputs: '{segment} · Leakage'
+    checks:
+      - limits: { max: 1, unit: L/min }
+        severity: fail
+        message: Internal leakage is too high.
+
+  - id: base-leakage
+    name: Leakage at the base stop
+    value: { function: time-average, input: flow, within: retard-held }
+    outputs: '{segment} · Leakage'
+    checks:
+      - limits: { max: 1, unit: L/min }
+        severity: fail
+        message: Internal leakage is too high.
+
+  - id: peak-flow
+    name: Peak flow while moving
+    value: { function: maximum, input: flow, within: advance-steps }
+    outputs: '{segment} · Peak flow'
+
+  - id: ocv-current
+    name: OCV current at 100 %
+    value: { function: time-average, input: current, within: advance-held }
+    outputs: '{segment} · OCV current'
+    checks:
+      - limits: { min: 1.45, max: 1.85, unit: A }
+        severity: fail
+        message: OCV coil current out of range.
+
+  # Test conditions: the result is only valid at the specified supply.
+  - id: supply-pressure
+    name: Supply pressure at the base stop
+    value: { function: time-average, input: pressure, within: retard-held }
+    outputs: '{segment} · Supply pressure'
+    checks:
+      - limits: { min: 2.8, max: 3.2, unit: bar }
+        severity: warning
+        message: Rig oil supply out of range; retest the phaser.
+
+  - id: oil-temperature
+    name: Average oil temperature
+    value: { function: time-average, input: oil }
+    outputs: Average oil temperature
+    checks:
+      - limits: { min: 67, max: 73, unit: °C }
+        severity: warning
+        message: Oil temperature out of range; retest the phaser.
+
+report:
+  title: Cam phaser EOL report · {{item.id}}
+  page-size: a4
+  orientation: portrait
+  pages:
+    - blocks:
+        - type: text
+          name: Eyebrow
+          y: 40
+          width: 698
+          height: 24
+          text: STRATUM · CAM PHASER STATIC TEST
+          font-size: 11
+          bold: true
+          color: '#167f8c'
+          padding: 0
+        - type: text
+          name: Title
+          y: 70
+          width: 698
+          height: 80
+          text: |-
+            Cam phaser EOL report
+            {{item.label}} {{item.id}}
+          font-size: 28
+          bold: true
+          color: '#173447'
+          padding: 0
+        - type: text
+          name: Summary
+          y: 160
+          width: 698
+          height: 100
+          text: |-
+            Result: {{run.status}} · {{run.flags}}
+            Recording: {{file.name}} · processed {{run.date}}
+            Workflow: {{workflow.name}} revision {{workflow.revision}} · {{workflow.hash}}
+          font-size: 12
+          color: '#33495a'
+        - type: plot
+          name: Test traces
+          y: 270
+          width: 698
+          height: 800
+          text: Valve, phaser and oil supply
+          bind:
+            plot:
+              traces:
+                - ref: duty
+                - ref: angle
+                - ref: pressure
+                - ref: flow
+    - blocks:
+        - type: table
+          name: Key results
+          y: 40
+          width: 698
+          height: 620
+          text: Key results
+          bind:
+            values:
+              - authority
+              - advance-dead-time
+              - advance-response
+              - retard-response
+              - advance-leakage
+              - base-leakage
+        - type: table
+          name: Checks
+          y: 680
+          width: 698
+          height: 400
+          text: Checks
+          bind: { checks: flagged }

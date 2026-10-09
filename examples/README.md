@@ -15,6 +15,11 @@ the first column is time in seconds and blank cells mean missing samples.
 test rig and a workflow that processes, checks and reports each one. Use them to
 try [batch workflows](../docs/batch-workflows.md).
 
+[cam-phaser-eol](cam-phaser-eol) holds seven 10 kHz recordings of a static
+cam phaser test (OCV duty steps 0 → 100 → 0 % moving the phaser between its end
+stops, with angle, OCV current, oil pressure, flow and temperature) and a
+workflow that checks authority, response times and leakage.
+
 ## Compare the three runs
 
 1. Import `motor-runs.csv` and select **Torque** in History.
