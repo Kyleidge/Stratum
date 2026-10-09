@@ -66,6 +66,8 @@ export function matchValue(
   context: BindingContext,
   binding: ValueBinding,
   inputId: string,
+  /** The input's segment, when it is a value calculated within one. */
+  segmentId?: string,
 ): ScalarValue {
   const label = (id: string) => context.label?.(id) ?? 'a value';
   let candidates = binding.valueIds.map((id) => {
@@ -85,9 +87,9 @@ export function matchValue(
     // The input's segment, then the segments that contain it, nearest first.
     const levels: string[] = [];
     for (
-      let segment = ancestry
-        .map((id) => context.nodes.get(id)?.segmentId)
-        .find(Boolean);
+      let segment =
+        segmentId ??
+        ancestry.map((id) => context.nodes.get(id)?.segmentId).find(Boolean);
       segment && !levels.includes(segment);
       segment = context.segments?.get(segment)?.segment.parentId
     )

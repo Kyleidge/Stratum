@@ -3,6 +3,7 @@ import { isBinaryOperation } from './signal-arithmetic';
 import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
 import { BINDABLE_DERIVE, BINDABLE_VALUE } from './value-bindings';
 import { compileFormula, MAX_FORMULA_LENGTH } from './formula';
+import { VALUE_INPUT } from './value-math';
 import type {
   CheckDefinition,
   ParameterBindings,
@@ -92,11 +93,16 @@ export type RecipeOperation =
   | {
       kind: 'value';
       operation: ValueOperation;
+      /** Signals; for `calculate`, value steps (`a` is each input value). */
       inputs: RecipeRef[];
       /** Bound settings hold 0 until a run resolves `bindings`. */
       parameters?: ValueParameters;
+      /** For `calculate`, the formula's other values by name. */
       bindings?: ParameterBindings;
       within?: RecipeWithin;
+      /** `calculate`: the formula and its result's unit. */
+      expression?: string;
+      unit?: string;
     }
   | { kind: 'time'; settings: TimeSettings };
 export type RecipeStep = {
@@ -168,6 +174,13 @@ export function bindingRefs(operation: RecipeOperation): RecipeRef[] {
   return Object.values(bindings ?? {}).flatMap((binding) => binding.valueIds);
 }
 
+/** References to the value steps a calculation from values uses as inputs. */
+export function valueInputRefs(operation: RecipeOperation): RecipeRef[] {
+  return operation.kind === 'value' && operation.operation === 'calculate'
+    ? operation.inputs
+    : [];
+}
+
 /** References to the segment step a version 2 step works within. */
 export function withinRefs(operation: RecipeOperation): RecipeRef[] {
   return operation.kind === 'derive' ||
@@ -198,7 +211,7 @@ export function signalRefs(operation: RecipeOperation): RecipeRef[] {
     case 'crop-segment':
       return [...operation.inputs, ...triggers(operation.definition)];
     case 'value':
-      return [...operation.inputs];
+      return operation.operation === 'calculate' ? [] : [...operation.inputs];
     case 'time': {
       const settings = operation.settings;
       if (settings.kind === 'align')
@@ -222,6 +235,7 @@ export function signalRefs(operation: RecipeOperation): RecipeRef[] {
 export function stepRefs(step: RecipeStep): RecipeRef[] {
   return [
     ...signalRefs(step.operation),
+    ...valueInputRefs(step.operation),
     ...bindingRefs(step.operation),
     ...withinRefs(step.operation),
   ];
@@ -1113,6 +1127,76 @@ function readFormula(
   };
 }
 
+/** A calculation from values: input value steps, formula, unit, values. */
+function readValueMath(
+  reader: Reader,
+  body: YamlMap,
+  context: string,
+): RecipeOperation {
+  if (body.within !== undefined)
+    reader.fail(
+      `${context}: a calculation from values follows the segments of its input values; remove within.`,
+      body,
+    );
+  reader.keys(
+    body,
+    ['function', 'input', 'inputs', 'expression', 'unit', 'values'],
+    context,
+  );
+  const expression = reader.text(
+    body.expression,
+    `${context} expression`,
+    MAX_FORMULA_LENGTH,
+    body,
+  );
+  let formula;
+  try {
+    formula = compileFormula(expression, 'values');
+  } catch (error) {
+    reader.fail(
+      `${context} expression: ${error instanceof Error ? error.message : 'invalid formula'}.`,
+      body,
+    );
+  }
+  const names = formula.values.filter((name) => name !== VALUE_INPUT);
+  const raw = body.values;
+  const map =
+    raw === undefined || raw === null
+      ? {}
+      : reader.map(raw, `${context} values`);
+  reader.keys(map, names, `${context} values`);
+  for (const name of names)
+    if (map[name] === undefined || map[name] === null)
+      reader.fail(
+        `${context}: the formula uses ${name}; list it under values.`,
+        body,
+      );
+  return {
+    kind: 'value',
+    operation: 'calculate',
+    inputs: readInputs(reader, body, context),
+    expression,
+    unit: reader.optionalText(body.unit, `${context} unit`, 40, body) ?? '',
+    ...(names.length
+      ? {
+          bindings: Object.fromEntries(
+            names.map((name) => [
+              name,
+              {
+                valueIds: reader.refs(
+                  map[name],
+                  `${context} values ${name}`,
+                  map,
+                ),
+                factor: 1,
+              },
+            ]),
+          ),
+        }
+      : {}),
+  };
+}
+
 function readStep(
   reader: Reader,
   raw: YamlValue,
@@ -1224,10 +1308,12 @@ function readStep(
       version >= 2
         ? readFileSegment(reader, body, context)
         : readCropSegment(reader, body, context);
-  } else if (present[0] === 'value') {
+  } else if (present[0] === 'value' && body.function === 'calculate')
+    operation = readValueMath(reader, body, context);
+  else if (present[0] === 'value') {
     const function_ = reader.choice(
       body.function,
-      VALUE_FUNCTIONS.map((item) => item.operation),
+      [...VALUE_FUNCTIONS.map((item) => item.operation), 'calculate'],
       `${context} function`,
       undefined,
       body,
@@ -1487,6 +1573,14 @@ export function parseWorkflow(text: string): WorkflowRecipe {
           at,
         );
     }
+    for (const ref of valueInputRefs(step.operation)) {
+      const { name } = parseRef(ref);
+      if (kindOf(name) !== 'value')
+        reader.fail(
+          `Step "${step.id}" calculates from "${name}", which is not a value step.`,
+          at,
+        );
+    }
     for (const ref of withinRefs(step.operation)) {
       const { name } = parseRef(ref);
       if (kindOf(name) !== 'segment')
@@ -1701,6 +1795,30 @@ function operationYaml(operation: RecipeOperation): [string, YamlMap] {
       ];
     }
     case 'value': {
+      if (operation.operation === 'calculate')
+        return [
+          'value',
+          {
+            function: 'calculate',
+            ...inputYaml(operation.inputs),
+            expression: operation.expression ?? '',
+            ...(operation.unit ? { unit: operation.unit } : {}),
+            ...(operation.bindings
+              ? {
+                  values: Object.fromEntries(
+                    Object.entries(operation.bindings).map(
+                      ([name, binding]) => [
+                        name,
+                        binding.valueIds.length === 1
+                          ? binding.valueIds[0]
+                          : binding.valueIds,
+                      ],
+                    ),
+                  ),
+                }
+              : {}),
+          },
+        ];
       const parameters = operation.parameters ?? {};
       const bound = operation.bindings ?? {};
       const setting = (name: string) =>
@@ -2166,6 +2284,15 @@ export function stepCommand(
       };
     }
     case 'value': {
+      if (operation.operation === 'calculate')
+        return {
+          type: 'calculate-values',
+          inputIds: many(operation.inputs),
+          operation: 'calculate',
+          expression: operation.expression ?? '',
+          unit: operation.unit ?? '',
+          ...bound(operation.bindings),
+        };
       const within = scope(operation.within)?.within;
       return {
         ...(within ? { within } : {}),

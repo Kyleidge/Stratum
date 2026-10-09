@@ -1,4 +1,4 @@
-import { VALUE_FUNCTIONS, valueSpec } from './workflow-types';
+import { CALCULATE, VALUE_FUNCTIONS, valueSpec } from './workflow-types';
 import type { ScalarValue } from './workflow-types';
 
 /** Device-local plot layouts. Signal data and workflow history stay in the engine. */
@@ -45,7 +45,7 @@ export function resolveColor(color: string, element?: Element): string {
 
 /** Short tags for a value's direct label at the end of its reference line. */
 export const VALUE_TAGS: Record<string, string> = Object.fromEntries(
-  VALUE_FUNCTIONS.map((spec) => [spec.operation, spec.tag]),
+  [...VALUE_FUNCTIONS, CALCULATE].map((spec) => [spec.operation, spec.tag]),
 );
 export type ValueReference = {
   /** Height of the reference line; NaN draws nothing. */

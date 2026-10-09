@@ -1,5 +1,6 @@
 import { FUNCTIONS } from './signal-functions';
 import { bindingValueIds } from './value-bindings';
+import { calculatedInput } from './value-math';
 import { TIME_OPERATIONS } from './time-types';
 import { valueTitle, type ValueOperation } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
@@ -45,7 +46,12 @@ export function stepName(step: WorkflowStep): string {
   if (step.operation in TIME_OPERATIONS)
     return TIME_OPERATIONS[step.operation as keyof typeof TIME_OPERATIONS];
   if (step.kind === 'value')
-    return valueTitle(step.operation as ValueOperation, step.parameters);
+    return valueTitle(
+      step.operation as ValueOperation,
+      step.parameters,
+      '',
+      step.expression,
+    );
   return (
     FUNCTIONS.find((spec) => spec.operation === step.operation)?.name ??
     step.operation
@@ -375,7 +381,11 @@ export class WorkflowIndex {
         value.operation,
         value.parameters,
         this.nodes.get(value.inputId)?.unit,
+        value.expression,
       );
+      // A calculation from values is named after the value it used.
+      const input = calculatedInput(value);
+      if (input) return `${title} · ${this.label(input)}`;
       // A value within a segment names it unless its input already does.
       return value.segmentId &&
         signalSegment(this.nodes, value.inputId) !== value.segmentId
@@ -420,6 +430,9 @@ export class WorkflowIndex {
     }
     const record = this.nodes.get(id) ?? this.values.get(id);
     if (!record) return [];
+    // A calculation from values reads only values: its input, then others.
+    if ('inputId' in record && record.operation === 'calculate')
+      return boundValueIds([record]);
     const signals =
       'parents' in record
         ? record.parents.map((parent) => visibleInput(this.nodes, parent))

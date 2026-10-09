@@ -77,8 +77,16 @@ There are no server API routes or cloud signal uploads.
   `valueInputIds`, which drive Edit/Delete impact, lineage, Used by, archive
   validation and workflow-file `{ value: step, factor }` settings.
   `components/value-binding-control.tsx` is the shared "A number | A value"
-  control. `lib/formula.ts` parses formula expressions (A = each input,
-  B–Z = signals matched by sample grid, lowercase = bound values) into
+  control. Calculate from values (`lib/value-math.ts`, value operation
+  `calculate`, `components/value-math-editor.tsx`) is a value-mode formula:
+  `a` is each input value (the step's `inputIds` are values), other names
+  bind values matched by segment then lineage (`matchValue`). Outputs keep
+  the input's `inputId` signal, segment and interval and store every
+  variable in `bindings` (`a` too) with available numbers in `parameters`;
+  the step stores `expression`. Value on a values-only target opens it;
+  the dialog links back to statistics of their signals. `lib/formula.ts`
+  parses formula expressions (A = each input, B–Z = signals matched by
+  sample grid, lowercase = bound values; value mode: a = each value) into
   closures; never `eval`. Formula nodes keep `expression`, include it in
   their recipe key, and evaluate their parents in lockstep like binary math.
   `lib/units.ts` holds exact linear unit conversions for `convert` nodes;

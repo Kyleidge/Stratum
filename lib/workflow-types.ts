@@ -18,7 +18,9 @@ export type ValueOperation =
   | 'time-above'
   | 'time-below'
   | 'first-crossing'
-  | 'crossing-count';
+  | 'crossing-count'
+  /** Arithmetic over other values (`a` each input value); see CALCULATE. */
+  | 'calculate';
 
 /**
  * Numeric settings of a value calculation, by name: `threshold` (input unit),
@@ -47,10 +49,18 @@ export type ScalarValue = {
   name: string;
   unit: string;
   operation: ValueOperation;
-  /** Settings of a parameterised calculation, such as its threshold. */
+  /**
+   * Settings of a parameterised calculation, such as its threshold. A
+   * calculation from values holds each available variable's number here.
+   */
   parameters?: ValueParameters;
-  /** Settings taken from other values. */
+  /**
+   * Settings taken from other values. A calculation from values binds every
+   * variable, `a` being its input value.
+   */
   bindings?: Record<string, BoundValue>;
+  /** A calculation from values: its formula (`a` is the input value). */
+  expression?: string;
   /**
    * The input level a time result refers to (the extreme of a time of
    * minimum or maximum), so plots can mark it over its input.
@@ -83,8 +93,13 @@ export type WorkflowStep = {
   operation: Operation | ValueOperation | 'import' | 'regions' | 'segment';
   inputIds: string[];
   outputIds: string[];
-  /** Values whose results this step's settings use. */
+  /**
+   * Values whose results this step's settings use. A calculation from
+   * values lists its input values in `inputIds` and the others here.
+   */
   valueInputIds?: string[];
+  /** A calculation from values: its formula. */
+  expression?: string;
   parameters?: Record<string, number>;
   definition?: SegmentationDefinition;
   segmentationId?: string;
@@ -210,7 +225,7 @@ export type ValueStatistics = {
   };
 };
 
-export type ValueGroup = 'Level' | 'Spread' | 'Time' | 'Events';
+export type ValueGroup = 'Level' | 'Spread' | 'Time' | 'Events' | 'Math';
 /** What a value measures, which decides its unit. */
 export type ValueResult = 'level' | 'area' | 'time' | 'count';
 export type ValueParameter =
@@ -395,8 +410,24 @@ export const VALUE_FUNCTIONS: ValueFunctionSpec[] = [
   },
 ];
 
+/**
+ * Arithmetic over values rather than a statistic of a signal, so it is not
+ * listed with VALUE_FUNCTIONS. Its unit is chosen, never inferred.
+ */
+export const CALCULATE: ValueFunctionSpec = {
+  operation: 'calculate',
+  name: 'Calculate',
+  group: 'Math',
+  result: 'level',
+  tag: '=',
+  description:
+    'A formula over calculated values: a is each input value, other lowercase names are values matched to it by segment and lineage. Unavailable when any value it uses is unavailable or the result is not finite.',
+};
+
 export const valueSpec = (operation: string) =>
-  VALUE_FUNCTIONS.find((spec) => spec.operation === operation);
+  operation === 'calculate'
+    ? CALCULATE
+    : VALUE_FUNCTIONS.find((spec) => spec.operation === operation);
 
 /** The unit of a value calculated from an input with `unit`. */
 export function valueUnit(operation: ValueOperation, unit: string): string {
@@ -459,7 +490,11 @@ export function valueTitle(
   operation: ValueOperation,
   parameters: ValueParameters = {},
   unit = '',
+  /** A calculation from values: its formula. */
+  expression?: string,
 ): string {
+  if (operation === 'calculate')
+    return expression ? `Calculate ${expression}` : CALCULATE.name;
   const spec = valueSpec(operation);
   const name = spec?.name ?? operation;
   const quantity = (value: number, suffix: string) =>

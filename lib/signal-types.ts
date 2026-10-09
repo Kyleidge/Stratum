@@ -308,6 +308,13 @@ export type EngineRequest =
       bindings?: import('./workflow-types').ParameterBindings;
       /** One value per input in each chosen segment. */
       within?: SegmentScope;
+      /**
+       * `calculate`: the formula, with `inputIds` naming values (`a`) and
+       * `bindings` the formula's other values.
+       */
+      expression?: string;
+      /** `calculate`: the result's unit, as chosen. */
+      unit?: string;
     }
   | {
       type: 'segment-set' | 'segment-set-preview';

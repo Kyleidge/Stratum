@@ -65,7 +65,7 @@ import type { TimeSettings } from '@/lib/time-types';
 import { workspaceTimeScope } from '@/lib/time-model';
 import { stepInputs, stepName, WorkflowIndex } from '@/lib/workflow-history';
 import { isBinaryOperation } from '@/lib/signal-arithmetic';
-import { VALUE_FUNCTIONS, valueTitle } from '@/lib/workflow-types';
+import { valueSpec, valueTitle } from '@/lib/workflow-types';
 import { WORKFLOW_EXAMPLE } from '@/lib/workflow-example';
 import type {
   ParameterBindings,
@@ -117,6 +117,8 @@ import {
 } from '@/lib/workflow-drag';
 import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
+import ValueMathEditor from './value-math-editor';
+import { calculatedInput } from '@/lib/value-math';
 import SegmentValueTable from './segment-value-table';
 import { MAX_ALIGNED } from './aligned-segments-plot';
 import OperationInputs, { editImpact, editTitle } from './operation-inputs';
@@ -283,7 +285,8 @@ async function reportBlocksAdded(
 }
 type Editor = {
   editingStepId?: string;
-  kind: 'derive' | 'segment' | 'value';
+  /** `calculate`: a formula over values; `ids` are values. */
+  kind: 'derive' | 'segment' | 'value' | 'calculate';
   ids: string[];
   operation?: Operation | ValueOperation;
   parameter?: number;
@@ -297,6 +300,10 @@ type Editor = {
   within?: SegmentScope;
   /** Segment steps that find file segments (always, for new ones). */
   segmentSet?: { saved?: SegmentSet };
+  /** A calculation from values: its formula. */
+  expression?: string;
+  /** Values whose signals a Value step was opened with, to switch back. */
+  fromValues?: string[];
 };
 
 /**
@@ -314,6 +321,7 @@ function savedBindingsOf(
       return {
         ...within,
         ...(command.bindings ? { bindings: command.bindings } : {}),
+        ...(command.unit !== undefined ? { unit: command.unit } : {}),
       };
     if (command.type !== 'derive-many') return within;
     return {
@@ -453,7 +461,10 @@ export default function WorkflowWorkbench() {
     useState<WorkflowManagementRequest>();
   const editorSource = editor
     ? (project.sources.find(
-        (item) => item.id === index.nodes.get(editor.ids[0])?.sourceId,
+        (item) =>
+          item.id ===
+          (index.nodes.get(editor.ids[0]) ?? index.values.get(editor.ids[0]))
+            ?.sourceId,
       ) ?? workspaceTimeScope(project, graph))
     : source;
   const [editorOpen, setEditorOpen] = useState(false);
@@ -1495,6 +1506,17 @@ export default function WorkflowWorkbench() {
           segmentIds: [],
         },
       });
+    } else if (step.operation === 'calculate') {
+      const saved = savedBindingsOf(project, step);
+      open({
+        kind: 'calculate',
+        ids: step.inputIds,
+        ...(step.expression !== undefined
+          ? { expression: step.expression }
+          : {}),
+        ...(saved.unit !== undefined ? { unit: saved.unit } : {}),
+        ...(saved.bindings ? { bindings: saved.bindings } : {}),
+      });
     } else if (step.kind === 'derive' || step.kind === 'value') {
       const binary = isBinaryOperation(step.operation);
       // Outputs within segments read hidden crops; name the signals cropped.
@@ -1555,7 +1577,14 @@ export default function WorkflowWorkbench() {
     const valueInputs = targetOutputs(index, target).filter((id) =>
       index.values.has(id),
     );
+    // Values open Calculate from values; their signals stay one click away.
+    const calculate =
+      action === 'value' &&
+      (dropped || inputs === null) &&
+      valueInputs.length > 0 &&
+      valueInputs.length === targetOutputs(index, target).length;
     const note =
+      !calculate &&
       (dropped || inputs === null) &&
       valueInputs.length &&
       ['derive', 'segment', 'value', 'align'].includes(action)
@@ -1568,6 +1597,7 @@ export default function WorkflowWorkbench() {
       setLineageRoot(null);
       select(dropped);
       if (
+        !calculate &&
         [
           'derive',
           'segment',
@@ -1581,7 +1611,12 @@ export default function WorkflowWorkbench() {
       setDragged(null);
       if (note) setNotice(note);
     }
-    if (action === 'derive' || action === 'value' || action === 'segment') {
+    if (calculate) setEditor({ kind: 'calculate', ids: valueInputs });
+    else if (
+      action === 'derive' ||
+      action === 'value' ||
+      action === 'segment'
+    ) {
       if (!signals.length) return;
       if (
         action === 'segment' &&
@@ -1947,6 +1982,7 @@ export default function WorkflowWorkbench() {
             activeValue.operation,
             activeValue.parameters,
             index.nodes.get(activeValue.inputId)?.unit,
+            activeValue.expression,
           )}
         </span>
         <strong>
@@ -1957,19 +1993,26 @@ export default function WorkflowWorkbench() {
         </strong>
       </div>
       <p>
-        {activeValue.value === null
-          ? activeValue.operation === 'time-average'
-            ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
-            : 'No finite result for this input and these settings.'
-          : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · at ${number(activeValue.timestamp)} s` : ''}`}
+        {activeValue.operation === 'calculate'
+          ? `${activeValue.value === null ? 'Unavailable: a value it uses is unavailable, or the result is not a finite number. ' : ''}${Object.entries(
+              activeValue.bindings ?? {},
+            )
+              .map(
+                ([name, bound]) =>
+                  `${name} = ${
+                    activeValue.parameters?.[name] === undefined
+                      ? 'unavailable'
+                      : `${number(activeValue.parameters[name])} ${index.values.get(bound.valueId)?.unit ?? ''}`.trim()
+                  } (${index.label(bound.valueId)})`,
+              )
+              .join(' · ')}`
+          : activeValue.value === null
+            ? activeValue.operation === 'time-average'
+              ? 'No finite result. Time averages require adjacent finite samples with positive elapsed time.'
+              : 'No finite result for this input and these settings.'
+            : `${activeValue.sampleCount.toLocaleString()} finite samples · ${number(activeValue.validDuration)} s of valid intervals${activeValue.timestamp !== undefined ? ` · at ${number(activeValue.timestamp)} s` : ''}`}
       </p>
-      <p>
-        {
-          VALUE_FUNCTIONS.find(
-            (spec) => spec.operation === activeValue.operation,
-          )?.description
-        }
-      </p>
+      <p>{valueSpec(activeValue.operation)?.description}</p>
     </section>
   ) : tileValues.length ? (
     <div className="workflow-value-tiles" aria-label="Calculated values">
@@ -1997,10 +2040,13 @@ export default function WorkflowWorkbench() {
               value.operation,
               value.parameters,
               index.nodes.get(value.inputId)?.unit,
+              value.expression,
             )}
-            {value.timestamp !== undefined
-              ? ` · at ${number(value.timestamp)} s`
-              : ` · ${value.sampleCount.toLocaleString()} samples`}
+            {value.operation === 'calculate'
+              ? ''
+              : value.timestamp !== undefined
+                ? ` · at ${number(value.timestamp)} s`
+                : ` · ${value.sampleCount.toLocaleString()} samples`}
           </em>
         </button>
       ))}
@@ -3111,7 +3157,8 @@ export default function WorkflowWorkbench() {
                                             index.nodes,
                                             node.parents[0],
                                           )
-                                        : (value?.inputId ??
+                                        : ((value && calculatedInput(value)) ??
+                                          value?.inputId ??
                                           segment?.segment.parentId ??
                                           index.inputs(id)[0]);
                                       const bounds:
@@ -3814,7 +3861,9 @@ export default function WorkflowWorkbench() {
                   ? editor.segmentSet
                     ? 'Find segments'
                     : 'Segment signals'
-                  : 'Calculate values'}
+                  : editor?.kind === 'calculate'
+                    ? 'Calculate from values'
+                    : 'Calculate values'}
           </DialogTitle>
           {editor && editorSource && editor.segmentSet ? (
             // Segments belong to the recording, not to the signals shown.
@@ -3853,9 +3902,34 @@ export default function WorkflowWorkbench() {
                   : 'Create signal segments using triggers, ranges or windows.'
                 : editor?.kind === 'value'
                   ? 'Reduce each input signal to a scalar value.'
-                  : 'Apply a function to each input signal.'}
+                  : editor?.kind === 'calculate'
+                    ? 'Calculate a new value from each input value with a formula.'
+                    : 'Apply a function to each input signal.'}
           </DialogDescription>
-          {dropNote && <p className="workflow-drop-note">{dropNote}</p>}
+          {dropNote && (
+            <p className="workflow-drop-note">
+              {dropNote}
+              {editor?.kind === 'value' &&
+                !!editor.fromValues?.length &&
+                !editor.editingStepId && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="workflow-link"
+                      onClick={() =>
+                        setEditor({
+                          kind: 'calculate',
+                          ids: editor.fromValues!,
+                        })
+                      }
+                    >
+                      Calculate from the values instead
+                    </button>
+                  </>
+                )}
+            </p>
+          )}
           {engine.busy && (
             <div className="workflow-processing">
               <output>{engine.status}</output>
@@ -3866,7 +3940,47 @@ export default function WorkflowWorkbench() {
           )}
           {editor && editorSource && (
             <>
-              {editor.kind === 'segment' ? (
+              {editor.kind === 'calculate' ? (
+                <ValueMathEditor
+                  editor={editor}
+                  index={index}
+                  busy={engine.busy}
+                  onSignals={
+                    editor.editingStepId
+                      ? undefined
+                      : () => {
+                          const values = editor.ids;
+                          setEditor({
+                            kind: 'value',
+                            ids: [
+                              ...new Set(
+                                values.flatMap(
+                                  (id) => index.values.get(id)?.inputId ?? [],
+                                ),
+                              ),
+                            ],
+                            fromValues: values,
+                          });
+                          setDropNote(
+                            `Using the input signal${values.length === 1 ? '' : 's'} of ${values.length === 1 ? index.label(values[0]) : `${values.length} values`}.`,
+                          );
+                        }
+                  }
+                  onApply={(expression, unit, bindings) =>
+                    perform(
+                      {
+                        type: 'calculate-values',
+                        inputIds: editor.ids,
+                        operation: 'calculate',
+                        expression,
+                        unit,
+                        ...(bindings ? { bindings } : {}),
+                      },
+                      'Calculating values…',
+                    )
+                  }
+                />
+              ) : editor.kind === 'segment' ? (
                 <SegmentationEditor
                   workflowMode
                   rangePlot={{ graph, request }}
@@ -3990,7 +4104,11 @@ export default function WorkflowWorkbench() {
                 />
               ) : (
                 <FunctionEditor
-                  editor={editor}
+                  // Only Derive and Value steps reach this editor.
+                  editor={{
+                    ...editor,
+                    kind: editor.kind === 'derive' ? 'derive' : 'value',
+                  }}
                   project={project}
                   index={index}
                   request={request}
