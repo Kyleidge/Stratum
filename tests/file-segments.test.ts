@@ -553,3 +553,49 @@ void test('History shows steps within segments as one row when they have several
   );
   engine.close();
 });
+
+void test('values calculated from per-segment values are one History row, naming their inputs', async () => {
+  const { engine, source, torque } = await fixture();
+  const set = await engine.segmentSet(source.id, {
+    method: 'ranges',
+    boundary: 'clip',
+    ranges: [
+      [2, 6],
+      [10, 20],
+      [25, 30],
+    ],
+  });
+  const maxima = await engine.calculateValues(
+    [torque],
+    'maximum',
+    undefined,
+    undefined,
+    { setId: set.id },
+  );
+  const ratios = await engine.calculateFromValues(
+    maxima.map((value) => value.id),
+    '20 / a',
+    '',
+  );
+  assert.ok(ratios.every((value) => value.segmentId));
+  const index = new WorkflowIndex(engine.project);
+  const [segmentStep, maximumStep, ratioStep] =
+    engine.project.workflowSteps!.slice(-3);
+  const rows = workflowRows(
+    [segmentStep, maximumStep, ratioStep],
+    index,
+    new Set(),
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.inputs]),
+    [
+      ['step', 'rig.csv'],
+      ['step', 'from Torque'],
+      [
+        'step',
+        `from ${index.label(maxima[0].id)}, ${index.label(maxima[1].id)} and 1 more input`,
+      ],
+    ],
+  );
+  engine.close();
+});

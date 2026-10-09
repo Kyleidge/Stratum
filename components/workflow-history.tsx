@@ -164,7 +164,7 @@ export default function WorkflowHistory({
   const rawSelectedKey =
     selection.kind === 'step'
       ? selection.id
-      : selectedOwnerStep && oneRowStep(selectedOwnerStep)
+      : selectedOwnerStep && oneRowStep(selectedOwnerStep, index)
         ? selectedOwnerStep.id
         : `output:${selection.id}`;
   const selectedOwner =
@@ -261,6 +261,7 @@ export default function WorkflowHistory({
     for (const row of rows) {
       const tall =
         !!row.stepLabel ||
+        !!row.inputs ||
         ((row.kind === 'step' || row.kind === 'single') &&
           !!metrics.font &&
           textWidth(row.label, metrics.font) >
@@ -596,7 +597,7 @@ export default function WorkflowHistory({
                 aria-expanded={
                   row.kind === 'step' &&
                   step.outputIds.length > 0 &&
-                  !oneRowStep(step)
+                  !oneRowStep(step, index)
                     ? expanded
                     : undefined
                 }
@@ -642,7 +643,9 @@ export default function WorkflowHistory({
                       : row.label
                 }${flagged ? ` · check ${STATUS_LABELS[flagged].toLowerCase()}` : ''}`}
                 data-wrap={
-                  (!row.stepLabel && rowHeight(position) > ROW_HEIGHT) ||
+                  (!row.stepLabel &&
+                    !row.inputs &&
+                    rowHeight(position) > ROW_HEIGHT) ||
                   undefined
                 }
                 style={{
@@ -724,7 +727,7 @@ export default function WorkflowHistory({
                     focusRow(event.key === 'Home' ? 0 : rows.length - 1);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
-                    if (oneRowStep(step)) return;
+                    if (oneRowStep(step, index)) return;
                     if (row.kind === 'step' && !expanded)
                       setExpanded(step.id, true);
                     else if (row.kind === 'step' && step.outputIds.length)
@@ -742,7 +745,7 @@ export default function WorkflowHistory({
                   }
                 }}
               >
-                {row.kind === 'step' && !oneRowStep(step) ? (
+                {row.kind === 'step' && !oneRowStep(step, index) ? (
                   <button
                     tabIndex={-1}
                     className="workflow-disclosure"
@@ -782,11 +785,21 @@ export default function WorkflowHistory({
                     )}
                     {flagged && <StatusIcon status={flagged} size={12} />}
                     <span className="workflow-row-copy">
-                      {row.stepLabel ? (
+                      {row.stepLabel || row.inputs ? (
                         <span className="workflow-row-title">
                           <strong>{row.label}</strong>
-                          <em title={`${reference} ${row.stepLabel}`}>
-                            {row.stepLabel}
+                          <em
+                            title={[
+                              row.stepLabel && `${reference} ${row.stepLabel}`,
+                              row.inputs,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          >
+                            {/* Inputs first: they matter most when space is short. */}
+                            {[row.inputs, row.stepLabel]
+                              .filter(Boolean)
+                              .join(' · ')}
                           </em>
                         </span>
                       ) : (

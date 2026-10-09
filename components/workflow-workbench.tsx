@@ -119,7 +119,7 @@ import SegmentationEditor from './segmentation-editor';
 import FunctionEditor from './function-editor';
 import ValueMathEditor from './value-math-editor';
 import { calculatedInput } from '@/lib/value-math';
-import SegmentValueTable from './segment-value-table';
+import SegmentValueTable, { segmentGridFits } from './segment-value-table';
 import { MAX_ALIGNED } from './aligned-segments-plot';
 import OperationInputs, { editImpact, editTitle } from './operation-inputs';
 import { RegionSelect } from './region-controls';
@@ -3010,7 +3010,7 @@ export default function WorkflowWorkbench() {
                                 )}
                               </div>
                             </div>
-                            {step.kind === 'value' && !!step.within && (
+                            {segmentGridFits(index, step) && (
                               <fieldset
                                 className="workflow-layout-toggle"
                                 aria-label="Value layout"
@@ -3031,9 +3031,8 @@ export default function WorkflowWorkbench() {
                                 </button>
                               </fieldset>
                             )}
-                            {step.kind === 'value' &&
-                            valueLayout === 'segments' &&
-                            !!step.within ? (
+                            {valueLayout === 'segments' &&
+                            segmentGridFits(index, step) ? (
                               <SegmentValueTable
                                 index={index}
                                 step={step}

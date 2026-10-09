@@ -38,8 +38,10 @@ There are no server API routes or cloud signal uploads.
   and row check boxes in History edit only the checked inputs. A plain check box
   starts from the explicit checks; only Ctrl/Shift+click extends from the viewed
   signal. The Outputs table's Input column ticks only explicit inputs and marks
-  the viewed row "in view". Rows are 28 px, or 44 px when a step name wraps to
-  two lines, virtualized with prefix offsets. The last selection is stored per
+  the viewed row "in view". Step rows carry a small second line naming their
+  inputs (`stepInputSummary`: a Segment step's recording, otherwise "from" its
+  first two input signals or values). Rows are 28 px, or 44 px with a second
+  line or a step name that wraps, virtualized with prefix offsets. The last selection is stored per
   device (`stratum-workflow-selection-v1`), restored only if it still exists,
   and never journaled. Explicit parent
   navigation clears search; opening a search result preserves matching context.
@@ -116,9 +118,11 @@ There are no server API routes or cloud signal uploads.
   segment place within its parent, or input + segment), so the segment count
   may change; `followRebuiltBatches` lets later steps that used a whole
   rebuilt batch follow it. Old crop-segment steps (`segmentationId`) still
-  open, edit and replay. History shows a Segment step, and a step with
-  several outputs within segments, as one row (`oneRowStep` in
-  `lib/workflow-tree.ts`); a selected member highlights that row. Active
+  open, edit and replay. History shows a Segment step, and a step whose
+  several outputs all belong to segments (within them, or from signals or
+  values that were), as one row (`oneRowStep` in `lib/workflow-tree.ts`); a
+  selected member highlights that row. Value steps whose values fill a
+  segment × input grid open on the By segment table (`segmentGridFits`). Active
   shades segments (`ActivePlot.bands`/`focus`) over the signals chosen with
   "Choose signals" (any visible signal on the set's axis,
   `segmentSetSignals`, remembered per set on the device in

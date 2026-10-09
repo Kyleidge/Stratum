@@ -15,6 +15,23 @@ import type { WorkflowStep } from '@/lib/workflow-types';
 import { formatValue } from './signal-chart';
 
 const PAGE = 30;
+
+/**
+ * Whether a value step reads best by segment: several values, each within a
+ * segment, that fill most of a segment × input grid (not one segment each).
+ */
+export function segmentGridFits(index: WorkflowIndex, step: WorkflowStep) {
+  if (step.kind !== 'value' || step.outputIds.length < 2) return false;
+  const segments = new Set<string>();
+  const inputs = new Set<string>();
+  for (const id of step.outputIds) {
+    const value = index.values.get(id);
+    if (!value?.segmentId) return false;
+    segments.add(value.segmentId);
+    inputs.add(value.inputId);
+  }
+  return segments.size * inputs.size <= step.outputIds.length * 2;
+}
 /** Columns shown at once; wider steps page through their inputs. */
 const COLUMNS = 8;
 
