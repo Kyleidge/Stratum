@@ -8,6 +8,7 @@ import {
   Clock,
   FileSpreadsheet,
   Info,
+  Pencil,
   Search,
 } from 'lucide-react';
 import {
@@ -28,6 +29,7 @@ import type {
   DelimitedColumn,
   DelimitedLayout,
 } from '@/lib/formats/delimited-layout';
+import { cleanName, MAX_CHANNEL_NAME } from '@/lib/formats/recording';
 import type { RecordingFile, RecordingTable } from '@/lib/formats/recording';
 import { UNIT_GROUPS, UNSTATED_UNIT } from '@/lib/units';
 
@@ -47,6 +49,10 @@ export type ImportSetup = {
   units: (string[] | null)[];
   /** Unrecognised labels kept as custom units. */
   custom: string[];
+  /** Delimited text: each table's signal names, as chosen. */
+  names?: string[][];
+  /** Delimited text with several time axes: each recording's name. */
+  tableNames?: string[];
 };
 
 /** True when importing the file needs choices: groups or units to fix. */
@@ -156,6 +162,10 @@ export default function WorkflowImportDialog({
   const [columnUnits, setColumnUnits] = useState<string[]>(
     () => columns?.headers.map((header) => header.unit) ?? [],
   );
+  // Names start as the file's headers and may be changed before importing.
+  const [names, setNames] = useState<string[]>(
+    () => columns?.headers.map((header) => header.name) ?? [],
+  );
   // Binary formats: one fix per unrecognised label covers every signal using
   // it; a signal without a unit gets its own, keyed `#table:channel`.
   const [fixes, setFixes] = useState<Map<string, string>>(() => new Map());
@@ -191,9 +201,9 @@ export default function WorkflowImportDialog({
       const derived = layoutTables(layout);
       return derived.map((table, index) => ({
         index,
-        name: derived.length > 1 ? columns.headers[table.time].name : '',
+        name: derived.length > 1 ? cleanName(names[table.time]) : '',
         channels: table.signals.map((c) => ({
-          name: columns.headers[c].name,
+          name: cleanName(names[c]),
           unit: columnUnits[c],
         })),
       }));
@@ -208,7 +218,27 @@ export default function WorkflowImportDialog({
           unit: fixes.get(fixKey(index, c, channel.unit)) ?? channel.unit,
         })),
       }));
-  }, [columns, layout, columnUnits, chosen, tables, fixes]);
+  }, [columns, layout, columnUnits, names, chosen, tables, fixes]);
+  // Delimited text: why a column's name cannot be used, by column.
+  const nameIssues = useMemo(() => {
+    const issues = new Map<number, string>();
+    if (!columns) return issues;
+    const axisCount = layout.filter((item) => item.role === 'time').length;
+    for (const table of layoutTables(layout)) {
+      const seen = new Map<string, number>();
+      for (const c of table.signals) {
+        const key = cleanName(names[c]).toLowerCase();
+        if (!key) issues.set(c, 'Needs a name');
+        else if (seen.has(key)) {
+          issues.set(c, 'Same name as another signal');
+          issues.set(seen.get(key)!, 'Same name as another signal');
+        } else seen.set(key, c);
+      }
+      if (axisCount > 1 && !cleanName(names[table.time]))
+        issues.set(table.time, 'Needs a name for its recording');
+    }
+    return issues;
+  }, [columns, layout, names]);
   const signals = setup.reduce((sum, table) => sum + table.channels.length, 0);
   const unitProblems = setup.reduce(
     (sum, table) =>
@@ -258,6 +288,9 @@ export default function WorkflowImportDialog({
       ? (layoutIssue ?? 'Choose at least one signal.')
       : 'Choose at least one group'
     : (layoutIssue ??
+      (nameIssues.size
+        ? `${formatCount(nameIssues.size, 'column')} ${nameIssues.size === 1 ? 'needs' : 'need'} a different name`
+        : undefined) ??
       (unitProblems
         ? `${formatCount(unitProblems, 'signal')} ${unitProblems === 1 ? 'needs' : 'need'} a unit Stratum recognises`
         : undefined));
@@ -273,7 +306,17 @@ export default function WorkflowImportDialog({
   const finish = () =>
     onClose({
       tables: setup.map((table) => table.index),
-      ...(columns ? { layout } : {}),
+      ...(columns
+        ? {
+            layout,
+            names: setup.map((table) =>
+              table.channels.map((channel) => channel.name),
+            ),
+            ...(setup.length > 1
+              ? { tableNames: setup.map((table) => table.name) }
+              : {}),
+          }
+        : {}),
       units: (columns ? setup : tables).map((_, index) => {
         const table = setup.find((item) => item.index === index);
         return table ? table.channels.map((channel) => channel.unit) : null;
@@ -286,13 +329,16 @@ export default function WorkflowImportDialog({
   );
   const columnMatches = columns
     ? columns.headers.flatMap((header, index) =>
-        matches(`${header.name} ${header.unit}`, query) ? [index] : [],
+        matches(`${header.name} ${names[index]} ${header.unit}`, query)
+          ? [index]
+          : [],
       )
     : [];
 
   // Columns that stop the import: units to fix, time units, missing axes.
   const columnProblem = (c: number) => {
     const column = layout[c];
+    if (nameIssues.has(c)) return true;
     if (column.role === 'time') return timeScale(column.unit) === undefined;
     if (column.role === 'signal')
       return (
@@ -356,7 +402,7 @@ export default function WorkflowImportDialog({
         </header>
         <DialogDescription className="import-lede">
           {columns
-            ? 'Say how each column is used and which unit its values are in. Values import exactly as they are; convert units afterwards with Derive.'
+            ? 'Say how each column is used, what to call it and which unit its values are in. Values import exactly as they are; convert units afterwards with Derive.'
             : tables.length === 1
               ? 'Say which unit each signal’s values are in. Values import exactly as they are; convert units afterwards with Derive.'
               : 'Each group has its own time axis and becomes a recording. Compare & align can bring them onto one time base later.'}
@@ -496,11 +542,64 @@ export default function WorkflowImportDialog({
                           <CircleCheck size={15} />
                         )}
                       </span>
-                      <div className="import-row-name" title={header.name}>
-                        <strong>{header.name}</strong>
+                      <div className="import-row-name">
+                        {column.role === 'signal' ||
+                        (column.role === 'time' && axes.length > 1) ? (
+                          <span className="import-name">
+                            <input
+                              value={names[c]}
+                              maxLength={MAX_CHANNEL_NAME}
+                              spellCheck={false}
+                              autoComplete="off"
+                              aria-label={`Name of ${header.name}`}
+                              aria-invalid={nameIssues.has(c)}
+                              title={
+                                column.role === 'time'
+                                  ? 'Names the recording on this clock'
+                                  : 'Signal name'
+                              }
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setNames((old) =>
+                                  old.map((item, index) =>
+                                    index === c ? value : item,
+                                  ),
+                                );
+                              }}
+                            />
+                            <Pencil size={12} aria-hidden />
+                          </span>
+                        ) : (
+                          <strong title={header.name}>{header.name}</strong>
+                        )}
                         <small>
                           {columns.numeric[c] ? values.join('  ') : 'Text'}
                         </small>
+                        {nameIssues.has(c) ? (
+                          <small className="import-name-problem">
+                            {nameIssues.get(c)}
+                          </small>
+                        ) : (
+                          names[c] !== header.name &&
+                          column.role !== 'skip' && (
+                            <small className="import-name-was">
+                              From “{header.name}”
+                              <button
+                                type="button"
+                                className="unit-chip"
+                                onClick={() =>
+                                  setNames((old) =>
+                                    old.map((item, index) =>
+                                      index === c ? header.name : item,
+                                    ),
+                                  )
+                                }
+                              >
+                                Restore
+                              </button>
+                            </small>
+                          )
+                        )}
                       </div>
                       <fieldset className="import-segmented">
                         <legend className="sr-only">

@@ -271,3 +271,42 @@ void test('batch channels without a unit take the unit the workflow expects', ()
     /"Torque" is in kN·m, but the workflow expects N·m/,
   );
 });
+
+void test('the import dialog can rename signals and the recordings of time axes', async (t) => {
+  const e = new SignalEngine(undefined, crypto.randomUUID());
+  await e.open();
+  t.after(() => e.close());
+  const file = () => new File([MULTI], 'rig.csv');
+  const units = [['rpm', ''], ['°C']];
+  await assert.rejects(
+    e.importRecording(file(), {
+      units,
+      names: [['Engine speed', ' engine SPEED '], ['Oil']],
+    }),
+    /Two signals are named “engine SPEED”/,
+  );
+  await assert.rejects(
+    e.importRecording(file(), { units, names: [['Speed', '  '], ['Oil']] }),
+    /Every signal needs a name/,
+  );
+  await assert.rejects(
+    e.importRecording(file(), { units, tableNames: ['Fast', ' '] }),
+    /Every recording needs a name/,
+  );
+  assert.equal(e.project.sources.length, 0);
+  const sources = await e.importRecording(file(), {
+    units,
+    names: [['Engine speed', 'Shaft torque'], [' Oil temperature\t']],
+    tableNames: ['Fast clock', 'Slow clock'],
+  });
+  assert.deepEqual(
+    sources.map((source) => [
+      source.name,
+      source.channels.map((id) => e.find(id).name),
+    ]),
+    [
+      ['rig.csv · Fast clock', ['Engine speed', 'Shaft torque']],
+      ['rig.csv · Slow clock', ['Oil temperature']],
+    ],
+  );
+});

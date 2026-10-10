@@ -1168,6 +1168,60 @@
   font-family: inherit;
   white-space: nowrap;
 }
+.import-name {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  margin: -3px 0 0 -6px;
+}
+.import-name input {
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 2px 22px 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-1);
+  font: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.import-name svg {
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  color: var(--ink-3);
+  opacity: 0;
+  pointer-events: none;
+}
+.import-row:hover .import-name input,
+.import-name input:focus {
+  border-color: var(--line-strong);
+  background: var(--field);
+}
+.import-row:hover .import-name svg,
+.import-name input:focus + svg {
+  opacity: 1;
+}
+.import-name input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+.import-name input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+.import-row-name .import-name-problem {
+  color: var(--danger);
+  font-family: inherit;
+}
+.import-row-name .import-name-was {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-family: inherit;
+}
 .import-row-axis {
   display: flex;
   align-items: center;

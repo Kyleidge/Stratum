@@ -1,6 +1,11 @@
 import { Envelope, power } from './signal-math';
 import { openRecording } from './formats/index';
-import { MAX_RECORDING_CHANNELS } from './formats/recording';
+import {
+  channelNameProblem,
+  cleanName,
+  MAX_CHANNEL_NAME,
+  MAX_RECORDING_CHANNELS,
+} from './formats/recording';
 import type { RecordingFile } from './formats/recording';
 import type { DelimitedLayout } from './formats/delimited-layout';
 import { SignalGraph } from './signal-graph';
@@ -1668,6 +1673,10 @@ export class SignalEngine {
       units?: (string[] | null | undefined)[];
       /** Unrecognised labels the user chose to keep as custom units. */
       custom?: string[];
+      /** Signal names chosen in the import dialog, by table and channel. */
+      names?: (string[] | null | undefined)[];
+      /** Recording names chosen in the import dialog, by table. */
+      tableNames?: (string | null | undefined)[];
       /** Units for channels the file leaves without one (batch runs). */
       fill?: (
         channels: RecordingFile['tables'][number]['channels'],
@@ -1717,6 +1726,30 @@ export class SignalEngine {
         });
       };
       const units = new Map(tables.map((index) => [index, unitsOf(index)]));
+      const namesOf = (index: number) => {
+        const { channels } = recording.tables[index];
+        const chosenNames = options.names?.[index];
+        const names = channels.map((channel, c) => {
+          const name = chosenNames?.[c] ?? channel.name;
+          if (typeof name !== 'string')
+            throw new Error(`The name of “${channel.name}” is not text.`);
+          return cleanName(name);
+        });
+        if (chosenNames) {
+          const problem = channelNameProblem(names);
+          if (problem) throw new Error(problem);
+        }
+        return names;
+      };
+      const names = new Map(tables.map((index) => [index, namesOf(index)]));
+      const tableName = (index: number) => {
+        const chosenName = options.tableNames?.[index];
+        if (chosenName === undefined || chosenName === null)
+          return recording.tables[index].name;
+        if (typeof chosenName !== 'string' || !cleanName(chosenName))
+          throw new Error('Every recording needs a name.');
+        return cleanName(chosenName).slice(0, MAX_CHANNEL_NAME);
+      };
       const sources: Source[] = [];
       const nodes: SignalNode[] = [];
       for (const [position, index] of tables.entries()) {
@@ -1724,7 +1757,7 @@ export class SignalEngine {
         ids.push(id);
         await this.trackImport(id, true);
         const table = recording.tables[index];
-        const grouped = recording.tables.length > 1 && !!table.name;
+        const grouped = recording.tables.length > 1 && !!tableName(index);
         const written = await this.writeTable(
           id,
           recording,
@@ -1736,12 +1769,20 @@ export class SignalEngine {
             ),
         );
         const channels = table.channels.map((channel, c) =>
-          this.node(id, channel.name, units.get(index)![c], 'raw', [], {}, c),
+          this.node(
+            id,
+            names.get(index)![c],
+            units.get(index)![c],
+            'raw',
+            [],
+            {},
+            c,
+          ),
         );
         nodes.push(...channels);
         sources.push({
           id,
-          name: grouped ? `${fileName} · ${table.name}` : fileName,
+          name: grouped ? `${fileName} · ${tableName(index)}` : fileName,
           ...written,
           bytes: written.rows * (channels.length + 1) * 8,
           channels: channels.map((node) => node.id),

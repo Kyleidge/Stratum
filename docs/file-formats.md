@@ -58,8 +58,10 @@ TDMS index files (`.tdms_index`) point to their `.tdms` file.
 
 The first row holds headers. Headers such as `Torque [Nm]` give the unit. The
 import dialog lists every column with its first values and lets the user make
-it a **time axis**, a **signal on** one of the time axes, or **skip** it, and
-type or fix each signal's unit. Each time axis with signals becomes one
+it a **time axis**, a **signal on** one of the time axes, or **skip** it,
+rename it, and type or fix each signal's unit. Names must be filled in and
+differ (ignoring case) among the signals on one time axis; with several time
+axes, a time column's name names its recording. Each time axis with signals becomes one
 recording, named `file · time column` when there are several. A time axis may
 be in any unit of time (`s`, `ms`, `µs`, `min`, `h`); it is converted to
 seconds. The column layout (`lib/formats/delimited-layout.ts`) is suggested

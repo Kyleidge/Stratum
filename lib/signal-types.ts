@@ -344,6 +344,10 @@ export type EngineRequest =
       units?: (string[] | null)[];
       /** Unrecognised labels kept as custom units. */
       custom?: string[];
+      /** Signal names chosen in the import dialog, by table and channel. */
+      names?: (string[] | null)[];
+      /** Recording names chosen in the import dialog, by table. */
+      tableNames?: (string | null)[];
     }
   | { type: 'demo' }
   | { type: 'example'; key: string }

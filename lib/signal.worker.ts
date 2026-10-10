@@ -231,6 +231,8 @@ globalThis.onmessage = (
               layout: r.layout,
               units: r.units,
               custom: r.custom,
+              names: r.names,
+              tableNames: r.tableNames,
             });
             break;
           case 'derive':

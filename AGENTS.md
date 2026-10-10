@@ -381,8 +381,10 @@ There are no server API routes or cloud signal uploads.
 - CSV import setup: `lib/formats/delimited-layout.ts` makes each column a
   time axis (any unit of time, read as seconds), a signal on one, or
   skipped; each time axis with signals is one table. Delimited text always
-  opens `components/workflow-import-dialog.tsx`, which also fixes units: an
-  import from the dialog passes `units`/`custom`, and the engine then refuses
+  opens `components/workflow-import-dialog.tsx`, which also renames signals
+  (and, with several time axes, recordings: `names`/`tableNames`, checked by
+  `channelNameProblem`) and fixes units: an import from the dialog passes
+  `units`/`custom`, and the engine then refuses
   signals without a recognised unit, No unit ('') or a kept custom label.
   Batch runs import leniently; unitless channels take the recipe's unit
   (`recipeUnits`). Imports keep the file's spelling of a unit.

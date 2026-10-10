@@ -83,14 +83,40 @@ export function headerChannel(header: string): RecordingChannel {
   };
 }
 
+/** Longest signal name a recording keeps. */
+export const MAX_CHANNEL_NAME = 255;
+
+/** A name as Stratum keeps it: no control characters, trimmed. */
+export function cleanName(name: string) {
+  // Control characters never belong in labels.
+  // oxlint-disable-next-line no-control-regex
+  return name.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+}
+
+/**
+ * Why a set of signal names chosen for one recording cannot be used, or
+ * undefined: each needs a name, and names must differ (ignoring case) so
+ * workflows can find them.
+ */
+export function channelNameProblem(names: string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const name of names) {
+    const clean = cleanName(name);
+    if (!clean) return 'Every signal needs a name.';
+    if (clean.length > MAX_CHANNEL_NAME)
+      return `“${clean.slice(0, 40)}…” is longer than ${MAX_CHANNEL_NAME} characters.`;
+    const key = clean.toLowerCase();
+    if (seen.has(key))
+      return `Two signals are named “${clean}”. Give each a different name.`;
+    seen.add(key);
+  }
+  return undefined;
+}
+
 /** Builds a channel from separate name and unit fields of a binary format. */
 export function namedChannel(name: string, unit?: string): RecordingChannel {
-  const clean = (text: string) =>
-    // Control characters never belong in labels.
-    // oxlint-disable-next-line no-control-regex
-    text.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
-  const label = clean(name).slice(0, 255) || 'Unnamed';
-  const symbol = clean(unit ?? '').slice(0, 40);
+  const label = cleanName(name).slice(0, MAX_CHANNEL_NAME) || 'Unnamed';
+  const symbol = cleanName(unit ?? '').slice(0, 40);
   return { name: label, unit: symbol || '—' };
 }
 
