@@ -49,8 +49,12 @@ Times must increase strictly, with no duplicates. Leave missing signal cells
 empty. Semicolon-separated files with decimal commas, tab-separated .tsv/.txt
 (including Excel's Unicode text) and Windows-1252 text also import. The import
 step is named after the file, such as **Import SN-24001.csv**. If a file cannot
-be imported, the message names the file, the row and the cause: for example a
-date or clock time instead of seconds, or text in a number column. A header
+be imported, the message names the file, the row and the cause: for example
+times that go backwards, or text in a number column. A time column may hold
+dates and times (`2026-10-10 14:03:22.120`) or Unix time instead of seconds:
+Stratum keeps the recording's clock time, shows it in **Details** and, with
+**Clock time** on the plot toolbar, on the time axis, and **Compare & align**
+can line recordings up by it. A header
 without a unit still imports, with a reminder to add one. Work is saved locally
 on this device.
 

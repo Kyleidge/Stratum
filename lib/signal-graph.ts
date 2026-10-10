@@ -1,5 +1,6 @@
 import type { Project, SignalNode } from './signal-types';
 import type { TimeReference } from './time-types';
+import { referenceClock } from './time-types';
 
 export class SignalGraph {
   readonly nodes: Map<string, SignalNode>;
@@ -41,11 +42,18 @@ export class SignalGraph {
         node.timeReference ??
         (node.parents.length
           ? this.timeReferences.get(node.parents[0])!
-          : {
-              id: node.sourceId,
-              name: source!.name,
-              kind: 'relative' as const,
-            });
+          : source!.clock
+            ? {
+                id: node.sourceId,
+                name: source!.name,
+                kind: 'absolute' as const,
+                clock: source!.clock,
+              }
+            : {
+                id: node.sourceId,
+                name: source!.name,
+                kind: 'relative' as const,
+              });
       const recipe = node.timeRecipe;
       if (recipe?.kind === 'align') {
         start = (start - recipe.anchor) * recipe.scale + recipe.target;
@@ -82,10 +90,17 @@ export class SignalGraph {
         };
       }
       if (node.operation === 'zero-time') {
+        const clock = referenceClock(reference);
+        // The clock moves with the axis: time 0 is now the signal's start.
+        reference = {
+          ...reference,
+          id: node.id,
+          name: 'Signal start',
+          ...(clock ? { clock: { ...clock, start: clock.start + start } } : {}),
+        };
         offset -= start;
         end -= start;
         start = 0;
-        reference = { ...reference, id: node.id, name: 'Signal start' };
       }
       this.ranges.set(id, [start, end]);
       this.offsets.set(id, offset);

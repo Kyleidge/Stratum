@@ -20,6 +20,8 @@ import type {
   RecordingFile,
   RecordingTable,
 } from './recording';
+import { localOffset } from '../clock-time';
+import type { TimeClock } from '../time-types';
 
 /** Largest slice of raw data read at once. */
 const SLICE = 8 << 20;
@@ -146,6 +148,8 @@ type Context = {
   formulas: string[];
   groups: Group[];
   tables: RecordingTable[];
+  /** When master time 0 happened, from the header block. */
+  clock?: TimeClock;
 };
 
 /** Collects one channel group's fields into a table and its read plan. */
@@ -198,6 +202,11 @@ function addGroup(context: Context, pending: Pending) {
     ),
     ...(rows === undefined ? {} : { rows }),
     ...(notes.length ? { notes } : {}),
+    // Master times count from the header's start time; angle, distance and
+    // index axes (and the sample number) have no clock.
+    ...(pending.time && !pending.axisNote && context.clock
+      ? { clock: { ...context.clock } }
+      : {}),
   });
   context.groups.push({
     layout,
@@ -900,9 +909,47 @@ const KIND4: readonly NumberKind[] = [
 ];
 const SYNC_AXIS = ['', '', 'an angle', 'a distance', 'a sample index'];
 
+/** A UTC offset in minutes, or 0 when it is out of range. */
+const sensibleOffset = (minutes: number) =>
+  Number.isInteger(minutes) && Math.abs(minutes) <= 18 * 60 ? minutes : 0;
+
+const BILLION = BigInt(1e9);
+
+/**
+ * Seconds since 1970 as a whole number and a fraction, from nanoseconds, so
+ * the start keeps all the precision a double can hold.
+ */
+function nanoseconds(ns: bigint): [number, number] {
+  return [Number(ns / BILLION), Number(ns % BILLION) / 1e9];
+}
+
+/**
+ * The MDF 4 header's start time (hd_start_time_ns, hd_tz_offset_min,
+ * hd_dst_offset_min, hd_time_flags). Local time (bit 0) is wall time in an
+ * unknown zone, read in this device's zone; with valid offsets (bit 1) the
+ * time is UTC shown at tz + dst; otherwise UTC shown as UTC. Zero is unknown.
+ */
+function clock4(data: DataView): TimeClock | undefined {
+  if (data.byteLength < 13) return undefined;
+  const ns = data.getBigUint64(0, true);
+  if (!ns) return undefined;
+  const [whole, fraction] = nanoseconds(ns);
+  const flags = data.getUint8(12);
+  if (flags & 1) {
+    const offset = localOffset(whole);
+    return { start: whole - offset * 60 + fraction, offset };
+  }
+  const offset =
+    flags & 2
+      ? sensibleOffset(data.getInt16(8, true) + data.getInt16(10, true))
+      : 0;
+  return { start: whole + fraction, offset };
+}
+
 async function parse4(context: Context) {
   const { bytes } = context;
   const hd = await block4(bytes, 64, ['##HD']);
+  context.clock = clock4(hd.data);
   const visitGroup = guard();
   let groupNumber = 0;
   const layouts: Layout[] = [];
@@ -1299,6 +1346,38 @@ function kind3(
   return null;
 }
 
+/**
+ * The MDF 3 header's start time. From 3.20 a nanosecond time stamp holds
+ * local time and an offset in hours says the zone (UTC = stamp − offset);
+ * otherwise the date “DD:MM:YYYY” and time “HH:MM:SS” are local wall time
+ * in an unknown zone, read in this device's zone.
+ */
+function clock3(hd: DataView, little: boolean): TimeClock | undefined {
+  if (hd.byteLength >= 174) {
+    const ns = hd.getBigUint64(164, little);
+    const hours = hd.getInt16(172, little);
+    if (ns && Math.abs(hours) <= 18) {
+      const [whole, fraction] = nanoseconds(ns);
+      return { start: whole - hours * 3600 + fraction, offset: hours * 60 };
+    }
+  }
+  if (hd.byteLength < 36) return undefined;
+  const text = (at: number, size: number) =>
+    latin1(new Uint8Array(hd.buffer, hd.byteOffset + at, size));
+  const date = text(18, 10).match(/^(\d{2}):(\d{2}):(\d{4})$/);
+  const time = text(28, 8).match(/^(\d{2}):(\d{2}):(\d{2})$/);
+  if (!date || !time) return undefined;
+  const [day, month, year] = [+date[1], +date[2], +date[3]];
+  const [h, m, s] = [+time[1], +time[2], +time[3]];
+  if (month < 1 || month > 12 || day < 1 || h > 23 || m > 59 || s > 59)
+    return undefined;
+  const wall = Date.UTC(year, month - 1, day, h, m, s) / 1000;
+  // Date.UTC rolls 31 April over to 1 May; a real date round-trips.
+  if (new Date(wall * 1000).getUTCDate() !== day || wall <= 0) return undefined;
+  const offset = localOffset(wall);
+  return { start: wall - offset * 60, offset };
+}
+
 async function parse3(context: Context, dataLittle: boolean) {
   const { bytes } = context;
   // Block fields follow the file's byte order; a header size that only makes
@@ -1309,6 +1388,7 @@ async function parse3(context: Context, dataLittle: boolean) {
   if (!sane(head.getUint16(2, little)) && sane(head.getUint16(2, !little)))
     little = !little;
   const hd = await block3(bytes, 64, 'HD', little, 12);
+  context.clock = clock3(hd, little);
   const visitGroup = guard();
   let groupNumber = 0;
   for (let dgLink = hd.getUint32(4, little); dgLink;) {

@@ -28,6 +28,8 @@ import {
   zoomValueAxis,
 } from '@/lib/plot-axes';
 import { formatAxisTick, logTicks, niceTicks } from '@/lib/plot-ticks';
+import { clockTicks } from '@/lib/clock-time';
+import type { TimeClock } from '@/lib/time-types';
 
 const SEGMENT_COLORS = [
   'var(--series-3)',
@@ -79,6 +81,8 @@ export type ChartInteraction = {
   /** Stable signal ID when this chart is a stacked panel. */
   traceId?: string;
   timeLabel?: string;
+  /** Label the time axis with clock times of this clock. */
+  clock?: TimeClock;
   valueAxes?: PlotAxisGroup[];
   cursors?: PlotRange;
   annotations?: PlotAnnotation[];
@@ -298,7 +302,19 @@ export default function SignalChart({
           plotHeight,
     }));
   });
-  const timeTicks = niceTicks(range[0], range[1], ticks);
+  const clock = interaction?.clock;
+  const timeTicks = useMemo(() => {
+    if (!clock) {
+      const nice = niceTicks(range[0], range[1], ticks);
+      return {
+        ticks: nice.ticks,
+        labels: nice.ticks.map((time) => formatAxisTick(time, nice.step)),
+        title: undefined as string | undefined,
+      };
+    }
+    // Clock labels are wider than seconds, so they get fewer ticks.
+    return clockTicks(clock, range[0], range[1], Math.max(2, ticks - 2));
+  }, [clock, range, ticks]);
   const x = (t: number) =>
     left + ((t - range[0]) / (range[1] - range[0] || 1)) * span;
   // Merge independent subpaths by style for large overlays. Every trace and
@@ -862,7 +878,7 @@ export default function SignalChart({
             />
           </g>
         )}
-        {timeTicks.ticks.map((time) => (
+        {timeTicks.ticks.map((time, tick) => (
           <g key={time}>
             {grid && (
               <line
@@ -880,7 +896,7 @@ export default function SignalChart({
                 textAnchor="middle"
                 className={interaction ? 'plot-time-axis' : undefined}
               >
-                {formatAxisTick(time, timeTicks.step)}
+                {timeTicks.labels[tick]}
               </text>
             )}
           </g>
@@ -1148,6 +1164,7 @@ export default function SignalChart({
           >
             {interaction
               ? interaction.axes?.timeLabel ||
+                timeTicks.title ||
                 interaction.timeLabel ||
                 'Time (s)'
               : 's'}

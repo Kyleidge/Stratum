@@ -7,6 +7,7 @@
  */
 
 import type { DelimitedLayout, DelimitedPreview } from './delimited-layout';
+import type { TimeClock } from '../time-types';
 
 export type RecordingChannel = {
   name: string;
@@ -22,6 +23,11 @@ export type RecordingBlock = {
   values: Float64Array[];
   /** Fraction of the table read so far, 0–1, for progress messages. */
   progress?: number;
+  /**
+   * When time 0 happened, for readers that learn it from the samples (a
+   * date-and-time column). The first block that carries it wins.
+   */
+  clock?: TimeClock;
 };
 
 export type RecordingTable = {
@@ -35,6 +41,11 @@ export type RecordingTable = {
   end?: number;
   /** Plain-language caveats, such as a missing time channel. */
   notes?: string[];
+  /**
+   * When time 0 happened, when the file's metadata says (an MDF start time,
+   * a TDMS wf_start_time). Times stay relative to it.
+   */
+  clock?: TimeClock;
 };
 
 export type RecordingFile = {
