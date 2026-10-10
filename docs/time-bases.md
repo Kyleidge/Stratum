@@ -19,6 +19,12 @@ traces are shown, with separate plots for different units and a shared horizonta
 interval. The selector and input lists are paged. An overlay of different time
 references is explicitly identified as a comparison of numeric axes.
 
+Saved plots take signals from any recording: check them in History and choose
+Plot, use a plot's Add signals, or drag History rows onto it. Overlay and Y axes
+draw them at their own time values, and the plot footer names separate time
+references; Stacked gives each its own time range, and Align starts compares
+them from their starts. None of these creates a time reference.
+
 Alignment creates ordinary derived signals on a named relative or absolute
 (Unix seconds) timeline. Choose a new timeline or an existing time reference.
 Signals sharing a time reference form a group by default; one transformation

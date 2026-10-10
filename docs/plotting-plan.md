@@ -21,7 +21,7 @@ and [Signal Analyzer's measurements](https://www.mathworks.com/help/signal/ug/me
 | Direct manipulation         | Drag to pan; wheel zoom about the pointer; select Zoom and drag a time band; double-click the plot to add an annotation at the pointer time. Escape cancels a gesture. Keyboard arrows pan, +/− zoom, Home fits and Backspace restores the previous view.                                                                                                                                                                       |
 | Predictable navigation      | Toolbar equivalents for every gesture, bounded navigation history, explicit mode and visible selected range. A fit command restores the complete range. Zoom requests a new envelope from evaluated data.                                                                                                                                                                                                                       |
 | Axis control                | Automatically name axes from signal names/units; double-click an axis to edit its name and limits. Wheel over an axis zooms it; dragging pans it independently. Add same-unit axes and assign compatible traces. Automatic or fixed Y limits, linear or logarithmic Y scaling, explicit time limits, grid and trace rendering settings. Invalid limits receive inline errors. Log plots exclude non-positive values and say so. |
-| Honest comparisons          | Matching time references overlay with automatic unit axes plus optional independently scaled same-unit axes; unrelated clocks remain stacked. Matching time axes share navigation and cursors. Relative-start alignment stays an explicit display setting. Different clocks retain independent ranges.                                                                                                                          |
+| Honest comparisons          | Matching time references overlay with automatic unit axes plus optional independently scaled same-unit axes. Signals with separate time references (for example from different files) also overlay, at their own time values, and the plot says so; Stacked gives them independent ranges. Matching time axes share navigation and cursors. Relative-start alignment stays an explicit display setting.                         |
 | Trace manipulation          | Drop history items on a plot or its tab; drop on New plot to create a comparison. Preserve exact existing batch membership. Drag trace rows to reorder; keyboard move controls are also available. Show/hide, isolate, restore all, color, line/point/step style, width and direct source inspection.                                                                                                                           |
 | Plot manipulation           | Double-click a tab to rename. Drag saved tabs to reorder, with keyboard alternatives. Duplicate includes settings. Closing is reversible and never removes workflow outputs.                                                                                                                                                                                                                                                    |
 | Measurement cursors         | Toggle A/B cursors, click or drag their handles, or enter times. A/B time, Δt, sampled values and Δvalue remain visible in a bounded table. Cursor measurements use actual evaluated samples, including missing values; no preview-point value is presented as an exact measurement.                                                                                                                                            |
@@ -41,7 +41,8 @@ and [Signal Analyzer's measurements](https://www.mathworks.com/help/signal/ug/me
    duplicate IDs do not create duplicate traces. Unsupported drags do nothing.
 3. Pan and zoom operate in display time. Per-trace source ranges add back any
    relative-start offset before worker evaluation. Shared clocks use the same
-   display limits; unrelated clocks do not acquire a false common time reference.
+   display limits. Overlays of unrelated clocks share time values, labelled as
+   separate time references; they never create a common time reference.
 4. Wheel handling is confined to a focused plot or an explicit axis hit region.
    Over a Y axis it zooms that scale; over time ticks it zooms time. Pointer capture
    keeps drags working outside the canvas.
@@ -153,7 +154,7 @@ Signal names and units supply automatic axis names; blank manual names restore
 automatic naming. Wheel zoom targets the axis under the pointer, with logarithmic
 zoom performed in log space. Axis limits/names persist, survive trace reordering
 and duplication, and participate in Previous view. Legacy Y limits apply only
-to the first unit. Unrelated clocks still require explicit display alignment.
+to the first unit. Unrelated clocks overlay at their own time values.
 For unusually large unit collections, each page draws at most eight Y axes;
 horizontal scrolling preserves a useful data area without dropping trace membership.
 

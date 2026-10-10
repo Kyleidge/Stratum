@@ -31,6 +31,7 @@ import {
   Save,
   ListChecks,
   AlertTriangle,
+  ChartLine,
 } from 'lucide-react';
 import {
   Dialog,
@@ -2814,6 +2815,20 @@ export default function WorkflowWorkbench() {
                 onClick={() => toolbarAction('derive')}
               >
                 <Waves size={12} /> Derive…
+              </button>
+              <button
+                className="workflow-checked-plot"
+                aria-label="Plot the checked signals together"
+                title="Plot the checked signals together, from any recording"
+                disabled={!inputIds.length}
+                onClick={() =>
+                  plots.current?.createPlotFromTraces(
+                    'Checked signals',
+                    inputIds.map((id) => ({ id })),
+                  )
+                }
+              >
+                <ChartLine size={13} />
               </button>
               <button
                 className="workflow-checked-clear"

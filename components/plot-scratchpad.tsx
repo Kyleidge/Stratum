@@ -358,21 +358,29 @@ export default function PlotScratchpad({
     ]);
   }
   const bands = isActive && !sheet.zeroTime ? (active.bands ?? []) : [];
-  const clocks = new Set(
-    visibleIds.map((id) =>
-      sheet.zeroTime
-        ? 'elapsed'
-        : (graph.timeReferences.get(signalFor(id)?.id ?? '')?.id ?? id),
-    ),
-  );
+  const clockOf = (id: string) =>
+    sheet.zeroTime
+      ? 'elapsed'
+      : (graph.timeReferences.get(signalFor(id)?.id ?? '')?.id ?? id);
+  const clocks = new Set(visibleIds.map(clockOf));
+  // Signals from different recordings overlay on their own time values; only
+  // stacked panels keep each time reference's own range.
+  const stacked = sheet.layout === 'stacked';
+  const independent = stacked && clocks.size > 1;
+  /** The time references drawn on one axis, named for its label. */
+  function clockLabel(ids: string[]) {
+    if (sheet.zeroTime) return 'Elapsed time (Δt)';
+    const names = ids.map(
+      (id) => graph.timeReferences.get(signalFor(id)?.id ?? '')?.name ?? '',
+    );
+    return [...new Set(names.filter(Boolean))].join(' · ');
+  }
   function plotJobs(viewport: PlotRange): PlotJob[] {
     return visibleIds
       .filter((id) => index.nodes.has(id))
       .map((id) => {
         const source = timeRange(id);
-        const display = plotExtent(
-          clocks.size > 1 ? displayRange(id) : fullRange,
-        );
+        const display = plotExtent(independent ? displayRange(id) : fullRange);
         const span = display[1] - display[0];
         const zoomed = [
           display[0] + viewport[0] * span,
@@ -565,8 +573,6 @@ export default function PlotScratchpad({
   const overlayTraces = traces.filter((trace) =>
     shownAxes.has(traceAxisKey(trace.node.unit, trace.axisId, sheet.axes)),
   );
-  const canOverlay = clocks.size <= 1;
-  const stacked = sheet.layout === 'stacked' || !canOverlay;
   const multiAxis = !stacked && sheet.layout === 'axes';
   // Different units never share a frame unless independent Y axes are chosen.
   const lanes =
@@ -750,7 +756,7 @@ export default function PlotScratchpad({
   function interactionFor(
     extent: PlotRange,
     valueAxes?: PlotAxisGroup[],
-    clockId = clocks.values().next().value,
+    clockIds = [...clocks],
     traceId?: string,
   ): ChartInteraction {
     const range = plotExtent(extent);
@@ -769,9 +775,9 @@ export default function PlotScratchpad({
           y: range,
         });
       },
-      cursors: measuring && clocks.size <= 1 ? cursorTimes : undefined,
+      cursors: measuring && !independent ? cursorTimes : undefined,
       annotations: sheet.annotations?.filter((note) =>
-        note.clockId ? note.clockId === clockId : clocks.size <= 1,
+        note.clockId ? clockIds.includes(note.clockId) : clocks.size <= 1,
       ),
       onRange: (next) =>
         setWindow([
@@ -802,7 +808,7 @@ export default function PlotScratchpad({
           id,
           time: String(time),
           text: sheet.annotations?.find((note) => note.id === id)?.text ?? '',
-          clockId,
+          clockId: clockIds[0],
         }),
     };
   }
@@ -1146,9 +1152,7 @@ export default function PlotScratchpad({
 
   // The settings group and its overflow menu share these predicates.
   const canAnnotate =
-    !!traces.length &&
-    clocks.size <= 1 &&
-    (sheet.annotations?.length ?? 0) < 50;
+    !!traces.length && !independent && (sheet.annotations?.length ?? 0) < 50;
   function addAnnotation() {
     setNoteDraft({
       time: String((zoomRange(fullRange)[0] + zoomRange(fullRange)[1]) / 2),
@@ -1449,12 +1453,7 @@ export default function PlotScratchpad({
                     >
                       <button
                         aria-pressed={!stacked && !multiAxis}
-                        disabled={!canOverlay}
-                        title={
-                          canOverlay
-                            ? 'Overlay traces on one time axis; different units get their own lanes'
-                            : 'Overlay requires matching time references'
-                        }
+                        title="Overlay traces on one time axis; different units get their own lanes"
                         onClick={() => update({ layout: 'overlay' })}
                       >
                         <ChartNoAxesCombined size={15} />
@@ -1462,7 +1461,7 @@ export default function PlotScratchpad({
                       </button>
                       <button
                         aria-pressed={stacked}
-                        title="One panel per trace on a shared time axis"
+                        title="One panel per trace; separate time references keep their own time ranges"
                         onClick={() => update({ layout: 'stacked' })}
                       >
                         <Layers2 size={15} />
@@ -1470,7 +1469,6 @@ export default function PlotScratchpad({
                       </button>
                       <button
                         aria-pressed={multiAxis}
-                        disabled={!canOverlay}
                         title="Overlay different units in one frame, each on its own Y axis"
                         onClick={() => update({ layout: 'axes' })}
                       >
@@ -1503,10 +1501,10 @@ export default function PlotScratchpad({
                       <button
                         aria-label="Toggle measurement cursors"
                         aria-pressed={measuring}
-                        disabled={!traces.length || clocks.size > 1}
+                        disabled={!traces.length || independent}
                         title={
-                          clocks.size > 1
-                            ? 'Align starts or use one time reference to measure together'
+                          independent
+                            ? 'Overlay, align starts or use one time reference to measure together'
                             : 'Drag A/B cursors to measure evaluated samples'
                         }
                         onClick={() => {
@@ -1818,20 +1816,14 @@ export default function PlotScratchpad({
                         .map((trace) => (
                           <div className="scratchpad-stack" key={trace.node.id}>
                             <div className="scratchpad-axis-label">
-                              <span>
-                                {sheet.zeroTime
-                                  ? 'Elapsed time (Δt)'
-                                  : graph.timeReferences.get(
-                                      signalFor(trace.node.id)?.id ?? '',
-                                    )?.name}
-                              </span>
+                              <span>{clockLabel([trace.node.id])}</span>
                             </div>
                             <SignalChart
                               key={windowKey}
                               traces={[trace]}
                               segments={bands}
                               range={zoomRange(
-                                clocks.size > 1
+                                independent
                                   ? displayRange(trace.node.id)
                                   : fullRange,
                               )}
@@ -1843,7 +1835,7 @@ export default function PlotScratchpad({
                               grid={sheet.grid}
                               includeZero={false}
                               interaction={interactionFor(
-                                clocks.size > 1
+                                independent
                                   ? displayRange(trace.node.id)
                                   : fullRange,
                                 axisGroups.filter(
@@ -1855,11 +1847,7 @@ export default function PlotScratchpad({
                                       sheet.axes,
                                     ),
                                 ),
-                                sheet.zeroTime
-                                  ? 'elapsed'
-                                  : graph.timeReferences.get(
-                                      signalFor(trace.node.id)?.id ?? '',
-                                    )?.id,
+                                [clockOf(trace.node.id)],
                                 trace.node.id,
                               )}
                             />
@@ -1868,13 +1856,7 @@ export default function PlotScratchpad({
                     ) : (
                       <>
                         <div className="scratchpad-axis-label">
-                          <span>
-                            {sheet.zeroTime
-                              ? 'Elapsed time (Δt)'
-                              : graph.timeReferences.get(
-                                  signalFor(visibleIds[0])?.id ?? '',
-                                )?.name}
-                          </span>
+                          <span>{clockLabel(visibleIds)}</span>
                         </div>
                         {lanes.length > 1 ? (
                           lanes.map((axis, i) => (
@@ -2010,21 +1992,23 @@ export default function PlotScratchpad({
                     <span>
                       {sheet.zeroTime
                         ? 'Each trace starts at Δt = 0 s · display only'
-                        : clocks.size > 1
+                        : independent
                           ? 'Separate time references · independent time axes'
-                          : stacked
-                            ? 'Shared time axis · separate value axes'
-                            : lanes.length > 1
-                              ? `Shared time · ${lanes.length} lanes by unit`
-                              : axisGroups.length > 1
-                                ? `Shared time · ${axisGroups.length} Y axes`
-                                : 'Shared time & value axes'}
+                          : clocks.size > 1
+                            ? 'Separate time references · plotted at their own time values'
+                            : stacked
+                              ? 'Shared time axis · separate value axes'
+                              : lanes.length > 1
+                                ? `Shared time · ${lanes.length} lanes by unit`
+                                : axisGroups.length > 1
+                                  ? `Shared time · ${axisGroups.length} Y axes`
+                                  : 'Shared time & value axes'}
                     </span>
                     <span>
                       {formatValue(100 / (window[1] - window[0]), 0)}%
                     </span>
                     <span>
-                      {clocks.size <= 1
+                      {!independent
                         ? `${formatValue(zoomRange(fullRange)[0], 4)}–${formatValue(zoomRange(fullRange)[1], 4)} s`
                         : 'Independent time ranges'}
                     </span>
@@ -2034,7 +2018,7 @@ export default function PlotScratchpad({
                   </div>
                 </div>
               )}
-              {measuring && clocks.size <= 1 && (
+              {measuring && !independent && (
                 <PlotMeasurements
                   key={windowKey}
                   project={project}
@@ -2374,7 +2358,7 @@ export default function PlotScratchpad({
                 };
               }
               if (
-                clocks.size <= 1 &&
+                !independent &&
                 (!axisDraft.start.trim() ||
                   !axisDraft.end.trim() ||
                   !validPlotRange(range))
@@ -2382,7 +2366,7 @@ export default function PlotScratchpad({
                 setAxisError('Enter finite, increasing time limits.');
                 return;
               }
-              if (clocks.size <= 1)
+              if (!independent)
                 setWindow([
                   (range[0] - fullRange[0]) / (fullRange[1] - fullRange[0]),
                   (range[1] - fullRange[0]) / (fullRange[1] - fullRange[0]),
@@ -2497,7 +2481,7 @@ export default function PlotScratchpad({
                     type="number"
                     step="any"
                     disabled={
-                      clocks.size > 1 && (field === 'start' || field === 'end')
+                      independent && (field === 'start' || field === 'end')
                     }
                     value={axisDraft[field]}
                     placeholder={
@@ -2515,7 +2499,7 @@ export default function PlotScratchpad({
                 </label>
               ))}
             </div>
-            {clocks.size > 1 && (
+            {independent && (
               <p>
                 Independent time references: use plot gestures or align starts
                 before entering common time limits.
@@ -2881,7 +2865,7 @@ export default function PlotScratchpad({
           <DialogDescription>
             {activeChoice
               ? `Segments are time intervals of the whole recording. Choose up to ${activeChoice.limit} of its signals to show under them; with none chosen, the signals that found the segments are shown.`
-              : 'Choose signals or scalar values. Each unit gets its own Y axis. Unrelated time references use stacked plots until starts are aligned.'}
+              : 'Choose signals or scalar values from any recording. Each unit gets its own Y axis. Signals with separate time references are plotted at their own time values; Align starts compares them from their starts.'}
           </DialogDescription>
           <label className="scratchpad-search">
             <Search size={16} />

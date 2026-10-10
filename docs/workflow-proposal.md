@@ -106,8 +106,9 @@ them. Closing a tab offers Reopen for the most recently closed plot.
 
 The optional Δt display subtracts each trace's own interval start. It changes no
 samples, time references or workflow history. It permits elapsed-time comparisons
-across recordings. Otherwise overlays require matching units and explicit time references. Other comparisons
-use stacked axes, with independent time axes clearly labeled when clocks differ.
+across recordings. Overlays split different units into lanes; signals with
+different time references overlay at their own time values, labelled as such,
+while Stacked gives each its own clearly labelled time range.
 Zoom, pan, and Fit adjust the bounded plot preview; summaries describe all samples.
 Exact samples and exports still come from evaluated engine data, never the preview.
 One top bar holds labelled Derive, Segment, Value and Compare actions, the
