@@ -128,8 +128,8 @@ export function WorkflowWelcome({
           </h2>
           <div id="workflow-welcome-import">
             <p>
-              A CSV holds time in seconds first, then one column per signal with
-              its unit in brackets:
+              A CSV holds time first, then one column per signal with its unit
+              in brackets. Before it imports you can add time columns and units:
             </p>
             <code>{CSV_FORMAT_EXAMPLE},…</code>
             <p>

@@ -3,6 +3,7 @@
  * content where possible and by extension otherwise; parsers load lazily so
  * the application bundle only carries the readers a session actually uses.
  */
+import type { DelimitedLayout } from './delimited-layout';
 import type { RecordingFile } from './recording';
 
 type Opener = (file: Blob) => Promise<RecordingFile>;
@@ -119,11 +120,20 @@ export async function recordingFormat(
   );
 }
 
-/** Reads a file's metadata (tables, channels, notes) without its samples. */
+/**
+ * Reads a file's metadata (tables, channels, notes) without its samples. A
+ * column layout applies to delimited text only; other formats ignore it.
+ */
 export async function openRecording(
   file: Blob & { name?: string },
+  options: { layout?: DelimitedLayout } = {},
 ): Promise<RecordingFile & { formatId: string }> {
   const format = await recordingFormat(file);
-  const open = await format.load();
-  return Object.assign(await open(file), { formatId: format.id });
+  const recording =
+    format.id === 'delimited'
+      ? await (await import('./delimited')).openDelimited(file, options.layout)
+      : await (
+          await format.load()
+        )(file);
+  return Object.assign(recording, { formatId: format.id });
 }

@@ -40,23 +40,30 @@ function looksLikeDate(cell: string) {
   );
 }
 
-/** Row numbers count the header as row 1, as spreadsheets do. */
+/**
+ * Row numbers count the header as row 1, as spreadsheets do. `column` names
+ * the time column when a file has several; `scale` is seconds per unit.
+ */
 export function timeProblem(
   row: number,
   cell: string,
   previous: number,
+  column?: string,
+  scale = 1,
 ): string {
   const text = cell.trim();
+  const where = column ? `Row ${row}, column ${quote(column)}` : `Row ${row}`;
+  const unit = scale === 1 ? 's' : 'units';
   if (!text)
-    return `Row ${row}: the time cell is empty. Every row needs a time in seconds.`;
+    return `${where}: the time cell is empty. Every row needs a time${column ? ' where its signals have values' : ' in seconds'}.`;
   if (looksLikeDate(text))
-    return `Row ${row}: time ${quote(text)} is a date or clock time. The first column must hold elapsed time in seconds (0, 0.1, 0.2, …).`;
+    return `${where}: time ${quote(text)} is a date or clock time. A time column must hold elapsed time (0, 0.1, 0.2, …).`;
   const value = Number(text);
   if (!Number.isFinite(value))
     return /^-?\d+,\d+$/.test(text)
-      ? `Row ${row}: time ${quote(text)} uses a decimal comma. Use a decimal point (0.5).`
-      : `Row ${row}: time ${quote(text)} is not a number of seconds.`;
-  return `Row ${row}: time ${value.toLocaleString()} s does not come after the previous time ${previous.toLocaleString()} s. Times must increase from row to row.`;
+      ? `${where}: time ${quote(text)} uses a decimal comma. Use a decimal point (0.5).`
+      : `${where}: time ${quote(text)} is not a number.`;
+  return `${where}: time ${value.toLocaleString()}${unit === 's' ? ' s' : ''} does not come after the previous time ${previous.toLocaleString()}${unit === 's' ? ' s' : ''}. Times must increase from row to row.`;
 }
 
 /** Binary formats count samples from 1 within a named table. */

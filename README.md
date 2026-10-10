@@ -126,8 +126,9 @@ user, needs no administrator rights and updates itself.
    operations you'll use on your own data.
 2. Choose **Import ▾ → Try the batch example** to run a workflow on eight
    end-of-line recordings and review the flagged items.
-3. Import your own file. For CSV, put time in seconds in the first column and
-   units in square brackets:
+3. Import your own file. For CSV, put time in the first column and units in
+   square brackets; the import dialog lets you choose further time columns,
+   the time axis of each signal and units for columns without one:
 
    ```csv
    Time [s],Engine speed [rpm],Torque [Nm]

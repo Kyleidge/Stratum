@@ -27,8 +27,14 @@ a newer one.
   increasing; intervals exclude their end unless it is a recording/parent end
   (migrated legacy intervals keep inclusive ends). `createdAt`/`updatedAt` are
   ISO 8601 UTC strings.
-- **Units** are free text compared exactly; Stratum never converts implicitly.
-  `convert` uses only the exact families in `lib/units.ts`.
+- **Units** are free text. Stratum never converts implicitly, and labels keep
+  their meaning: a registered label's factor never changes, so saved `convert`
+  steps stay exact. `lib/units.ts` recognises registered labels, SI-prefixed
+  units and compounds (`m/s²`, `g/kWh`); `convert` maps between units of the
+  same dimension (angle and torque per radian are dimensions of their own, so
+  rpm never converts to Hz nor N·m to J). Spellings of one unit (`Nm`, `N·m`)
+  compare equal through `sameUnit`. Interactive imports require recognised,
+  empty or explicitly kept custom units; imports store the file's spelling.
 - **IDs** are opaque strings: new ones are random UUIDs, older workspaces may
   hold others. Never parse an ID or derive meaning from one.
 

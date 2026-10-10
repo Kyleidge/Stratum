@@ -4,6 +4,7 @@ import { VALUE_FUNCTIONS, valueParameters, valueSpec } from './workflow-types';
 import { BINDABLE_DERIVE, BINDABLE_VALUE } from './value-bindings';
 import { compileFormula, MAX_FORMULA_LENGTH } from './formula';
 import { VALUE_INPUT } from './value-math';
+import { sameUnit, UNSTATED_UNIT } from './units';
 import type {
   CheckDefinition,
   ParameterBindings,
@@ -2100,7 +2101,12 @@ export function bindChannels(
         problem: `More than one channel is named "${name}".`,
       };
     const found = channels[matches[0]];
-    if (channel.unit !== undefined && found.unit !== channel.unit)
+    // A channel the file leaves without a unit takes the workflow's.
+    if (
+      channel.unit !== undefined &&
+      found.unit !== UNSTATED_UNIT &&
+      !sameUnit(found.unit, channel.unit)
+    )
       return {
         alias: channel.alias,
         channel: matches[0],
@@ -2108,6 +2114,28 @@ export function bindChannels(
       };
     return { alias: channel.alias, channel: matches[0] };
   });
+}
+
+/**
+ * Units for the channels a file leaves without one: the unit the workflow
+ * expects of the channel bound to it, by channel position.
+ */
+export function recipeUnits(
+  recipe: Pick<WorkflowRecipe, 'channels'>,
+  channels: { name: string; unit: string }[],
+  mapping: Readonly<Record<string, string>> = {},
+): (string | undefined)[] {
+  const units: (string | undefined)[] = channels.map(() => undefined);
+  bindChannels(recipe, channels, mapping).forEach((binding, i) => {
+    const unit = recipe.channels[i].unit;
+    if (
+      binding.channel >= 0 &&
+      unit !== undefined &&
+      channels[binding.channel].unit === UNSTATED_UNIT
+    )
+      units[binding.channel] = unit;
+  });
+  return units;
 }
 
 /** The item ID from a file name: the `id` group, else the first group or match. */

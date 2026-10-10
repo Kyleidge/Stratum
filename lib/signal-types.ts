@@ -1,3 +1,4 @@
+import type { DelimitedLayout } from './formats/delimited-layout';
 import type {
   FunctionRun,
   RegionExample,
@@ -333,7 +334,21 @@ export type EngineRequest =
       inspection?: boolean;
     }
   | { type: 'init' }
-  | { type: 'import'; file: File; tables?: number[] }
+  | {
+      type: 'import';
+      file: File;
+      tables?: number[];
+      /** Delimited text: time axes and the signals on each. */
+      layout?: DelimitedLayout;
+      /** Units chosen in the import dialog, by table and channel. */
+      units?: (string[] | null)[];
+      /** Unrecognised labels kept as custom units. */
+      custom?: string[];
+      /** Signal names chosen in the import dialog, by table and channel. */
+      names?: (string[] | null)[];
+      /** Recording names chosen in the import dialog, by table. */
+      tableNames?: (string | null)[];
+    }
   | { type: 'demo' }
   | { type: 'example'; key: string }
   | {

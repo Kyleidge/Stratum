@@ -226,7 +226,14 @@ globalThis.onmessage = (
             await engine.example(r.key);
             break;
           case 'import':
-            await engine.importRecording(r.file, { tables: r.tables });
+            await engine.importRecording(r.file, {
+              tables: r.tables,
+              layout: r.layout,
+              units: r.units,
+              custom: r.custom,
+              names: r.names,
+              tableNames: r.tableNames,
+            });
             break;
           case 'derive':
             await engine.derive(r.parentId, r.operation, r.parameter);

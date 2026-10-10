@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Calculator, Eye } from 'lucide-react';
+import { UnitHint, UnitInput } from '@/components/unit-field';
 import {
   compileFormula,
   FORMULA_FUNCTIONS,
@@ -213,19 +214,17 @@ export default function ValueMathEditor({
                     : ''}
                   . For example <code>a / 12</code> or <code>b / a</code>.
                 </p>
-                <label className="parameter-control-field">
+                <div className="parameter-control-field">
                   <span>Output unit</span>
-                  <div className="number-field">
-                    <input
-                      aria-label="Output unit"
-                      maxLength={40}
-                      value={unit}
-                      placeholder="none"
-                      disabled={busy}
-                      onChange={(event) => setUnit(event.target.value)}
-                    />
-                  </div>
-                </label>
+                  <UnitInput
+                    label="Output unit"
+                    value={unit}
+                    disabled={busy}
+                    placeholder="none"
+                    onChange={setUnit}
+                  />
+                </div>
+                <UnitHint unit={unit} />
                 {names.map((name) => (
                   <div key={name} className="parameter-control-field">
                     <span>Value {name}</span>

@@ -1,3 +1,5 @@
+import { sameUnit, unitConversion } from './units';
+
 export const ARITHMETIC_SYMBOLS = {
   add: '+',
   subtract: '−',
@@ -52,9 +54,11 @@ export function arithmeticUnit(
   const a = first.trim();
   const b = second.trim();
   if (operation === 'add' || operation === 'subtract') {
-    if (a !== b)
+    if (!sameUnit(a, b))
       throw new Error(
-        'Add and subtract require matching unit labels. Convert the inputs to the same units first.',
+        unitConversion(b, a)
+          ? `Add and subtract need inputs in the same unit, not ${a} and ${b}. Convert ${b} to ${a} first.`
+          : 'Add and subtract require matching unit labels. Convert the inputs to the same units first.',
       );
     return a;
   }
@@ -64,7 +68,7 @@ export function arithmeticUnit(
     if (!b || b === '1') return a;
     return `${factor(a)}·${factor(b)}`;
   }
-  if (a === b) return '1';
+  if (sameUnit(a, b)) return '1';
   if (!b || b === '1') return a;
   return `${a ? factor(a) : '1'}/${factor(b)}`;
 }

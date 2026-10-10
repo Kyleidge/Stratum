@@ -113,6 +113,21 @@ export async function workflowUiSmoke() {
       'dialog',
     );
   }
+  /** Delimited text opens its import setup; accept the suggested columns. */
+  async function confirmImport() {
+    const setup = await until(
+      () =>
+        document.querySelector<HTMLElement>(
+          '.workflow-import-dialog[data-open]',
+        ) ?? undefined,
+      'import setup',
+    );
+    await click('Import 1 recording', setup);
+    await until(
+      () => !setup.isConnected || !setup.hasAttribute('data-open'),
+      'import setup closed',
+    );
+  }
   async function settled() {
     await until(
       () =>
@@ -2767,6 +2782,7 @@ export async function workflowUiSmoke() {
     )!;
     wideImport.files = wideFile.files;
     wideImport.dispatchEvent(new Event('change', { bubbles: true }));
+    await confirmImport();
     await until(
       () =>
         [...document.querySelectorAll<HTMLElement>('[data-kind="more"]')].some(
@@ -2862,6 +2878,8 @@ export async function workflowUiSmoke() {
     )!;
     timeImport.files = timeFiles.files;
     timeImport.dispatchEvent(new Event('change', { bubbles: true }));
+    await confirmImport();
+    await confirmImport();
     await until(
       () =>
         document.body.textContent?.includes('time-a') &&
