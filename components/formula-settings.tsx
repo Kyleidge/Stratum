@@ -1,4 +1,5 @@
 'use client';
+import { useId } from 'react';
 
 import {
   Select,
@@ -9,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { UnitHint, UnitOptions } from '@/components/unit-field';
 import {
   compileFormula,
   FORMULA_FUNCTIONS,
@@ -149,6 +151,7 @@ export default function FormulaSettingsPanel({
   disabled: boolean;
   onChange: (draft: FormulaDraft) => void;
 }) {
+  const unitListId = useId();
   let compiled: ReturnType<typeof compileFormula> | undefined;
   let problem = '';
   try {
@@ -216,6 +219,7 @@ export default function FormulaSettingsPanel({
         <div className="number-field">
           <input
             aria-label="Output unit"
+            list={unitListId}
             maxLength={40}
             value={draft.unit}
             disabled={disabled}
@@ -226,6 +230,8 @@ export default function FormulaSettingsPanel({
           />
         </div>
       </label>
+      <UnitHint unit={draft.unit} />
+      <UnitOptions id={unitListId} />
       {compiled?.signals.slice(1).map((letter) => (
         <div key={letter} className="parameter-control-field">
           <span>Signal {letter}</span>

@@ -91,8 +91,12 @@ There are no server API routes or cloud signal uploads.
   sample grid, lowercase = bound values; value mode: a = each value) into
   closures; never `eval`. Formula nodes keep `expression`, include it in
   their recipe key, and evaluate their parents in lockstep like binary math.
-  `lib/units.ts` holds exact linear unit conversions for `convert` nodes;
-  conversions are only within one family and labels match exactly. Previews run in inspection lanes and never save.
+  `lib/units.ts` recognises units (registered labels with their exact
+  factors, SI prefixes and compounds with ·, / and powers; angle and torque
+  per radian are dimensions) and converts between units of one dimension;
+  `sameUnit` compares spellings, `unitSuggestions` offers fixes. Labels match
+  exactly (mW is not MW). `components/unit-field.tsx` is the unit input
+  with recognition status; Add/Subtract accept spellings of one unit. Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
   window spans; workflow segment previews run automatically. Operation dialogs
@@ -372,6 +376,14 @@ There are no server API routes or cloud signal uploads.
   display offsets, but keep workspace outputs on their current time axis.
   Start and end triggers
   independently select raw/derived signals, edges, thresholds, and signed offsets.
+- CSV import setup: `lib/formats/delimited-layout.ts` makes each column a
+  time axis (any unit of time, read as seconds), a signal on one, or
+  skipped; each time axis with signals is one table. Delimited text always
+  opens `components/workflow-import-dialog.tsx`, which also fixes units: an
+  import from the dialog passes `units`/`custom`, and the engine then refuses
+  signals without a recognised unit, No unit ('') or a kept custom label.
+  Batch runs import leniently; unitless channels take the recipe's unit
+  (`recipeUnits`). Imports keep the file's spelling of a unit.
 - `lib/formats/`: recording-file readers (see `docs/file-formats.md`).
   `index.ts` is the registry (content signatures before extensions, lazily
   loaded parsers, `RECORDING_ACCEPT`); `recording.ts` the contract: a file

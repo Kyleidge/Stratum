@@ -6,6 +6,8 @@
  * publishes everything atomically.
  */
 
+import type { DelimitedLayout, DelimitedPreview } from './delimited-layout';
+
 export type RecordingChannel = {
   name: string;
   /** Engineering unit; '—' when the file names none. */
@@ -41,6 +43,10 @@ export type RecordingFile = {
   tables: RecordingTable[];
   /** File-level caveats, such as skipped channels. */
   notes?: string[];
+  /** Delimited text: its columns, for the import dialog. */
+  columns?: DelimitedPreview;
+  /** Delimited text: the column layout these tables come from. */
+  layout?: DelimitedLayout;
   /**
    * Streams one table's samples in time order. Blocks should stay bounded
    * (about 64 K rows or a few MiB) so cancellation and memory stay responsive.

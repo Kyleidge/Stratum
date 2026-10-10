@@ -2,6 +2,7 @@ import { Envelope, power } from './signal-math';
 import { openRecording } from './formats/index';
 import { MAX_RECORDING_CHANNELS } from './formats/recording';
 import type { RecordingFile } from './formats/recording';
+import type { DelimitedLayout } from './formats/delimited-layout';
 import { SignalGraph } from './signal-graph';
 import { timeNodes, workspaceTimeScope } from './time-model';
 import { TIME_OPERATIONS, timeInputs } from './time-types';
@@ -53,6 +54,7 @@ import {
 import { importError, sampleTimeProblem } from './csv-import-messages';
 import {
   bestTable,
+  recipeUnits,
   bindChannels,
   createResolver,
   outputLabels,
@@ -104,7 +106,7 @@ import { ValueAccumulator } from './value-statistics';
 import { compileFormula } from './formula';
 import { VALUE_INPUT, valueMathResults } from './value-math';
 import { belowNyquist } from './signal-filters';
-import { unitConversion } from './units';
+import { importUnitProblem, unitConversion, UNSTATED_UNIT } from './units';
 import {
   BINDABLE_DERIVE,
   BINDABLE_VALUE,
@@ -1168,6 +1170,7 @@ export class SignalEngine {
                 ? options.table!
                 : bestTable(recipe, recording.tables, channelMap),
             ],
+            fill: (channels) => recipeUnits(recipe, channels, channelMap),
           })
         )[0];
       else
@@ -1647,6 +1650,10 @@ export class SignalEngine {
   /**
    * Imports the chosen tables of a recording file (all by default) as one
    * recording each. Every table publishes in one commit and one Undo entry.
+   * With `units` (the import dialog), every signal needs a recognised unit,
+   * no unit ('') or a label listed in `custom`; without (batch runs and
+   * built-in examples), units are kept as the file states them. Recognised
+   * labels keep their spelling (Nm stays Nm); `sameUnit` compares them.
    */
   async importRecording(
     file: Blob & { name?: string },
@@ -1655,13 +1662,26 @@ export class SignalEngine {
       synthetic?: boolean;
       /** Picks tables once the file's metadata is known (batch runs). */
       choose?: (recording: RecordingFile) => number[];
+      /** Delimited text: time axes and the signals on each. */
+      layout?: DelimitedLayout;
+      /** Units chosen in the import dialog, by table and channel. */
+      units?: (string[] | null | undefined)[];
+      /** Unrecognised labels the user chose to keep as custom units. */
+      custom?: string[];
+      /** Units for channels the file leaves without one (batch runs). */
+      fill?: (
+        channels: RecordingFile['tables'][number]['channels'],
+      ) => (string | undefined)[];
     } = {},
   ): Promise<Source[]> {
     this.cancelled = false;
     const fileName = file.name || 'Generated signal.csv';
     const ids: string[] = [];
     try {
-      const recording = await openRecording(file);
+      const recording = await openRecording(
+        file,
+        options.layout ? { layout: options.layout } : {},
+      );
       const chosen =
         options.choose?.(recording) ??
         options.tables ??
@@ -1675,6 +1695,28 @@ export class SignalEngine {
             ? 'Choose at least one group to import.'
             : 'The file holds no numeric signals.',
         );
+      const custom = (options.custom ?? []).flatMap((label) =>
+        typeof label === 'string' ? [label.trim()] : [],
+      );
+      const unitsOf = (index: number) => {
+        const { channels } = recording.tables[index];
+        const chosenUnits = options.units?.[index];
+        const filled = options.fill?.(channels);
+        return channels.map((channel, c) => {
+          const unit =
+            chosenUnits?.[c] ??
+            (channel.unit === UNSTATED_UNIT ? filled?.[c] : undefined) ??
+            channel.unit;
+          if (typeof unit !== 'string')
+            throw new Error(`The unit of “${channel.name}” is not text.`);
+          if (options.units) {
+            const problem = importUnitProblem(channel.name, unit, custom);
+            if (problem) throw new Error(problem);
+          }
+          return unit === UNSTATED_UNIT ? unit : unit.trim();
+        });
+      };
+      const units = new Map(tables.map((index) => [index, unitsOf(index)]));
       const sources: Source[] = [];
       const nodes: SignalNode[] = [];
       for (const [position, index] of tables.entries()) {
@@ -1694,7 +1736,7 @@ export class SignalEngine {
             ),
         );
         const channels = table.channels.map((channel, c) =>
-          this.node(id, channel.name, channel.unit, 'raw', [], {}, c),
+          this.node(id, channel.name, units.get(index)![c], 'raw', [], {}, c),
         );
         nodes.push(...channels);
         sources.push({

@@ -122,11 +122,14 @@ export function WorkflowGuide({
             <ol className="workflow-guide-steps">
               <li>
                 <strong>Import a recording.</strong> Choose Import and pick a
-                file, or drop it on the window. In a CSV, time in seconds comes
-                first, then one column per signal with its unit in brackets:{' '}
-                <code>{CSV_FORMAT_EXAMPLE},…</code> MDF 4/3, TDMS, MATLAB .mat,
-                WAV and Excel .xlsx files keep their own names and units; for a
-                file with several groups, choose which to import.
+                file, or drop it on the window. In a CSV, time comes first, then
+                one column per signal with its unit in brackets:{' '}
+                <code>{CSV_FORMAT_EXAMPLE},…</code> Before a CSV imports you can
+                choose more time columns, which signals use each, and units for
+                columns without one. MDF 4/3, TDMS, MATLAB .mat, WAV and Excel
+                .xlsx files keep their own names and units; for a file with
+                several groups, choose which to import. Every signal needs a
+                unit Stratum recognises, No unit, or a custom unit you keep.
               </li>
               <li>
                 <strong>Process it.</strong> Select a signal in History, then

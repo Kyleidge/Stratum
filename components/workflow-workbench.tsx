@@ -149,7 +149,11 @@ import type {
   ReportWorkspace,
 } from '@/lib/report-integration';
 import WorkflowSaveDialog from './workflow-save-dialog';
-import WorkflowImportDialog from './workflow-import-dialog';
+import WorkflowImportDialog, {
+  needsImportSetup,
+  plainImportSetup,
+} from './workflow-import-dialog';
+import type { ImportSetup } from './workflow-import-dialog';
 import {
   isRecordingName,
   openRecording,
@@ -485,7 +489,7 @@ export default function WorkflowWorkbench() {
   const [importChoice, setImportChoice] = useState<{
     file: File;
     recording: RecordingFile;
-    resolve: (tables?: number[]) => void;
+    resolve: (setup?: ImportSetup) => void;
   } | null>(null);
   const [runDialog, setRunDialog] = useState<{
     key: number;
@@ -917,12 +921,11 @@ export default function WorkflowWorkbench() {
   function importFiles(selected: File[]) {
     if (!selected.length) return;
     void (async () => {
-      const unitless: string[] = [];
       const notes = new Set<string>();
       let known = new Set(project.sources.map((source) => source.id));
       let added = 0;
       for (const item of selected) {
-        // Metadata only: multi-group files ask which groups to import.
+        // Metadata only: text columns, several groups or units to fix ask first.
         let recording: RecordingFile;
         try {
           recording = await openRecording(item);
@@ -933,42 +936,32 @@ export default function WorkflowWorkbench() {
           );
           continue;
         }
-        const tables =
-          recording.tables.length > 1
-            ? await new Promise<number[] | undefined>((resolve) =>
-                setImportChoice({ file: item, recording, resolve }),
-              )
-            : undefined;
-        if (recording.tables.length > 1 && !tables) continue;
+        const setup = needsImportSetup(recording)
+          ? await new Promise<ImportSetup | undefined>((resolve) =>
+              setImportChoice({ file: item, recording, resolve }),
+            )
+          : plainImportSetup(recording);
+        if (!setup) continue;
         const next = await engine.mutate(
-          { type: 'import', file: item, ...(tables ? { tables } : {}) },
+          { type: 'import', file: item, ...setup },
           `Importing ${item.name}…`,
         );
         reveal(next);
         for (const note of recording.notes ?? []) notes.add(note);
-        for (const index of tables ?? [0])
-          for (const note of recording.tables[index]?.notes ?? [])
-            notes.add(note);
-        const units = new Map(next.nodes.map((node) => [node.id, node.unit]));
-        for (const source of next.sources.filter((s) => !known.has(s.id))) {
-          added++;
-          const missing = source.channels.filter(
-            (id) => units.get(id) === '—',
-          ).length;
-          // Binary formats state their units; a blank one is not a CSV slip.
-          if (missing && /\.(csv|tsv|tab|txt|dat)$/i.test(source.name))
-            unitless.push(`${source.name} (${formatCount(missing, 'signal')})`);
-        }
+        if (!setup.layout)
+          for (const index of setup.tables)
+            for (const note of recording.tables[index]?.notes ?? [])
+              notes.add(note);
+        if (setup.custom.length)
+          notes.add(
+            `Kept as custom units, which never convert: ${setup.custom.join(', ')}.`,
+          );
+        added += next.sources.filter((s) => !known.has(s.id)).length;
         known = new Set(next.sources.map((source) => source.id));
       }
       if (added > 1) setSourceId('all');
       // Gentle hints, not errors: the recordings imported correctly.
-      const hints = [...notes];
-      if (unitless.length)
-        hints.push(
-          `Some headers have no unit: ${unitless.join(', ')}. Add units in brackets, such as Torque [Nm], so plots and values show them.`,
-        );
-      if (hints.length) announceChange(`Imported. ${hints.join(' ')}`);
+      if (notes.size) announceChange(`Imported. ${[...notes].join(' ')}`);
     })().catch(() => {});
   }
   async function openRunDialog(
@@ -3523,8 +3516,8 @@ export default function WorkflowWorkbench() {
           key={`${importChoice.file.name}:${importChoice.file.lastModified}`}
           fileName={importChoice.file.name}
           recording={importChoice.recording}
-          onClose={(tables) => {
-            importChoice.resolve(tables);
+          onClose={(setup) => {
+            importChoice.resolve(setup);
             setImportChoice(null);
           }}
         />

@@ -853,3 +853,124 @@
   align-self: center;
   margin-right: auto;
 }
+
+/* Setting up a delimited text import: column roles, time axes and units. */
+.workflow-import-columns {
+  max-height: min(420px, 48vh);
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.workflow-import-columns table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.workflow-import-columns th,
+.workflow-import-columns td {
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.workflow-import-columns thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-top: 0;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.workflow-import-columns thead th:nth-child(1) {
+  width: 26%;
+}
+.workflow-import-columns thead th:nth-child(2) {
+  width: 24%;
+}
+.workflow-import-columns thead th:nth-child(3) {
+  width: 30%;
+}
+.workflow-import-columns tbody th {
+  background: none;
+  font-weight: 400;
+}
+.workflow-import-columns tbody th,
+.workflow-import-units li > span {
+  display: grid;
+  min-width: 0;
+}
+.workflow-import-units li {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(170px, 2fr);
+  gap: 8px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+}
+.workflow-import-units li:first-child {
+  border-top: 0;
+}
+.workflow-import-columns strong {
+  overflow: hidden;
+  color: var(--ink-1);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-import-columns small {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.workflow-import-columns tr[data-role='skip'] strong {
+  color: var(--ink-3);
+}
+.workflow-import-columns select {
+  width: 100%;
+  min-width: 0;
+}
+.workflow-import-columns .workflow-import-values {
+  overflow: hidden;
+  padding-top: 10px;
+  color: var(--ink-2);
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-import-dialog .workflow-batch-actions > span[data-problem] {
+  color: var(--danger);
+}
+.unit-field {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.unit-field input {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--field);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.unit-field[data-state='unstated'] input,
+.unit-field[data-state='unknown'] input,
+.unit-field[data-state='unknown'] select {
+  border-color: var(--danger);
+}
+.unit-field small {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.unit-field .unit-field-problem {
+  color: var(--danger);
+}

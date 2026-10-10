@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, Search } from 'lucide-react';
 import {
   Dialog,
@@ -8,13 +8,81 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
+import UnitField, { UnitOptions, unitState } from '@/components/unit-field';
 import { formatCount } from '@/lib/format-count';
+import {
+  layoutProblem,
+  layoutTables,
+  timeScale,
+} from '@/lib/formats/delimited-layout';
+import type {
+  DelimitedColumn,
+  DelimitedLayout,
+} from '@/lib/formats/delimited-layout';
 import type { RecordingFile, RecordingTable } from '@/lib/formats/recording';
+import { UNIT_GROUPS, UNSTATED_UNIT } from '@/lib/units';
 
 /** Files with more groups start with none chosen, so nothing floods History. */
 const PRESELECT_LIMIT = 16;
 /** Rows rendered at once; the filter narrows longer lists. */
 const SHOWN = 100;
+const TIME_UNITS = UNIT_GROUPS.find((group) => group.family === 'Time')
+  ?.units ?? ['s'];
+
+/** What the import dialog decided; the engine validates it again. */
+export type ImportSetup = {
+  tables: number[];
+  /** Delimited text: time axes and the signals on each. */
+  layout?: DelimitedLayout;
+  /** Each table's units by channel ('' is no unit). */
+  units: (string[] | null)[];
+  /** Unrecognised labels kept as custom units. */
+  custom: string[];
+};
+
+/** True when importing the file needs choices: groups or units to fix. */
+export function needsImportSetup(recording: RecordingFile) {
+  return (
+    !!recording.columns ||
+    recording.tables.length > 1 ||
+    recording.tables.some((table) =>
+      table.channels.some((channel) => unfixed(channel.unit, new Set())),
+    )
+  );
+}
+
+/** The setup of a file that imports as it is: every table, its own units. */
+export function plainImportSetup(recording: RecordingFile): ImportSetup {
+  return {
+    tables: recording.tables.map((_, index) => index),
+    units: recording.tables.map((table) =>
+      table.channels.map((channel) => channel.unit),
+    ),
+    custom: [],
+  };
+}
+
+/**
+ * Binary formats: the fix that applies to a channel. An unrecognised label
+ * is fixed once for every signal using it; a missing unit per signal.
+ */
+const fixKey = (table: number, channel: number, unit: string) =>
+  unit === UNSTATED_UNIT ? `#${table}:${channel}` : `=${unit}`;
+
+/** True when every word of the query appears in the text. */
+function matches(text: string, query: string) {
+  const lower = text.toLowerCase();
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => lower.includes(word));
+}
+
+/** Units that stop an import until they are fixed. */
+const unfixed = (unit: string, custom: ReadonlySet<string>) =>
+  ['unstated', 'unknown'].includes(unitState(unit, custom));
 
 function tableSummary(table: RecordingTable) {
   const parts = [formatCount(table.channels.length, 'signal')];
@@ -26,7 +94,42 @@ function tableSummary(table: RecordingTable) {
   return parts.join(' · ');
 }
 
-/** Choose which groups of a multi-group file become recordings. */
+/** Moves signals to the nearest time axis when time axes change. */
+function setRole(
+  layout: DelimitedLayout,
+  column: number,
+  next: DelimitedColumn,
+): DelimitedLayout {
+  const was = layout[column];
+  const result = layout.map((item, index) => (index === column ? next : item));
+  const axes = result.flatMap((item, index) =>
+    item.role === 'time' ? [index] : [],
+  );
+  const nearest = (index: number) =>
+    axes.filter((axis) => axis < index).at(-1) ?? axes[0];
+  return result.map((item, index) => {
+    if (item.role !== 'signal') return item;
+    // A new axis takes the signals to its right that used the axis before it.
+    if (
+      next.role === 'time' &&
+      was.role !== 'time' &&
+      index > column &&
+      nearest(index) === column &&
+      item.time < column
+    )
+      return { role: 'signal', time: column };
+    if (result[item.time]?.role === 'time') return item;
+    const axis = nearest(index);
+    return axis === undefined ? item : { role: 'signal', time: axis };
+  });
+}
+
+/**
+ * Sets up an import: for delimited text, which columns are time axes, which
+ * axis each signal uses and each signal's unit; for files with several
+ * groups, which groups to import. Units Stratum does not recognise, and
+ * signals without a unit, must be fixed before the import.
+ */
 export default function WorkflowImportDialog({
   fileName,
   recording,
@@ -34,10 +137,21 @@ export default function WorkflowImportDialog({
 }: {
   fileName: string;
   recording: RecordingFile;
-  /** The chosen table indexes, or undefined when cancelled. */
-  onClose: (tables?: number[]) => void;
+  /** The chosen setup, or undefined when cancelled. */
+  onClose: (setup?: ImportSetup) => void;
 }) {
-  const { tables } = recording;
+  const listId = useId();
+  const { tables, columns } = recording;
+  const [layout, setLayout] = useState<DelimitedLayout>(
+    () => recording.layout ?? [],
+  );
+  const [columnUnits, setColumnUnits] = useState<string[]>(
+    () => columns?.headers.map((header) => header.unit) ?? [],
+  );
+  // Binary formats: one fix per unrecognised label covers every signal using
+  // it; a signal without a unit gets its own, keyed `#table:channel`.
+  const [fixes, setFixes] = useState<Map<string, string>>(() => new Map());
+  const [custom, setCustom] = useState<Set<string>>(() => new Set());
   const [chosen, setChosen] = useState<Set<number>>(
     () =>
       new Set(
@@ -45,19 +159,98 @@ export default function WorkflowImportDialog({
       ),
   );
   const [query, setQuery] = useState('');
-  const matches = useMemo(() => {
-    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    return tables.flatMap((table, index) => {
-      const text = [table.name, ...table.channels.map((c) => c.name)]
-        .join(' ')
-        .toLowerCase();
-      return words.every((word) => text.includes(word)) ? [index] : [];
-    });
-  }, [tables, query]);
-  const signals = [...chosen].reduce(
-    (sum, index) => sum + tables[index].channels.length,
+  const keep = (label: string) => setCustom((old) => new Set(old).add(label));
+
+  const groupMatches = useMemo(
+    () =>
+      tables.flatMap((table, index) =>
+        matches(
+          [table.name, ...table.channels.map((c) => c.name)].join(' '),
+          query,
+        )
+          ? [index]
+          : [],
+      ),
+    [tables, query],
+  );
+
+  // The tables the setup imports, with their channel names and units.
+  const setup = useMemo(() => {
+    if (columns) {
+      const derived = layoutTables(layout);
+      return derived.map((table, index) => ({
+        index,
+        name: derived.length > 1 ? columns.headers[table.time].name : '',
+        channels: table.signals.map((c) => ({
+          name: columns.headers[c].name,
+          unit: columnUnits[c],
+        })),
+      }));
+    }
+    return [...chosen]
+      .sort((a, b) => a - b)
+      .map((index) => ({
+        index,
+        name: tables[index].name,
+        channels: tables[index].channels.map((channel, c) => ({
+          name: channel.name,
+          unit: fixes.get(fixKey(index, c, channel.unit)) ?? channel.unit,
+        })),
+      }));
+  }, [columns, layout, columnUnits, chosen, tables, fixes]);
+  const signals = setup.reduce((sum, table) => sum + table.channels.length, 0);
+  const unitProblems = setup.reduce(
+    (sum, table) =>
+      sum +
+      table.channels.filter((channel) => unfixed(channel.unit, custom)).length,
     0,
   );
+  const unstated = columns
+    ? layout.flatMap((column, c) =>
+        column.role === 'signal' && columnUnits[c] === UNSTATED_UNIT ? [c] : [],
+      )
+    : [];
+  // Binary formats: what needs a fix in the chosen groups, by fix key.
+  const fixRows = useMemo(() => {
+    if (columns) return [];
+    const rows = new Map<string, { title: string; detail: string[] }>();
+    for (const index of [...chosen].sort((a, b) => a - b))
+      tables[index].channels.forEach((channel, c) => {
+        if (!unfixed(channel.unit, new Set())) return;
+        const key = fixKey(index, c, channel.unit);
+        const group =
+          tables.length > 1 ? tables[index].name || `Group ${index + 1}` : '';
+        const row = rows.get(key) ?? {
+          title: channel.unit === UNSTATED_UNIT ? channel.name : channel.unit,
+          detail: [],
+        };
+        row.detail.push(
+          channel.unit === UNSTATED_UNIT
+            ? group || 'No unit stated'
+            : channel.name,
+        );
+        rows.set(key, row);
+      });
+    return [...rows];
+  }, [columns, chosen, tables]);
+  const unstatedFixes = fixRows.flatMap(([key]) =>
+    key.startsWith('#') &&
+    unitState(fixes.get(key) ?? UNSTATED_UNIT, custom) === 'unstated'
+      ? [key]
+      : [],
+  );
+  const layoutIssue = columns
+    ? layoutProblem(columns.headers, layout)
+    : undefined;
+  const problem = !setup.length
+    ? columns
+      ? (layoutIssue ?? 'Choose at least one signal.')
+      : 'Choose at least one group'
+    : (layoutIssue ??
+      (unitProblems
+        ? `${formatCount(unitProblems, 'signal')} ${unitProblems === 1 ? 'needs' : 'need'} a unit Stratum recognises`
+        : undefined));
+
   const toggle = (indexes: number[], on: boolean) =>
     setChosen((old) => {
       const next = new Set(old);
@@ -66,16 +259,53 @@ export default function WorkflowImportDialog({
         else next.delete(index);
       return next;
     });
+  const finish = () =>
+    onClose({
+      tables: setup.map((table) => table.index),
+      ...(columns ? { layout } : {}),
+      units: (columns ? setup : tables).map((_, index) => {
+        const table = setup.find((item) => item.index === index);
+        return table ? table.channels.map((channel) => channel.unit) : null;
+      }),
+      custom: [...custom],
+    });
+
+  const axes = layout.flatMap((column, index) =>
+    column.role === 'time' ? [index] : [],
+  );
+  const columnMatches = columns
+    ? columns.headers.flatMap((header, index) =>
+        matches(`${header.name} ${header.unit}`, query) ? [index] : [],
+      )
+    : [];
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="workflow-dialog workflow-batch-dialog workflow-import-dialog">
         <DialogTitle>Import {fileName}</DialogTitle>
         <DialogDescription>
-          This {recording.format} file holds{' '}
-          {formatCount(tables.length, 'group')}, each with its own time axis.
-          Each group you choose becomes a recording; Compare &amp; align can
-          bring them onto one time base later.
+          {columns ? (
+            <>
+              {recording.format}. Choose the time axis of each signal and give
+              every signal a unit. Each time axis with signals becomes a
+              recording; Compare &amp; align can bring them onto one time base
+              later.
+            </>
+          ) : tables.length === 1 ? (
+            <>
+              This {recording.format} file names units Stratum does not
+              recognise, or none. Give every signal a unit before importing.
+            </>
+          ) : (
+            <>
+              This {recording.format} file holds{' '}
+              {formatCount(tables.length, 'group')}, each with its own time
+              axis. Each group you choose becomes a recording; Compare &amp;
+              align can bring them onto one time base later.
+            </>
+          )}
         </DialogDescription>
+        <UnitOptions id={listId} />
         {!!recording.notes?.length && (
           <ul className="workflow-batch-notes">
             {recording.notes.map((note) => (
@@ -85,102 +315,390 @@ export default function WorkflowImportDialog({
             ))}
           </ul>
         )}
-        <section className="workflow-batch-section">
-          <h3>
-            Groups{' '}
-            <span>
-              {chosen.size} of {tables.length}
-            </span>
-            <button
-              type="button"
-              className="workflow-link"
-              onClick={() => toggle(matches, true)}
-            >
-              {query.trim() ? 'Choose matching' : 'Choose all'}
-            </button>
-            <button
-              type="button"
-              className="workflow-link"
-              disabled={!chosen.size}
-              onClick={() =>
-                toggle(query.trim() ? matches : [...chosen], false)
-              }
-            >
-              Clear
-            </button>
-          </h3>
-          {tables.length > 8 && (
-            <label className="workflow-import-filter">
-              <Search size={14} aria-hidden />
-              <input
-                type="search"
-                value={query}
-                placeholder="Filter groups and signals"
-                aria-label="Filter groups and signals"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-          )}
-          <ul className="workflow-batch-steps workflow-import-groups">
-            {matches.slice(0, SHOWN).map((index) => {
-              const table = tables[index];
-              const names = table.channels.map((channel) => channel.name);
-              return (
-                <li
-                  key={index}
-                  data-state={chosen.has(index) ? 'included' : 'excluded'}
+        {columns ? (
+          <section className="workflow-batch-section">
+            <h3>
+              Columns{' '}
+              <span>{formatCount(columns.headers.length, 'column')}</span>
+              {unstated.length > 0 && (
+                <button
+                  type="button"
+                  className="workflow-link"
+                  onClick={() =>
+                    setColumnUnits((old) =>
+                      old.map((unit, c) => (unstated.includes(c) ? '' : unit)),
+                    )
+                  }
                 >
-                  <Checkbox
-                    aria-label={`Import ${table.name || `group ${index + 1}`}`}
-                    checked={chosen.has(index)}
-                    onCheckedChange={(checked) => toggle([index], !!checked)}
-                  />
-                  <div>
-                    <strong>{table.name || `Group ${index + 1}`}</strong>
-                    <small>{tableSummary(table)}</small>
-                    <small
-                      className="workflow-import-signals"
-                      title={names.join(', ')}
+                  No unit for {formatCount(unstated.length, 'signal')} without
+                  one
+                </button>
+              )}
+            </h3>
+            {columns.headers.length > 8 && (
+              <label className="workflow-import-filter">
+                <Search size={14} aria-hidden />
+                <input
+                  type="search"
+                  value={query}
+                  placeholder="Filter columns"
+                  aria-label="Filter columns"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </label>
+            )}
+            <div className="workflow-import-columns">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Column</th>
+                    <th scope="col">Use as</th>
+                    <th scope="col">Unit</th>
+                    <th scope="col">First values</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {columnMatches.slice(0, SHOWN).map((c) => {
+                    const header = columns.headers[c];
+                    const column = layout[c];
+                    const role =
+                      column.role === 'signal'
+                        ? `signal:${column.time}`
+                        : column.role;
+                    const values = columns.rows
+                      .slice(0, 3)
+                      .map((row) => row[c]?.trim() || '·');
+                    return (
+                      <tr key={c} data-role={column.role}>
+                        <th scope="row" title={header.name}>
+                          <strong>{header.name}</strong>
+                          {!columns.numeric[c] && <small>Holds text</small>}
+                        </th>
+                        <td>
+                          <select
+                            value={role}
+                            aria-label={`Use of ${header.name}`}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setLayout((old) =>
+                                setRole(
+                                  old,
+                                  c,
+                                  value === 'time'
+                                    ? {
+                                        role: 'time',
+                                        unit:
+                                          timeScale(columnUnits[c]) !==
+                                            undefined &&
+                                          columnUnits[c] !== UNSTATED_UNIT &&
+                                          columnUnits[c]
+                                            ? columnUnits[c]
+                                            : 's',
+                                      }
+                                    : value === 'skip'
+                                      ? { role: 'skip' }
+                                      : {
+                                          role: 'signal',
+                                          time: Number(value.split(':')[1]),
+                                        },
+                                ),
+                              );
+                            }}
+                          >
+                            <option value="time">Time axis</option>
+                            {axes
+                              .filter((axis) => axis !== c)
+                              .map((axis) => (
+                                <option key={axis} value={`signal:${axis}`}>
+                                  {axes.length > 1 || column.role === 'time'
+                                    ? `Signal on ${columns.headers[axis].name}`
+                                    : 'Signal'}
+                                </option>
+                              ))}
+                            {column.role === 'signal' &&
+                              !axes.includes(column.time) && (
+                                <option value={role}>
+                                  Signal (choose a time axis)
+                                </option>
+                              )}
+                            <option value="skip">Skip</option>
+                          </select>
+                        </td>
+                        <td>
+                          {column.role === 'time' ? (
+                            <div
+                              className="unit-field"
+                              data-state={
+                                timeScale(column.unit) === undefined
+                                  ? 'unknown'
+                                  : 'known'
+                              }
+                            >
+                              <select
+                                value={column.unit}
+                                aria-label={`Time unit of ${header.name}`}
+                                onChange={(event) =>
+                                  setLayout((old) =>
+                                    old.map((item, index) =>
+                                      index === c
+                                        ? {
+                                            role: 'time',
+                                            unit: event.target.value,
+                                          }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              >
+                                {!TIME_UNITS.includes(column.unit) && (
+                                  <option value={column.unit}>
+                                    {column.unit}
+                                  </option>
+                                )}
+                                {TIME_UNITS.map((unit) => (
+                                  <option key={unit} value={unit}>
+                                    {unit}
+                                  </option>
+                                ))}
+                              </select>
+                              <small>
+                                {timeScale(column.unit) === undefined ? (
+                                  <span className="unit-field-problem">
+                                    Not a unit of time
+                                  </span>
+                                ) : (
+                                  'Read as seconds'
+                                )}
+                              </small>
+                            </div>
+                          ) : column.role === 'signal' ? (
+                            <UnitField
+                              value={columnUnits[c]}
+                              custom={custom}
+                              label={`Unit of ${header.name}`}
+                              listId={listId}
+                              onKeep={keep}
+                              onChange={(unit) =>
+                                setColumnUnits((old) =>
+                                  old.map((item, index) =>
+                                    index === c ? unit : item,
+                                  ),
+                                )
+                              }
+                            />
+                          ) : (
+                            <small className="workflow-muted">
+                              Not imported
+                            </small>
+                          )}
+                        </td>
+                        <td
+                          className="workflow-import-values"
+                          title={values.join(', ')}
+                        >
+                          {values.join(', ') || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {columnMatches.length > SHOWN && (
+              <p className="workflow-muted">
+                Showing {SHOWN} of {formatCount(columnMatches.length, 'column')}
+                . Filter to find others.
+              </p>
+            )}
+            {!columnMatches.length && (
+              <p className="workflow-muted">No column matches.</p>
+            )}
+          </section>
+        ) : (
+          <>
+            {tables.length > 1 && (
+              <section className="workflow-batch-section">
+                <h3>
+                  Groups{' '}
+                  <span>
+                    {chosen.size} of {tables.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="workflow-link"
+                    onClick={() => toggle(groupMatches, true)}
+                  >
+                    {query.trim() ? 'Choose matching' : 'Choose all'}
+                  </button>
+                  <button
+                    type="button"
+                    className="workflow-link"
+                    disabled={!chosen.size}
+                    onClick={() =>
+                      toggle(query.trim() ? groupMatches : [...chosen], false)
+                    }
+                  >
+                    Clear
+                  </button>
+                </h3>
+                {tables.length > 8 && (
+                  <label className="workflow-import-filter">
+                    <Search size={14} aria-hidden />
+                    <input
+                      type="search"
+                      value={query}
+                      placeholder="Filter groups and signals"
+                      aria-label="Filter groups and signals"
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                  </label>
+                )}
+                <ul className="workflow-batch-steps workflow-import-groups">
+                  {groupMatches.slice(0, SHOWN).map((index) => {
+                    const table = tables[index];
+                    const names = table.channels.map((channel) => channel.name);
+                    return (
+                      <li
+                        key={index}
+                        data-state={chosen.has(index) ? 'included' : 'excluded'}
+                      >
+                        <Checkbox
+                          aria-label={`Import ${table.name || `group ${index + 1}`}`}
+                          checked={chosen.has(index)}
+                          onCheckedChange={(checked) =>
+                            toggle([index], !!checked)
+                          }
+                        />
+                        <div>
+                          <strong>{table.name || `Group ${index + 1}`}</strong>
+                          <small>{tableSummary(table)}</small>
+                          <small
+                            className="workflow-import-signals"
+                            title={names.join(', ')}
+                          >
+                            {names.slice(0, 6).join(', ')}
+                            {names.length > 6
+                              ? `, +${names.length - 6} more`
+                              : ''}
+                          </small>
+                          {table.notes?.map((note) => (
+                            <small key={note} className="workflow-import-note">
+                              {note}
+                            </small>
+                          ))}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {groupMatches.length > SHOWN && (
+                  <p className="workflow-muted">
+                    Showing {SHOWN} of{' '}
+                    {formatCount(groupMatches.length, 'matching group')}. Filter
+                    to find others.
+                  </p>
+                )}
+                {!groupMatches.length && (
+                  <p className="workflow-muted">No group or signal matches.</p>
+                )}
+              </section>
+            )}
+            {fixRows.length > 0 && (
+              <section className="workflow-batch-section">
+                <h3>
+                  Units to fix{' '}
+                  <span>
+                    {formatCount(
+                      fixRows.reduce(
+                        (sum, [, row]) => sum + row.detail.length,
+                        0,
+                      ),
+                      'signal',
+                    )}{' '}
+                    without a unit Stratum recognises
+                  </span>
+                  {unstatedFixes.length > 0 && (
+                    <button
+                      type="button"
+                      className="workflow-link"
+                      onClick={() =>
+                        setFixes((old) => {
+                          const next = new Map(old);
+                          for (const key of unstatedFixes) next.set(key, '');
+                          return next;
+                        })
+                      }
                     >
-                      {names.slice(0, 6).join(', ')}
-                      {names.length > 6 ? `, +${names.length - 6} more` : ''}
-                    </small>
-                    {table.notes?.map((note) => (
-                      <small key={note} className="workflow-import-note">
-                        {note}
-                      </small>
-                    ))}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {matches.length > SHOWN && (
-            <p className="workflow-muted">
-              Showing {SHOWN} of {formatCount(matches.length, 'matching group')}
-              . Filter to find others.
-            </p>
-          )}
-          {!matches.length && (
-            <p className="workflow-muted">No group or signal matches.</p>
-          )}
-        </section>
+                      No unit for {formatCount(unstatedFixes.length, 'signal')}{' '}
+                      without one
+                    </button>
+                  )}
+                </h3>
+                <ul className="workflow-import-columns workflow-import-units">
+                  {fixRows.slice(0, SHOWN).map(([key, row]) => {
+                    const original = key.startsWith('#')
+                      ? UNSTATED_UNIT
+                      : key.slice(1);
+                    return (
+                      <li key={key}>
+                        <span title={row.detail.join(', ')}>
+                          <strong>{row.title}</strong>
+                          <small>
+                            {row.detail.slice(0, 4).join(', ')}
+                            {row.detail.length > 4
+                              ? `, +${row.detail.length - 4} more`
+                              : ''}
+                          </small>
+                        </span>
+                        <span>
+                          <UnitField
+                            value={fixes.get(key) ?? original}
+                            custom={custom}
+                            label={
+                              original === UNSTATED_UNIT
+                                ? `Unit of ${row.title}`
+                                : `Unit for signals in ${row.title}`
+                            }
+                            listId={listId}
+                            onKeep={keep}
+                            onChange={(unit) =>
+                              setFixes((old) => new Map(old).set(key, unit))
+                            }
+                          />
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {fixRows.length > SHOWN && (
+                  <p className="workflow-muted">
+                    Showing {SHOWN} of {fixRows.length}. Use No unit for signals
+                    without one, or import fewer groups.
+                  </p>
+                )}
+              </section>
+            )}
+          </>
+        )}
         <div className="workflow-batch-actions">
-          <span className="workflow-muted" aria-live="polite">
-            {chosen.size
-              ? `${formatCount(chosen.size, 'recording')} · ${formatCount(signals, 'signal')}`
-              : 'Choose at least one group'}
+          <span
+            className="workflow-muted"
+            aria-live="polite"
+            data-problem={problem ? '' : undefined}
+          >
+            {problem ??
+              `${formatCount(setup.length, 'recording')} · ${formatCount(signals, 'signal')}`}
           </span>
           <button className="secondary-button" onClick={() => onClose()}>
             Cancel
           </button>
           <button
             className="primary-button"
-            disabled={!chosen.size}
-            onClick={() => onClose([...chosen].sort((a, b) => a - b))}
+            disabled={!!problem}
+            onClick={finish}
           >
             <ArrowDownToLine size={14} /> Import{' '}
-            {formatCount(chosen.size, 'group')}
+            {formatCount(setup.length, columns ? 'recording' : 'group')}
           </button>
         </div>
       </DialogContent>

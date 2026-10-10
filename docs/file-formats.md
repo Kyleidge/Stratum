@@ -21,7 +21,19 @@ TDMS index files (`.tdms_index`) point to their `.tdms` file.
 
 ## Importing
 
-- Single-table files import at once, as CSV always has.
+- Delimited text always opens **Import _file_** to set up its columns (below).
+  Other single-table files import at once unless a unit needs fixing.
+- **Units are checked.** Every signal needs a unit Stratum recognises
+  (`lib/units.ts`: registered units such as `rpm`, `Nm`, `°C`, SI-prefixed
+  units such as `kN` or `mbar`, and compounds such as `m/s²`, `g/kWh` or
+  `W/(m²·K)`), **No unit**, or a label the user keeps as a **custom unit**,
+  which never converts. Units that are missing or not recognised are listed
+  in the dialog with suggestions (`C` → `°C`, `KPA` → `kPa`, `-` → No unit);
+  Import stays disabled until each is fixed, and the engine checks the units
+  again before publishing. Recognised labels keep the file's spelling (`Nm`
+  stays `Nm`); `sameUnit` treats spellings of one unit as equal. For binary
+  files one fix covers every signal with the same unrecognised label; signals
+  without a unit are fixed one by one or all at once with No unit.
 - A file with several tables (MDF channel groups, TDMS groups or time bases,
   MAT variables of different lengths, workbook sheets) opens **Import
   _file_**, listing each group with its signal count, samples, time span and
@@ -30,7 +42,9 @@ TDMS index files (`.tdms_index`) point to their `.tdms` file.
   recording named `file · group`; the whole import is one Undo step. Use
   **Compare & align** to bring groups onto one time base.
 - Batch runs import one group per item: pre-flight chooses the group that
-  binds the most workflow inputs and shows its name beside the file.
+  binds the most workflow inputs and shows its name beside the file. Batch
+  runs never ask about units: units are kept as the file states them, and a
+  channel without a unit takes the unit the workflow expects of it.
 - Times must be finite and strictly increasing. The engine checks every
   sample and names the group and sample number when they are not. Infinite
   samples are stored as missing (NaN), like empty CSV cells.
@@ -42,8 +56,25 @@ TDMS index files (`.tdms_index`) point to their `.tdms` file.
 
 ## Delimited text
 
-The first row holds headers, the first column time in seconds. Headers such as
-`Torque [Nm]` give the unit. The delimiter is detected from the header row
+The first row holds headers. Headers such as `Torque [Nm]` give the unit. The
+import dialog lists every column with its first values and lets the user make
+it a **time axis**, a **signal on** one of the time axes, or **skip** it, and
+type or fix each signal's unit. Each time axis with signals becomes one
+recording, named `file · time column` when there are several. A time axis may
+be in any unit of time (`s`, `ms`, `µs`, `min`, `h`); it is converted to
+seconds. The column layout (`lib/formats/delimited-layout.ts`) is suggested
+as follows, and batch runs use the suggestion:
+
+- The first column is a time axis (seconds unless its header names a unit).
+- A later column is another time axis when its name reads as time (`Time 2`,
+  `t2`, `ECU time`, `Time_B`, `Zeit` …), its unit (if any) is a unit of time
+  and its values strictly increase in the first 200 rows. Signals use the
+  nearest time axis to their left.
+- Columns with text in the first rows are skipped with a note.
+
+Where time axes have different lengths, a row whose time cell is empty is
+skipped for that axis only when its signals are empty too; a value without a
+time is an error naming the row and column. The delimiter is detected from the header row
 (comma, semicolon, tab or vertical bar; `.tsv`/`.tab` are always tabs). When
 the delimiter is not a comma, decimal commas (`0,5`) are read as numbers. UTF-8
 (with or without BOM), UTF-16 with a BOM (Excel's “Unicode text”) and
