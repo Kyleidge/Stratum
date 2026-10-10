@@ -1,369 +1,192 @@
+<div align="center">
+
+<img src="desktop/icons/stratum.svg" alt="" width="96" height="96">
+
 # Stratum
 
-A desktop workbench for workflows built from immutable time-series signals.
-Derive signals, find segments (time intervals of a recording, such as each
-test run), and calculate scalar values over entire signals or within segments. Each operation keeps exact links to its inputs and outputs in chronological
-history. The included motor-test example demonstrates the complete signal workflow.
+**A desktop workbench for test recordings.**
+Open a recording, derive signals, cut it into segments and measure values, and
+every result keeps a traceable link back to the original samples.
 
-New to Stratum? Read the illustrated
-[beginner's guide (PDF)](output/pdf/stratum-beginners-guide.pdf), with an
-[editable text version](docs/beginners-guide.md).
+[![CI](https://github.com/Kyleidge/Stratum/actions/workflows/ci.yml/badge.svg)](https://github.com/Kyleidge/Stratum/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Kyleidge/Stratum?include_prereleases&label=download&color=0f6a72)](https://github.com/Kyleidge/Stratum/releases)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078d4)](https://github.com/Kyleidge/Stratum/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-See [the workflow proposal](docs/workflow-proposal.md) for the design and migration
-rules. The earlier region workspace is retained for compatibility.
+[Download](#download) · [Features](#features) · [Beginner's guide](docs/beginners-guide.md) · [User guide](docs/user-guide.md) · [Build from source](#build-from-source)
 
-## Run
+</div>
 
-Use Node 24 and pnpm 11.19.0 in this local checkout:
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/readme/workspace-light.png">
+  <img alt="Stratum showing the motor-test example: chronological History on the left, three per-run average values drawn over the Torque × speed signal, and the value step's lineage in Details." src="docs/images/readme/workspace-dark.png">
+</picture>
 
-```powershell
+## Why Stratum?
+
+Test-bench and logger data usually ends up in one-off spreadsheets and scripts:
+hard to repeat, harder to audit. Stratum keeps the whole analysis as a
+**chronological history of steps**. Each step records exactly which inputs it
+used and which outputs it produced, so any number on a report can be traced
+back through every filter, segment and calculation to the recording it came
+from.
+
+- **Original samples never change.** Every step creates new signals or values.
+- **Edit any step** and everything that depends on it recalculates in one
+  change, with a preview of what will be affected. Undo and Redo survive
+  restarts.
+- **Your data stays on your computer.** No accounts, no uploads, no server.
+- **Built for long, high-rate recordings.** Files are streamed in pieces, plots
+  use persistent min/max indexes, and processing runs off the UI thread.
+
+## Features
+
+### Derive signals, with a live preview
+
+Math between signals, scaling and offsets, unit conversion, moving-average,
+median, exponential, RC and Butterworth filters, derivatives, integrals,
+resampling and time shifts. **Formula** evaluates expressions such as
+`A * B / 9549` across signals and calculated values. Expressions are parsed,
+never run as code. Every dialog previews its result before anything is
+created.
+
+<img alt="The Derive dialog computing shaft power with the formula A * B / 9549, previewing torque, speed and the kW result in separate lanes." src="docs/images/readme/derive-formula.png">
+
+### Find segments
+
+Split a recording into the parts that matter, such as each test run, using
+time ranges, regular windows or **signal triggers** with signed offsets,
+hysteresis and debounce to ignore chatter. Segments are time intervals of the
+whole recording, so you can derive signals, calculate values or find nested
+segments within all of them or just one.
+
+<img alt="The Find segments dialog using rising and falling speed triggers at 3,100 rpm, shading the three segments they create." src="docs/images/readme/segment-triggers.png">
+
+### Measure values
+
+Averages, minimum and maximum, RMS, standard deviation, peak to peak, area,
+durations, time above or below a threshold, crossing times and counts, all
+computed exactly in one streaming pass. Values are first-class results: they
+plot as labelled reference lines, combine in formulas and can drive other
+settings, such as offsetting each run by its own average.
+
+### Run the same workflow on many recordings
+
+Save a recording's steps, checks and report layout as a readable
+`.stratum.yaml` workflow, then run it on a folder of files: one per component
+from an end-of-line rig, for example. Stratum flags items that fail their
+limits, explains why, and exports a PDF report per item. One Undo removes the
+whole batch.
+
+<img alt="Batch results for eight motor recordings: three pass, two warnings, two failures with the out-of-limit averages highlighted, and one error for a torque column in the wrong unit." src="docs/images/readme/batch-results.png">
+
+### Compose reports
+
+A page-based **Reports** workspace sits beside the data. Drop in plots, value
+tables, text and images, choose a page design, and export a PDF on your
+device. Captures are snapshots: they change only when you choose to update
+them.
+
+<img alt="The Reports workspace with a Banner-design title page and a Torque × speed plot under Results." src="docs/images/readme/report-editor.png">
+
+### And more
+
+- **Recording formats:** CSV and other delimited text (semicolons with decimal
+  commas, tabs, UTF-16, Windows-1252), **MDF 3 and 4**, **NI TDMS**, **MATLAB
+  `.mat`**, **Excel `.xlsx`** and **WAV**. See [file formats](docs/file-formats.md).
+- **Compare & align** puts recordings from different loggers on one time axis
+  by events, offsets or two reference points ([time bases](docs/time-bases.md)).
+- **Plots** with a lane per unit, independent Y axes or stacked panels;
+  cursors, region statistics from exact samples, annotations and SVG/PNG
+  export. Saved plots keep their styles and limits.
+- **Exports** of exact samples, values and summaries as CSV, or a standalone
+  HTML summary.
+- **Workspace backups** (`.stratum`) that are validated in full before they
+  restore, plus optional automatic backups on close and every 30 minutes.
+- **Ctrl+K** searches every step and output, alongside light and dark themes
+  and keyboard access throughout.
+
+## Download
+
+Stratum is a Windows desktop app. Download the installer
+(`Stratum-Setup-<version>.exe`) from
+[**Releases**](https://github.com/Kyleidge/Stratum/releases). It installs per
+user, needs no administrator rights and updates itself.
+
+> [!NOTE]
+> Stratum 1.0 is in beta. Each beta is a pre-release on the Releases page;
+> **Help → Get Beta Updates** keeps an installed copy on the beta channel. Back
+> up your workspace (**Workspace → Save workspace backup…**) before trying a
+> new beta. See the [changelog](CHANGELOG.md) for what's in 1.0.
+
+### Try it in two minutes
+
+1. Choose **Explore the example recording** on the welcome screen. A short tour
+   walks through a seven-step motor-test analysis built with the same
+   operations you'll use on your own data.
+2. Choose **Import ▾ → Try the batch example** to run a workflow on eight
+   end-of-line recordings and review the flagged items.
+3. Import your own file. For CSV, put time in seconds in the first column and
+   units in square brackets:
+
+   ```csv
+   Time [s],Engine speed [rpm],Torque [Nm]
+   0.00,1500,210
+   0.01,1502,211
+   ```
+
+More sample recordings and exercises are in [examples](examples/README.md).
+
+## Documentation
+
+| Guide                                                                                       | What it covers                                          |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [Beginner's guide](docs/beginners-guide.md) ([PDF](output/pdf/stratum-beginners-guide.pdf)) | An illustrated walk-through from first import to report |
+| [User guide](docs/user-guide.md)                                                            | Every part of the workspace, in reference form          |
+| [Batch workflows](docs/batch-workflows.md)                                                  | Workflow files, checks, batch runs and per-item reports |
+| [File formats](docs/file-formats.md)                                                        | What each recording reader supports                     |
+| [Time bases](docs/time-bases.md)                                                            | Aligning recordings from different clocks               |
+| [Filters](docs/filters.md)                                                                  | Filter definitions and their responses                  |
+| [Architecture and limitations](docs/architecture.md)                                        | Numerical semantics and storage design                  |
+| [File format stability](docs/file-format-stability.md)                                      | What each saved format promises across versions         |
+
+## Build from source
+
+You need Node.js 22.15 or later (24 recommended) and pnpm 11.19.0.
+
+```sh
 pnpm install --frozen-lockfile
-pnpm exec install-electron
-pnpm desktop
+pnpm exec install-electron   # once per computer
+pnpm desktop                 # build and launch the desktop app
 ```
 
-For a browser preview, run `pnpm dev` and open its printed local URL. The desktop
-build uses bundled assets and works offline. Browser and desktop workspaces have
-separate local storage.
+`pnpm dev` serves a browser preview for development; it keeps its own local
+storage, separate from the desktop app. `pnpm desktop:package` builds the
+Windows installer under `build/releases/` (unsigned unless signing credentials
+are set). See [releasing](docs/releasing.md) for the release process.
 
-Stratum keeps the original desktop profile, storage keys and internal origin so
-existing workspaces, Undo/Redo and saved plots remain available after the rename.
-New workspace backups use `.stratum`; existing `.stratus` backups still restore.
-The archive format and version are unchanged.
-[File format stability](docs/file-format-stability.md) states what each saved
-format promises across versions.
+### Validate
 
-Stratum 1.0 is released for Windows as a per-user installer that updates
-itself (see [releasing](docs/releasing.md) and the [changelog](CHANGELOG.md)).
-`pnpm desktop:package` builds it locally: on Windows,
-`build/releases/Stratum-Setup-<version>.exe` and an unpacked
-`build/releases/win-unpacked/Stratum.exe`; on macOS/Linux, an unpacked folder
-for that platform. Local builds are unsigned unless signing credentials are set.
-
-Stratum is released under the [MIT licence](LICENSE); **Help → Third-party
-notices** lists the bundled open-source packages.
-
-## Explore
-
-The center is a **plot scratchpad**. **Active** follows the selection: a signal,
-a value drawn as a labelled dashed line over its input, or up to eight outputs of
-an operation, each keeping its colour. **Keep plot** makes a named tab that stays
-open as you browse. **New plot** starts a blank comparison. Use **Add signals**
-for keyboard-accessible selection, or drag items from **History** onto the
-canvas, a named tab, or New plot. Dropping on Active creates a comparison
-containing its current traces.
-
-| Dragged item               | Onto a plot                                             | Onto a processing tool                                     |
-| -------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| Original or derived signal | Add that trace                                          | Select that signal                                         |
-| Segment                    | Nothing: selecting a segment shades it on Active        | Work within that segment, with the signals that found it   |
-| Operation                  | Add every plottable output                              | Select its signal outputs, or the inputs of its values     |
-| Scalar value               | Add a dashed reference line over its evaluated interval | Select its input signal, with an explanation in the editor |
-
-Turn on **Align starts** to compare segments by elapsed time. This is a display
-setting; it does not change timestamps or create a workflow operation.
-**Overlay** draws traces on one time axis and gives each unit its own lane;
-**Y axes** overlays different units on independent scales; **Stacked** gives each
-trace a panel. Traces need a shared clock, or elapsed-time display, to share a
-time axis. Use **Compare & align** to create reusable aligned signals with
-explicit time references.
-
-Named plots retain their traces, colors, visibility, grid and elapsed-time settings
-on this device. Trace controls show 30 at a time and stacked plots show eight at
-a time; overlays include the full batch. The scratchpad supports twelve named
-tabs and up to 10,000 traces per tab, rejecting larger drops without partial adds.
-Plots reference live outputs, so edits refresh them and Undo can restore a removed
-trace. Layouts are separate from workspace backups and workflow Undo/Redo.
-
-One top bar holds the recording menu, **Undo**/**Redo**, **Derive**, **Segment**,
-**Value** and **Compare**, and **Apply to**, which names the processing inputs.
-It distinguishes the current selection from checked inputs; its **×** releases a
-checked batch so inputs follow the item you inspect again. Removing every checked
-input disables creation until you choose new inputs. **Ctrl+K** searches every
-step and output and runs the same commands. The sun or moon button switches
-between the dark and light themes.
-
-The **⋯ Inspect / export** menu contains samples, export, lineage and navigation. Drag over it to
-reveal accepting menu items, or drop an item on it and choose an action. Right-click
-a History item for edit, duplicate, rename and delete, plus inspection, export and
-input selection. Keyboard users can open the context menu with **Shift+F10**.
-
-Accepting tools highlight during a drag. A processing drop selects the item in
-History and opens the editor with its exact inputs, replacing any checked batch.
-Inspection preserves checked inputs. Creating or editing data still requires
-applying the editor, and deletion shows its normal impact confirmation. Starting
-or cancelling a drag does not change the selection.
-
-Select a step to plot its outputs. The dock below the plot lists them under
-**Outputs**, with exact **Samples** and saved **Settings**; use checkboxes for
-batch selection. In History, **Ctrl+click** signals (or their row check boxes)
-to check several from any steps or recordings, **Shift+click** to check a range,
-or **Ctrl+click** a step for all its signals. A bar below the tree then offers
-**Value** and **Derive**, and right-clicking a checked row offers Value, Derive
-and Segment for every checked signal. Browsing normally preserves checked inputs. The inspector on the
-right shows the selection's properties, its lineage back to the original
-recordings and the operations that use it. **Inputs and originals**, **Show
-lineage in tree**, and **Used by later operations** are also in Inspect / export.
-History filters by text and by the **All**, **Signals** and **Values** chips.
-Segments remain ordinary derived signals and can be segmented again. **Repeat
-with new settings** appends a new step. The footer shows the inspected item,
-notifications with Undo, workspace totals and local storage status.
-
-**Edit settings** revises the selected operation and recalculates dependent
-operations as one transaction. Step numbers and output identities are retained;
-the history displays the revision. If a changed segment count would invalidate
-downstream mappings, the edit is rejected and the existing work stays intact.
-**Duplicate operation** creates a separate branch instead.
-
-**Delete operation** previews the complete dependent batches it will remove.
-**Remove recording** removes a recording and its analysis from the workspace.
-The header's **Undo** and **Redo** retain the last 20 changes across restarts.
-Recordings, operations and individual output display names can be renamed.
-Original samples are never edited.
-
-**Calculate value** creates stored scalar values, one per input, grouped in
-four tabs:
-
-- **Level**: time average, sample average, minimum, maximum, start value, end
-  value and the value at a time from the input's start.
-- **Spread**: RMS, standard deviation (n − 1), peak to peak and the area
-  under the signal (unit × s).
-- **Time**: duration, time of the minimum or maximum, and time above or below
-  a threshold.
-- **Events**: the time of the first rising or falling crossing of a threshold,
-  and the number of crossings.
-
-Time average weights by valid elapsed time and excludes missing intervals.
-Every value excludes missing samples, and no interval spans a gap. Times are
-seconds measured from the input's start, so they stay meaningful for
-segments. Crossings use the same detection as segmentation triggers, including
-optional hysteresis and debounce.
-Thresholds start at the middle of the input's range. Plots draw a time or
-count at the level it refers to, such as the threshold, labelled with the
-result.
-
-### Use values as settings
-
-Some settings can come from a calculated value instead of a typed number:
-**Offset**, **Scale** and **Shift time** in Derive, the threshold and time of
-a value calculation, and the threshold and offset of segment triggers. Choose
-**A value**, pick the value and a factor; the setting is factor × value. For
-example, offset each run by −1 × its own average, or start segments when speed
-rises above 0.5 × its maximum.
-
-- Choosing a value step with several values matches one to each input: the
-  value calculated from that input, or from the nearest signal it came from
-  or that came from it. A single value is shared by every input.
-- Units must match exactly (a time shift needs seconds; a scale factor
-  multiplies the units). Nothing is converted. An unavailable value, or one
-  that matches no input or two, blocks Create with an explanation.
-- The step lists the values it uses as inputs, in Details, lineage and
-  **Used by**. Editing a value recalculates every step that uses it; deleting
-  it deletes them, after the usual impact confirmation.
-
-**Derive signal** opens a compact palette grouped into Math, Filters, Time and
-Calculus. Math includes add, subtract, multiply and divide between signals, plus
-constant scaling, offsets, absolute value, **Formula** and **Convert units**.
-
-- **Formula** evaluates an expression such as `A * B / 9549` for each sample:
-  A is each input, B–Z are other signals on the same sample grid (a step's
-  outputs are matched to each input by grid, so segments pair with their own
-  sibling segments), and lowercase names are calculated values (matched per
-  input like other value settings). Operators `+ − * / % ^`, comparisons
-  (1 or 0) and functions such as `abs`, `sqrt`, `min`, `max`, `if`, `clamp`
-  are available. You set the output unit; it is never inferred. Missing
-  samples and non-finite results stay missing. Expressions are parsed, never
-  run as code.
-- **Filters** add second-order **Butterworth** low- and high-pass filters,
-  twice as steep as the RC filters (see [filters](docs/filters.md)).
-- **Convert units** converts between units of one quantity (torque, speed,
-  temperature, pressure, power, flow and more) with exact factors, such as
-  lbf·ft to N·m or °F to °C. The input's unit must be one Stratum knows. Each checked input is A; choose
-  one B to use across the batch. Both inputs must have matching sample grids and
-  time transformations in the same recording. Add/subtract require identical unit
-  labels; multiply/divide compose labels without automatic conversion. Missing
-  inputs, division by zero and non-finite results stay missing. Saved brake-power
-  and fuel-consumption recipes remain readable and editable for compatibility;
-  they are no longer offered for new operations.
-
-**Segment** uses method cards for time ranges, regular windows and signal
-triggers, with separate settings and scope panels. Switching methods retains
-the entered settings and clears any outdated interval preview. Each trigger's
-**Ignore chatter** section sets hysteresis (how far the signal must return
-past the threshold before another crossing counts) and debounce (how long it
-must stay crossed). **Calculate
-value** offers cards in Level, Spread, Time and Events tabs, each with a short
-explanation of how its result is calculated.
-
-### Compose a report
-
-Choose **Reports** in the top bar for a page-based report editor beside **Data
-Inspector**. Switching keeps both workspaces as they were: the inspected item,
-checked inputs, plots and the report draft. Add workspace content with
-**Report** in the top bar (the viewed output or operation), **Add to report** in
-a History item's context menu, the Outputs dock or the checked-input review, the
-report button on a plot (its displayed panels), or by dragging a History item
-onto the **Reports** button or the page. The report's **Data** library lists
-every signal, value, value step and saved plot.
-
-Captures are snapshots: later changes in Data Inspector never alter them, so add
-an item again for its latest state. Signals become editable plot blocks and
-values become read-only tables with editable titles and formatting. Saved plots
-keep their traces, axes, lanes, annotations and value labels as images in the
-current theme. Add text, images and tables; move, resize and format blocks
-across A4 or Letter pages; and choose **Export PDF** to create the PDF on this
-device. Report edits never change signals or workflow history. Drafts and report
-Undo/Redo last for the session. See the
-[report builder notes](docs/report-builder-mockup.md) for limits.
-
-### Included motor-test workflow
-
-Choose **Explore the example recording** from the empty workspace, or
-**Open the example recording** in **Workspace**.
-The synthetic recording contains three speed sweeps over 180 seconds, sampled
-at 10 Hz. Its seven chronological steps use the same operations as your own data:
-
-1. Original motor speed and torque, kept immutable.
-2. Smooth torque with a five-sample moving average.
-3. Multiply smoothed torque by original speed with the math palette (Nm·rpm).
-4. Split the product into three run signals: 10–50, 65–105 and 120–160 s.
-5. Calculate one time-average value per run.
-6. Segment Run 2 again into two 20-second signals.
-7. Calculate the maximum value in each of those two signals.
-
-The example has two original signals, seven derived signals and five values.
-Open any of its seven steps in History to inspect its outputs, or drag a run
-segment onto New plot and align its siblings at zero.
-Use **Export data…** on any of these results for CSV data or a quick HTML
-summary, or **Add to report** to compose a PDF in Reports.
-Every result keeps direct links to its inputs. Edit, rename, delete and Undo work
-on the example just as they do on imported recordings.
-
-Opening the example again preserves edits. Select an example recording and choose
-**Workspace → Refresh this example** to replace its analysis with the current
-example. Refresh is one undoable change and preserves imported recordings.
-For a one-time desktop refresh at launch, run `pnpm desktop --refresh-example`;
-the startup request is consumed after success, so reloading preserves later edits.
-
-### Importable example CSVs
-
-Four small synthetic recordings are included in [examples](examples/README.md):
-
-- [Motor runs](examples/motor-runs.csv): speed, torque and a trigger channel over three runs.
-- [Second motor logger](examples/motor-logger-b.csv): the same events on a clock offset by 2.5 s.
-- [Vibration](examples/vibration.csv): a reference wave, higher-frequency noise, a gap and a spike.
-- [Thermal step](examples/thermal-step.csv): a heater command and two delayed temperature responses.
-
-The [example guide](examples/README.md) gives import, segmentation, plotting and
-alignment exercises, including how the synthetic signals were constructed.
-
-### Earlier region workspace
-
-The following describes the retained region implementation. Its saved signals,
-calculations, and region settings are preserved when opening the workflow UI.
-
-1. Choose **Worked examples** in the left panel: ramp filtering and statistics,
-   nested 10-second windows, overlapping windows, or power and fuel consumption.
-   These run real calculations. Selecting one again reopens its saved results.
-2. **Function history** has one item per invocation. Region sets and calculations
-   share a chronological list. Select an item to inspect its saved settings;
-   input links let you follow earlier operations. Results stay in a table instead
-   of multiplying the tree by every region and channel.
-3. Use **Segment** to create reusable time regions. Configure rising/falling
-   triggers (including signed offsets), manual ranges, or fixed-duration windows.
-   Regions point to recording times and do not create signal copies.
-4. To segment a segment, select a region set and choose **Segment within set**,
-   or select a row and choose **Segment this region**. Choose all or one parent,
-   and use recording times or times relative to each parent start. Each parent is
-   scanned independently; child regions are clipped to it or discarded.
-5. **Process regions** chooses signals or a result family and explicitly applies
-   a function within a region set. Each new function has independent state per
-   region. Filtering a whole signal before applying a region retains its earlier
-   filter history. Processing scope is separate from the region selected for viewing.
-6. Min / Max produces one table row per input and region. Other functions produce
-   a signal or result family; the table shows their statistics. **Export results**
-   includes region names, versions, boundaries, units, and provenance.
-7. Changing a saved region operation creates a new version. Existing children and
-   calculations keep their original version. Arbitrary operation depth and nested
-   region depth are supported; a creation batch is limited to 1,000 regions or
-   10,000 calculated results. Overlapping regions remain independent.
-
-Older workspaces are adapted without deleting or changing signal recipes. Legacy
-inclusive endpoints are retained; newly created regions include their start and
-exclude their end, except at an inclusive recording/parent endpoint.
-
-Import comma-separated UTF-8 files with time in seconds in the first column.
-Put units in square brackets in the column headers:
-
-```csv
-Time [s],Engine speed [rpm],Torque [Nm],Fuel flow [kg/h]
-0.00,1500,210,8.4
-0.01,1502,211,8.5
-```
-
-Times must be strictly increasing; empty signal cells remain missing. Imports
-are processed locally in chunks and saved in IndexedDB. An empty workspace offers
-CSV import or an explicit example recording; examples are never inserted automatically.
-
-Use **Workspace → Save workspace backup…** (the browser build: **Download
-workspace backup**) to save original samples, recipes, names, results and
-history in a versioned `.stratum` archive. Restore validates the entire archive
-before replacing the workspace; the prior workspace remains available through
-Undo. Keep backups outside the app's profile. Clearing local storage deletes the
-local workspace and its Undo history.
-
-The desktop app writes backups and evaluated samples CSV straight to the file
-chosen in a Save dialog, in bounded chunks, with no size limit; a failed or
-cancelled save leaves no partial file. In the Workspace dialog, **Automatic
-backups** writes a timestamped backup to a folder you choose when Stratum
-closes and every 30 minutes while there are changes, keeping the newest 10. A
-failed automatic backup is reported in the app, including at the next launch.
-In the browser, archives are limited to **128 MiB** and samples CSV to **64 MiB
-per file**; these prepare downloads and do not claim a file finished saving.
-For larger browser exports, use shorter segments or fewer signals. Export data's quick HTML summaries are standalone HTML snapshots
-of the chosen outputs and their contributing history; use **Reports** for an
-arranged multipage PDF.
-
-**Batch workflows** run the same analysis on many recordings, such as one file
-per component from a test rig. Save a recording's operations, checks and report
-layout as a `.stratum.yaml` workflow, run it on a set of CSV files, review flagged
-items in the batch view and export a PDF report per item. Every result is an
-ordinary History operation, and one Undo removes the whole batch. Choose
-**Import ▾ → Try the batch example** to see it with
-[the end-of-line rig data](examples/eol-rig), and read
-[batch workflows](docs/batch-workflows.md) for the guide and file format.
-
-## Validate
-
-```powershell
-pnpm test
-pnpm test:preview # Requires pnpm dev running on localhost:3000
+```sh
+pnpm test            # numerical, storage, format and workflow tests
 pnpm typecheck
 pnpm lint
 pnpm exec oxfmt --check
 pnpm build
-pnpm desktop:build
-pnpm desktop:smoke
-pnpm desktop:ui-smoke
-pnpm desktop:report-workspace-smoke
-pnpm desktop:report-plot-smoke
-pnpm desktop:report-smoke
+pnpm desktop:smokes  # build the desktop app and run every native smoke check
 ```
 
-The test suite exercises numerical results and storage behavior; the native smoke
-check runs the worker and IndexedDB inside a hidden Electron window. `pnpm lint`
-passes with no errors, and CI runs every check on each push.
-`signal-functions.test.ts` checks independently calculated values and defaults
-for every single-input library function, plus all four persistent examples.
-`regions.test.ts` checks nested pointers, version pinning, state boundaries,
-family mapping, all new examples, and legacy migration. Legacy explorer
-regressions cover keeping
-one function item for partial or mixed input batches. The preview integration
-also runs every selectable example through the actual HTTP worker module.
-The workflow tests import all example CSVs and verify their grids and missing
-samples. The native UI check also exercises signal/segment/value drag-and-drop,
-exact toolbar input scopes, zero-time plots and complete paged comparisons.
+CI runs all of these on every push and pull request, with the native smoke
+checks on both Linux and Windows. [AGENTS.md](AGENTS.md) describes the
+architecture and conventions in detail.
 
-See [the usability and reliability review](docs/production-review.md) for the
-implemented recovery guarantees and remaining release limits, and
-[architecture and limitations](docs/architecture.md) for numerical semantics.
+### Built with
+
+React 19 and strict TypeScript, Electron, a Web Worker processing engine with
+append-only IndexedDB storage, and Vite. Recording readers are plain
+TypeScript; no native plugins.
+
+## License
+
+Stratum is released under the [MIT licence](LICENSE). **Help → Third-party
+notices** in the app lists the bundled open-source packages.
