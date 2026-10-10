@@ -539,6 +539,12 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.workflow-checked-bar .workflow-checked-plot {
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px 4px;
+}
 .workflow-checked-bar .workflow-checked-clear {
   justify-content: center;
   min-width: 24px;

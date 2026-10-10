@@ -163,10 +163,14 @@ async function fixture(moduleUrl, styles) {
     [...svg.querySelectorAll('path')].find(
       (path) => path.style.stroke === 'rgb(221, 51, 85)',
     );
-  const multi = await captureReportPlot(project, sheet, request);
+  const multi = await captureReportPlot(
+    project,
+    { ...sheet, layout: 'stacked' },
+    request,
+  );
   expect(
     multi.length === 2,
-    'Different clocks must produce independent panels',
+    'Stacked different clocks must produce independent panels',
   );
   same(reads[0].ids, ['a', 'b'], 'Hidden traces must not be evaluated');
   same(
@@ -227,6 +231,35 @@ async function fixture(moduleUrl, styles) {
     await image.decode();
     expect(image.naturalWidth > 0, 'Snapshot must be independently renderable');
   }
+
+  // Signals from different files overlay at their own time values.
+  reads.length = 0;
+  const together = await captureReportPlot(
+    project,
+    { ...sheet, window: [0, 1] },
+    request,
+  );
+  expect(
+    together.length === 1,
+    'Different clocks must overlay in one snapshot',
+  );
+  same(
+    reads[0].ranges,
+    { a: [10, 120], b: [10, 120] },
+    'Overlaid clocks must share the extent of their time values',
+  );
+  const both = parse(together[0]).documentElement;
+  expect(
+    both.querySelectorAll('[data-time-axis]').length === 1 &&
+      both.querySelector('[data-range-start="10"][data-range-end="120"]'),
+    'Overlaid clocks must share one time axis',
+  );
+  expect(
+    both.textContent.includes('A.csv · B.csv') &&
+      both.textContent.includes('A <annotation>') &&
+      both.textContent.includes('B annotation'),
+    'Overlaid clocks must name both time references and keep their notes',
+  );
 
   reads.length = 0;
   const elapsed = await captureReportPlot(

@@ -103,10 +103,11 @@ export async function captureReportPlot(
           '')
       : '',
   );
-  // The same layout rules as the plot workspace: separate clocks always stack;
-  // overlays split different units into lanes unless independent Y axes are
-  // chosen.
-  const stacked = sheet.layout === 'stacked' || clocks.size > 1;
+  // The same layout rules as the plot workspace: overlays split different
+  // units into lanes unless independent Y axes are chosen, and separate time
+  // references share time values except in stacked panels.
+  const stacked = sheet.layout === 'stacked';
+  const independent = stacked && clocks.size > 1;
   const multiAxis = !stacked && sheet.layout === 'axes';
   async function readPlots(
     ranges: Record<string, PlotRange>,
@@ -129,9 +130,7 @@ export async function captureReportPlot(
     const batch = signals.slice(start, start + 8);
     const ranges = Object.fromEntries(
       batch.map(({ id }) => {
-        const display = zoomRange(
-          clocks.size > 1 ? displayRange(id) : fullRange,
-        );
+        const display = zoomRange(independent ? displayRange(id) : fullRange);
         const offset = sheet.zeroTime ? timeRange(id)[0] : 0;
         return [id, [display[0] + offset, display[1] + offset] as PlotRange];
       }),
@@ -264,12 +263,9 @@ export async function captureReportPlot(
   for (const [panelIndex, panel] of panels.entries()) {
     checkAbort(signal);
     const first = panel.traces[0];
-    const clock = first
-      ? clockFor(first.node.id)
-      : clocks.values().next().value;
-    const range = zoomRange(
-      clocks.size > 1 && first ? displayRange(first.node.id) : fullRange,
-    );
+    const own = independent && first ? first.node.id : undefined;
+    const panelClocks = own ? [clockFor(own)] : [...clocks];
+    const range = zoomRange(own ? displayRange(own) : fullRange);
     const interaction: ChartInteraction = {
       mode: 'pan',
       axes: sheet.axes,
@@ -278,14 +274,14 @@ export async function captureReportPlot(
       traceId: stacked ? first?.node.id : undefined,
       timeLabel: sheet.zeroTime ? 'Elapsed time (s)' : 'Time (s)',
       cursors:
-        sheet.measuring && clocks.size <= 1
+        sheet.measuring && !independent
           ? (sheet.cursors ?? [
               fullRange[0] + (fullRange[1] - fullRange[0]) / 3,
               fullRange[0] + (2 * (fullRange[1] - fullRange[0])) / 3,
             ])
           : undefined,
       annotations: sheet.annotations?.filter((note) =>
-        note.clockId ? note.clockId === clock : clocks.size <= 1,
+        note.clockId ? panelClocks.includes(note.clockId) : clocks.size <= 1,
       ),
       onRange: noAction,
       onCursors: noAction,
@@ -299,8 +295,17 @@ export async function captureReportPlot(
     const label = `${sheet.name}${panels.length > 1 ? ` · panel ${panelIndex + 1} of ${panels.length}` : ''}`;
     const clockLabel = sheet.zeroTime
       ? 'Elapsed time (Δt)'
-      : (graph.timeReferences.get(signalFor(first?.node.id ?? '')?.id ?? '')
-          ?.name ?? '');
+      : [
+          ...new Set(
+            panel.traces.map(
+              (trace) =>
+                graph.timeReferences.get(signalFor(trace.node.id)?.id ?? '')
+                  ?.name ?? '',
+            ),
+          ),
+        ]
+          .filter(Boolean)
+          .join(' · ');
     // Different units share one time axis in lanes, drawn by the lowest lane.
     const lanes = !stacked && !multiAxis && panel.axes.length > 1;
     // Existing application CSS is resolved locally before the SVG is detached.

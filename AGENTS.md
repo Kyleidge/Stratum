@@ -306,7 +306,11 @@ There are no server API routes or cloud signal uploads.
   `lib/plot-axes.ts` groups exact units into independently scaled, automatically
   named Y axes on a shared time plot. Overlay (the default) draws each axis
   group in its own lane sharing the time axis; the explicit "Y axes" layout
-  overlays them in one frame. Ticks use `lib/plot-ticks.ts` 1/2/5 steps. The
+  overlays them in one frame. Signals with different time references (other
+  files) overlay at their own time values, labelled as such; only Stacked keeps
+  independent time ranges. History's checked bar has Plot, which opens the
+  checked signals, from any recording, as a new saved plot. Ticks use
+  `lib/plot-ticks.ts` 1/2/5 steps. The
   plot toolbar is one row with a single Export menu. Additional same-unit axes
   use stable IDs; traces choose compatible axes without implicit conversion.
   Axis wheel zoom and drag pan target only their own scale. Persist settings by
