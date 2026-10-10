@@ -1,6 +1,15 @@
 'use client';
-import { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, Search } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import {
+  ArrowDownToLine,
+  CircleAlert,
+  CircleCheck,
+  CircleMinus,
+  Clock,
+  FileSpreadsheet,
+  Info,
+  Search,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -158,6 +167,9 @@ export default function WorkflowImportDialog({
       ),
   );
   const [query, setQuery] = useState('');
+  const [attentionOnly, setAttentionOnly] = useState(false);
+  // Opening focuses the column filter, not the first toolbar button.
+  const searchRef = useRef<HTMLInputElement>(null);
   const keep = (label: string) => setCustom((old) => new Set(old).add(label));
 
   const groupMatches = useMemo(
@@ -278,261 +290,403 @@ export default function WorkflowImportDialog({
       )
     : [];
 
+  // Columns that stop the import: units to fix, time units, missing axes.
+  const columnProblem = (c: number) => {
+    const column = layout[c];
+    if (column.role === 'time') return timeScale(column.unit) === undefined;
+    if (column.role === 'signal')
+      return (
+        layout[column.time]?.role !== 'time' || unfixed(columnUnits[c], custom)
+      );
+    return false;
+  };
+  const attention = columns
+    ? columns.headers.flatMap((_, c) => (columnProblem(c) ? [c] : []))
+    : [];
+  const shown = attentionOnly
+    ? columnMatches.filter((c) => attention.includes(c))
+    : columnMatches;
+  const chooseRole = (c: number, role: DelimitedColumn['role']) =>
+    setLayout((old) =>
+      old[c].role === role
+        ? old
+        : setRole(
+            old,
+            c,
+            role === 'time'
+              ? {
+                  role: 'time',
+                  unit:
+                    timeScale(columnUnits[c]) !== undefined &&
+                    columnUnits[c] !== UNSTATED_UNIT &&
+                    columnUnits[c]
+                      ? columnUnits[c]
+                      : 's',
+                }
+              : role === 'skip'
+                ? { role: 'skip' }
+                : // setRole moves it onto the nearest time axis.
+                  { role: 'signal', time: -1 },
+          ),
+    );
+  const fixedSignals = fixRows.reduce(
+    (sum, [, row]) => sum + row.detail.length,
+    0,
+  );
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="workflow-dialog workflow-batch-dialog workflow-import-dialog">
-        <DialogTitle>Import {fileName}</DialogTitle>
-        <DialogDescription>
-          {columns ? (
-            <>
-              {recording.format}. Say how each column is used and which unit its
-              values are in. Values import exactly as they are; to change units,
-              use Derive → Convert units afterwards. Each time axis with signals
-              becomes a recording.
-            </>
-          ) : tables.length === 1 ? (
-            <>
-              This {recording.format} file names units Stratum does not
-              recognise, or none. Say which unit each signal&apos;s values are
-              in; they import exactly as they are.
-            </>
-          ) : (
-            <>
-              This {recording.format} file holds{' '}
-              {formatCount(tables.length, 'group')}, each with its own time
-              axis. Each group you choose becomes a recording; Compare &amp;
-              align can bring them onto one time base later.
-            </>
-          )}
+      <DialogContent
+        className="workflow-dialog workflow-import-dialog"
+        initialFocus={searchRef}
+      >
+        <header className="import-head">
+          <span className="import-head-icon" aria-hidden>
+            <FileSpreadsheet size={18} />
+          </span>
+          <div>
+            <DialogTitle>Import {fileName}</DialogTitle>
+            <p className="import-head-meta">
+              {recording.format}
+              {columns
+                ? ` · ${formatCount(columns.headers.length, 'column')}`
+                : ` · ${formatCount(tables.length, 'group')}`}
+            </p>
+          </div>
+        </header>
+        <DialogDescription className="import-lede">
+          {columns
+            ? 'Say how each column is used and which unit its values are in. Values import exactly as they are; convert units afterwards with Derive.'
+            : tables.length === 1
+              ? 'Say which unit each signal’s values are in. Values import exactly as they are; convert units afterwards with Derive.'
+              : 'Each group has its own time axis and becomes a recording. Compare & align can bring them onto one time base later.'}
         </DialogDescription>
         {!!recording.notes?.length && (
-          <ul className="workflow-batch-notes">
+          <ul className="import-notes">
             {recording.notes.map((note) => (
               <li key={note}>
-                <AlertTriangle size={13} /> {note}
+                <Info size={14} aria-hidden /> {note}
               </li>
             ))}
           </ul>
         )}
         {columns ? (
-          <section className="workflow-batch-section">
-            <h3>
-              Columns{' '}
-              <span>{formatCount(columns.headers.length, 'column')}</span>
-              {unstated.length > 0 && (
-                <button
-                  type="button"
-                  className="workflow-link"
-                  onClick={() =>
-                    setColumnUnits((old) =>
-                      old.map((unit, c) => (unstated.includes(c) ? '' : unit)),
-                    )
-                  }
-                >
-                  No unit for {formatCount(unstated.length, 'signal')} without
-                  one
-                </button>
+          <>
+            <section className="import-recordings" aria-label="Recordings">
+              {setup.map((table) => {
+                const time = layoutTables(layout)[table.index]?.time ?? 0;
+                const unit = (layout[time] as { unit?: string }).unit ?? 's';
+                const names = table.channels.map((channel) => channel.name);
+                const broken = table.channels.some((channel) =>
+                  unfixed(channel.unit, custom),
+                );
+                return (
+                  <article
+                    key={table.index}
+                    className="import-recording"
+                    data-problem={broken || undefined}
+                  >
+                    <Clock size={15} aria-hidden />
+                    <div>
+                      <strong>{table.name || fileName}</strong>
+                      <small>
+                        Clock in {unit} ·{' '}
+                        {formatCount(table.channels.length, 'signal')}
+                      </small>
+                      <small className="import-recording-signals">
+                        {names.slice(0, 4).join(', ')}
+                        {names.length > 4 ? ` +${names.length - 4}` : ''}
+                      </small>
+                    </div>
+                  </article>
+                );
+              })}
+              {!setup.length && (
+                <p className="import-recordings-empty">
+                  No recording yet. Make a column a time axis and give it
+                  signals.
+                </p>
               )}
-            </h3>
-            {columns.headers.length > 8 && (
-              <label className="workflow-import-filter">
-                <Search size={14} aria-hidden />
-                <input
-                  type="search"
-                  value={query}
-                  placeholder="Filter columns"
-                  aria-label="Filter columns"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </label>
-            )}
-            <div className="workflow-import-columns">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Column</th>
-                    <th scope="col">Use as</th>
-                    <th scope="col">Unit in the file</th>
-                    <th scope="col">First values</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {columnMatches.slice(0, SHOWN).map((c) => {
-                    const header = columns.headers[c];
-                    const column = layout[c];
-                    const role =
-                      column.role === 'signal'
-                        ? `signal:${column.time}`
-                        : column.role;
-                    const values = columns.rows
-                      .slice(0, 3)
-                      .map((row) => row[c]?.trim() || '·');
-                    return (
-                      <tr key={c} data-role={column.role}>
-                        <th scope="row" title={header.name}>
-                          <strong>{header.name}</strong>
-                          {!columns.numeric[c] && <small>Holds text</small>}
-                        </th>
-                        <td>
-                          <select
-                            value={role}
-                            aria-label={`Use of ${header.name}`}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setLayout((old) =>
-                                setRole(
-                                  old,
-                                  c,
-                                  value === 'time'
-                                    ? {
-                                        role: 'time',
-                                        unit:
-                                          timeScale(columnUnits[c]) !==
-                                            undefined &&
-                                          columnUnits[c] !== UNSTATED_UNIT &&
-                                          columnUnits[c]
-                                            ? columnUnits[c]
-                                            : 's',
-                                      }
-                                    : value === 'skip'
-                                      ? { role: 'skip' }
-                                      : {
-                                          role: 'signal',
-                                          time: Number(value.split(':')[1]),
-                                        },
-                                ),
-                              );
-                            }}
+            </section>
+            <section className="import-panel">
+              <div className="import-toolbar">
+                <fieldset className="import-tabs">
+                  <legend className="sr-only">Show columns</legend>
+                  <button
+                    type="button"
+                    aria-pressed={!attentionOnly}
+                    onClick={() => setAttentionOnly(false)}
+                  >
+                    All columns <span>{columns.headers.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={attentionOnly}
+                    data-problem={attention.length > 0 || undefined}
+                    disabled={!attention.length && !attentionOnly}
+                    onClick={() => setAttentionOnly(true)}
+                  >
+                    Needs attention <span>{attention.length}</span>
+                  </button>
+                </fieldset>
+                <label className="import-search">
+                  <Search size={14} aria-hidden />
+                  <input
+                    ref={searchRef}
+                    type="search"
+                    value={query}
+                    placeholder="Filter columns"
+                    aria-label="Filter columns"
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                </label>
+                {unstated.length > 0 && (
+                  <button
+                    type="button"
+                    className="import-bulk"
+                    onClick={() =>
+                      setColumnUnits((old) =>
+                        old.map((unit, c) =>
+                          unstated.includes(c) ? '' : unit,
+                        ),
+                      )
+                    }
+                  >
+                    No unit for {formatCount(unstated.length, 'signal')} without
+                    one
+                  </button>
+                )}
+              </div>
+              <div className="import-list-head" aria-hidden>
+                <span />
+                <span>Column</span>
+                <span>Use as</span>
+                <span>Time axis</span>
+                <span>Unit in the file</span>
+              </div>
+              <ul className="import-list">
+                {shown.slice(0, SHOWN).map((c) => {
+                  const header = columns.headers[c];
+                  const column = layout[c];
+                  const problem = columnProblem(c);
+                  const values = columns.rows
+                    .slice(0, 3)
+                    .map((row) => row[c]?.trim() || '–');
+                  const users =
+                    column.role === 'time'
+                      ? layout.filter(
+                          (item) => item.role === 'signal' && item.time === c,
+                        ).length
+                      : 0;
+                  return (
+                    <li
+                      key={c}
+                      className="import-row"
+                      data-role={column.role}
+                      data-problem={problem || undefined}
+                    >
+                      <span className="import-row-status" aria-hidden>
+                        {column.role === 'time' ? (
+                          <Clock size={15} />
+                        ) : column.role === 'skip' ? (
+                          <CircleMinus size={15} />
+                        ) : problem ? (
+                          <CircleAlert size={15} />
+                        ) : (
+                          <CircleCheck size={15} />
+                        )}
+                      </span>
+                      <div className="import-row-name" title={header.name}>
+                        <strong>{header.name}</strong>
+                        <small>
+                          {columns.numeric[c] ? values.join('  ') : 'Text'}
+                        </small>
+                      </div>
+                      <fieldset className="import-segmented">
+                        <legend className="sr-only">
+                          Use of {header.name}
+                        </legend>
+                        {(['time', 'signal', 'skip'] as const).map((role) => (
+                          <button
+                            key={role}
+                            type="button"
+                            aria-pressed={column.role === role}
+                            disabled={
+                              role !== 'skip' &&
+                              !columns.numeric[c] &&
+                              column.role !== role
+                            }
+                            onClick={() => chooseRole(c, role)}
                           >
-                            <option value="time">Time axis</option>
-                            {axes
-                              .filter((axis) => axis !== c)
-                              .map((axis) => (
-                                <option key={axis} value={`signal:${axis}`}>
-                                  {axes.length > 1 || column.role === 'time'
-                                    ? `Signal on ${columns.headers[axis].name}`
-                                    : 'Signal'}
-                                </option>
-                              ))}
-                            {column.role === 'signal' &&
-                              !axes.includes(column.time) && (
-                                <option value={role}>
-                                  Signal (choose a time axis)
-                                </option>
-                              )}
-                            <option value="skip">Skip</option>
-                          </select>
-                        </td>
-                        <td>
-                          {column.role === 'time' ? (
-                            <div
-                              className="unit-field"
-                              data-state={
-                                timeScale(column.unit) === undefined
-                                  ? 'unknown'
-                                  : 'known'
-                              }
-                            >
-                              <select
-                                value={column.unit}
-                                aria-label={`Time unit of ${header.name}`}
-                                onChange={(event) =>
-                                  setLayout((old) =>
-                                    old.map((item, index) =>
-                                      index === c
-                                        ? {
-                                            role: 'time',
-                                            unit: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  )
-                                }
-                              >
-                                {!TIME_UNITS.includes(column.unit) && (
-                                  <option value={column.unit}>
-                                    {column.unit}
-                                  </option>
-                                )}
-                                {TIME_UNITS.map((unit) => (
-                                  <option key={unit} value={unit}>
-                                    {unit}
-                                  </option>
-                                ))}
-                              </select>
-                              <small>
-                                {timeScale(column.unit) === undefined ? (
-                                  <span className="unit-field-problem">
-                                    Not a unit of time
-                                  </span>
-                                ) : column.unit === 's' ? (
-                                  'Seconds'
-                                ) : (
-                                  'Clock kept in seconds'
-                                )}
-                              </small>
-                            </div>
-                          ) : column.role === 'signal' ? (
-                            <UnitField
-                              value={columnUnits[c]}
-                              custom={custom}
-                              label={`Unit of ${header.name} in the file`}
-                              onKeep={keep}
-                              onChange={(unit) =>
-                                setColumnUnits((old) =>
+                            {role === 'time'
+                              ? 'Time'
+                              : role === 'signal'
+                                ? 'Signal'
+                                : 'Skip'}
+                          </button>
+                        ))}
+                      </fieldset>
+                      <div className="import-row-axis">
+                        {column.role === 'signal' ? (
+                          axes.length > 1 || !axes.includes(column.time) ? (
+                            <select
+                              value={column.time}
+                              aria-label={`Time axis of ${header.name}`}
+                              onChange={(event) =>
+                                setLayout((old) =>
                                   old.map((item, index) =>
-                                    index === c ? unit : item,
+                                    index === c
+                                      ? {
+                                          role: 'signal',
+                                          time: Number(event.target.value),
+                                        }
+                                      : item,
                                   ),
                                 )
                               }
-                            />
+                            >
+                              {!axes.includes(column.time) && (
+                                <option value={column.time}>
+                                  Choose a time axis
+                                </option>
+                              )}
+                              {axes.map((axis) => (
+                                <option key={axis} value={axis}>
+                                  {columns.headers[axis].name}
+                                </option>
+                              ))}
+                            </select>
                           ) : (
-                            <small className="workflow-muted">
-                              Not imported
+                            <span>{columns.headers[column.time].name}</span>
+                          )
+                        ) : column.role === 'time' ? (
+                          <span className="import-muted">
+                            {users
+                              ? `Clock for ${formatCount(users, 'signal')}`
+                              : 'No signals use it'}
+                          </span>
+                        ) : (
+                          <span className="import-muted">Not imported</span>
+                        )}
+                      </div>
+                      <div className="import-row-unit">
+                        {column.role === 'time' ? (
+                          <div
+                            className="unit-field"
+                            data-state={
+                              timeScale(column.unit) === undefined
+                                ? 'unknown'
+                                : 'known'
+                            }
+                          >
+                            <select
+                              value={column.unit}
+                              aria-label={`Time unit of ${header.name}`}
+                              aria-invalid={
+                                timeScale(column.unit) === undefined
+                              }
+                              onChange={(event) =>
+                                setLayout((old) =>
+                                  old.map((item, index) =>
+                                    index === c
+                                      ? {
+                                          role: 'time',
+                                          unit: event.target.value,
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            >
+                              {!TIME_UNITS.includes(column.unit) && (
+                                <option value={column.unit}>
+                                  {column.unit}
+                                </option>
+                              )}
+                              {TIME_UNITS.map((unit) => (
+                                <option key={unit} value={unit}>
+                                  {unit}
+                                </option>
+                              ))}
+                            </select>
+                            <small>
+                              {timeScale(column.unit) === undefined ? (
+                                <span className="unit-field-problem">
+                                  Not a unit of time
+                                </span>
+                              ) : column.unit === 's' ? null : (
+                                'Clock kept in seconds'
+                              )}
                             </small>
-                          )}
-                        </td>
-                        <td
-                          className="workflow-import-values"
-                          title={values.join(', ')}
-                        >
-                          {values.join(', ') || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {columnMatches.length > SHOWN && (
-              <p className="workflow-muted">
-                Showing {SHOWN} of {formatCount(columnMatches.length, 'column')}
-                . Filter to find others.
-              </p>
-            )}
-            {!columnMatches.length && (
-              <p className="workflow-muted">No column matches.</p>
-            )}
-          </section>
+                          </div>
+                        ) : column.role === 'signal' ? (
+                          <UnitField
+                            value={columnUnits[c]}
+                            custom={custom}
+                            label={`Unit of ${header.name} in the file`}
+                            onKeep={keep}
+                            onChange={(unit) =>
+                              setColumnUnits((old) =>
+                                old.map((item, index) =>
+                                  index === c ? unit : item,
+                                ),
+                              )
+                            }
+                          />
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {shown.length > SHOWN && (
+                <p className="import-muted import-list-more">
+                  Showing {SHOWN} of {formatCount(shown.length, 'column')}.
+                  Filter to find others.
+                </p>
+              )}
+              {!shown.length && (
+                <p className="import-muted import-list-more">
+                  {attentionOnly
+                    ? 'Every column is ready.'
+                    : 'No column matches.'}
+                </p>
+              )}
+            </section>
+          </>
         ) : (
           <>
             {tables.length > 1 && (
-              <section className="workflow-batch-section">
-                <h3>
-                  Groups{' '}
-                  <span>
-                    {chosen.size} of {tables.length}
-                  </span>
+              <section className="import-panel">
+                <div className="import-toolbar">
+                  <h3>
+                    Groups{' '}
+                    <span>
+                      {chosen.size} of {tables.length}
+                    </span>
+                  </h3>
+                  {tables.length > 8 && (
+                    <label className="import-search">
+                      <Search size={14} aria-hidden />
+                      <input
+                        type="search"
+                        value={query}
+                        placeholder="Filter groups and signals"
+                        aria-label="Filter groups and signals"
+                        onChange={(event) => setQuery(event.target.value)}
+                      />
+                    </label>
+                  )}
                   <button
                     type="button"
-                    className="workflow-link"
+                    className="import-bulk"
                     onClick={() => toggle(groupMatches, true)}
                   >
                     {query.trim() ? 'Choose matching' : 'Choose all'}
                   </button>
                   <button
                     type="button"
-                    className="workflow-link"
+                    className="import-bulk"
                     disabled={!chosen.size}
                     onClick={() =>
                       toggle(query.trim() ? groupMatches : [...chosen], false)
@@ -540,26 +694,15 @@ export default function WorkflowImportDialog({
                   >
                     Clear
                   </button>
-                </h3>
-                {tables.length > 8 && (
-                  <label className="workflow-import-filter">
-                    <Search size={14} aria-hidden />
-                    <input
-                      type="search"
-                      value={query}
-                      placeholder="Filter groups and signals"
-                      aria-label="Filter groups and signals"
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                  </label>
-                )}
-                <ul className="workflow-batch-steps workflow-import-groups">
+                </div>
+                <ul className="import-list import-groups">
                   {groupMatches.slice(0, SHOWN).map((index) => {
                     const table = tables[index];
                     const names = table.channels.map((channel) => channel.name);
                     return (
                       <li
                         key={index}
+                        className="import-group"
                         data-state={chosen.has(index) ? 'included' : 'excluded'}
                       >
                         <Checkbox
@@ -569,20 +712,17 @@ export default function WorkflowImportDialog({
                             toggle([index], !!checked)
                           }
                         />
-                        <div>
+                        <div className="import-row-name">
                           <strong>{table.name || `Group ${index + 1}`}</strong>
                           <small>{tableSummary(table)}</small>
-                          <small
-                            className="workflow-import-signals"
-                            title={names.join(', ')}
-                          >
+                          <small title={names.join(', ')}>
                             {names.slice(0, 6).join(', ')}
                             {names.length > 6
                               ? `, +${names.length - 6} more`
                               : ''}
                           </small>
                           {table.notes?.map((note) => (
-                            <small key={note} className="workflow-import-note">
+                            <small key={note} className="import-group-note">
                               {note}
                             </small>
                           ))}
@@ -592,35 +732,30 @@ export default function WorkflowImportDialog({
                   })}
                 </ul>
                 {groupMatches.length > SHOWN && (
-                  <p className="workflow-muted">
+                  <p className="import-muted import-list-more">
                     Showing {SHOWN} of{' '}
                     {formatCount(groupMatches.length, 'matching group')}. Filter
                     to find others.
                   </p>
                 )}
                 {!groupMatches.length && (
-                  <p className="workflow-muted">No group or signal matches.</p>
+                  <p className="import-muted import-list-more">
+                    No group or signal matches.
+                  </p>
                 )}
               </section>
             )}
             {fixRows.length > 0 && (
-              <section className="workflow-batch-section">
-                <h3>
-                  Units to fix{' '}
-                  <span>
-                    {formatCount(
-                      fixRows.reduce(
-                        (sum, [, row]) => sum + row.detail.length,
-                        0,
-                      ),
-                      'signal',
-                    )}{' '}
-                    without a unit Stratum recognises
-                  </span>
+              <section className="import-panel">
+                <div className="import-toolbar">
+                  <h3>
+                    Units to identify{' '}
+                    <span>{formatCount(fixedSignals, 'signal')}</span>
+                  </h3>
                   {unstatedFixes.length > 0 && (
                     <button
                       type="button"
-                      className="workflow-link"
+                      className="import-bulk"
                       onClick={() =>
                         setFixes((old) => {
                           const next = new Map(old);
@@ -633,15 +768,31 @@ export default function WorkflowImportDialog({
                       without one
                     </button>
                   )}
-                </h3>
-                <ul className="workflow-import-columns workflow-import-units">
+                </div>
+                <ul className="import-list import-units">
                   {fixRows.slice(0, SHOWN).map(([key, row]) => {
                     const original = key.startsWith('#')
                       ? UNSTATED_UNIT
                       : key.slice(1);
+                    const value = fixes.get(key) ?? original;
+                    const problem = unfixed(value, custom);
                     return (
-                      <li key={key}>
-                        <span title={row.detail.join(', ')}>
+                      <li
+                        key={key}
+                        className="import-row"
+                        data-problem={problem || undefined}
+                      >
+                        <span className="import-row-status" aria-hidden>
+                          {problem ? (
+                            <CircleAlert size={15} />
+                          ) : (
+                            <CircleCheck size={15} />
+                          )}
+                        </span>
+                        <div
+                          className="import-row-name"
+                          title={row.detail.join(', ')}
+                        >
                           <strong>{row.title}</strong>
                           <small>
                             {row.detail.slice(0, 4).join(', ')}
@@ -649,10 +800,10 @@ export default function WorkflowImportDialog({
                               ? `, +${row.detail.length - 4} more`
                               : ''}
                           </small>
-                        </span>
-                        <span>
+                        </div>
+                        <div className="import-row-unit">
                           <UnitField
-                            value={fixes.get(key) ?? original}
+                            value={value}
                             custom={custom}
                             label={
                               original === UNSTATED_UNIT
@@ -664,13 +815,13 @@ export default function WorkflowImportDialog({
                               setFixes((old) => new Map(old).set(key, unit))
                             }
                           />
-                        </span>
+                        </div>
                       </li>
                     );
                   })}
                 </ul>
                 {fixRows.length > SHOWN && (
-                  <p className="workflow-muted">
+                  <p className="import-muted import-list-more">
                     Showing {SHOWN} of {fixRows.length}. Use No unit for signals
                     without one, or import fewer groups.
                   </p>
@@ -679,14 +830,19 @@ export default function WorkflowImportDialog({
             )}
           </>
         )}
-        <div className="workflow-batch-actions">
+        <footer className="import-footer">
           <span
-            className="workflow-muted"
+            className="import-status"
             aria-live="polite"
             data-problem={problem ? '' : undefined}
           >
+            {problem ? (
+              <CircleAlert size={15} aria-hidden />
+            ) : (
+              <CircleCheck size={15} aria-hidden />
+            )}
             {problem ??
-              `${formatCount(setup.length, 'recording')} · ${formatCount(signals, 'signal')}`}
+              `Ready: ${formatCount(setup.length, 'recording')} · ${formatCount(signals, 'signal')}`}
           </span>
           <button className="secondary-button" onClick={() => onClose()}>
             Cancel
@@ -699,7 +855,7 @@ export default function WorkflowImportDialog({
             <ArrowDownToLine size={14} /> Import{' '}
             {formatCount(setup.length, columns ? 'recording' : 'group')}
           </button>
-        </div>
+        </footer>
       </DialogContent>
     </Dialog>
   );

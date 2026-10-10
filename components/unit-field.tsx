@@ -214,7 +214,7 @@ export default function UnitField({
           <button
             key={item}
             type="button"
-            className="workflow-link"
+            className="unit-chip"
             onClick={() => onChange(item)}
           >
             Use {item}
@@ -223,7 +223,7 @@ export default function UnitField({
         {(state === 'unstated' || state === 'unknown') && (
           <button
             type="button"
-            className="workflow-link"
+            className="unit-chip"
             onClick={() => onChange('')}
           >
             No unit
@@ -232,7 +232,7 @@ export default function UnitField({
         {state === 'unknown' && (
           <button
             type="button"
-            className="workflow-link"
+            className="unit-chip"
             onClick={() => onKeep(value.trim())}
           >
             Keep as custom
@@ -241,7 +241,7 @@ export default function UnitField({
         {state === 'none' && (
           <button
             type="button"
-            className="workflow-link"
+            className="unit-chip"
             onClick={() => onChange(UNSTATED_UNIT)}
           >
             Change

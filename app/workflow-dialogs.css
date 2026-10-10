@@ -981,3 +981,24 @@
   color: var(--ink-3);
   font-size: var(--text-xs);
 }
+.unit-field {
+  gap: 4px;
+}
+.unit-chip {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-mid);
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--primary);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+.unit-chip:hover {
+  border-color: var(--primary-line);
+  background: var(--primary-wash);
+}
+.unit-input input {
+  border-radius: 6px;
+  min-height: 30px;
+}
