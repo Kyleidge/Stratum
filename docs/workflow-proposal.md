@@ -60,6 +60,11 @@ flowchart LR
   the segments shaded, one segment's outputs, or each input's outputs aligned
   from their segments' starts; values within segments read best in the By
   segment table below the plot.
+- A step on a whole recording (every signal of an import, or every signal
+  output of such a step, with one output or more each) is one History row
+  too, reading "from rig.csv" (or "from" the earlier whole-recording step).
+  Selecting it plots up to eight of its outputs; the Outputs table lists
+  them all.
 - Edit keeps outputs by what they are, not by position: a segment by its
   place within its parent, an output by its input and segment. Re-segmenting
   may therefore change the segment count; steps within the segments follow,

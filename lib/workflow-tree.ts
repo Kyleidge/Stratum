@@ -15,15 +15,67 @@ export type WorkflowRow = {
   inputs?: string;
 };
 
+/** The step whose signal outputs are exactly this step's several inputs. */
+function inputsStep(step: WorkflowStep, index: WorkflowIndex) {
+  const inputs = new Set(step.inputIds);
+  if (inputs.size < 2 || step.outputIds.length < inputs.size) return undefined;
+  const parent = index.owner.get(step.inputIds[0]);
+  if (!parent || parent.id === step.id) return undefined;
+  const signals = parent.outputIds.filter((id) => index.nodes.has(id));
+  return signals.length === inputs.size && signals.every((id) => inputs.has(id))
+    ? parent
+    : undefined;
+}
+
+const wholeRecordingSteps = new WeakMap<
+  WorkflowIndex,
+  Map<string, WorkflowStep | null>
+>();
+
 /**
- * Steps History shows as one row, never listing their outputs: Segment steps
- * and steps whose several outputs all belong to segments (made within them,
- * or from signals or values that were). The plot chooses among them.
+ * The step a step worked on as a whole recording, with one output or more
+ * per input: an import, when its inputs are every signal of that recording,
+ * or an earlier such step, when they are every signal output of it.
+ */
+export function wholeRecordingParent(
+  step: WorkflowStep,
+  index: WorkflowIndex,
+): WorkflowStep | undefined {
+  let known = wholeRecordingSteps.get(index);
+  if (!known) wholeRecordingSteps.set(index, (known = new Map()));
+  // Walk up iteratively, then record the answer for every step passed.
+  const chain: WorkflowStep[] = [];
+  let current: WorkflowStep | undefined = step;
+  let whole = false;
+  while (current) {
+    if (current.kind === 'import' && chain.length) {
+      whole = true;
+      break;
+    }
+    const cached = known.get(current.id);
+    if (cached !== undefined) {
+      whole = cached !== null;
+      break;
+    }
+    chain.push(current);
+    current = current.segmentSetId ? undefined : inputsStep(current, index);
+  }
+  for (const item of chain)
+    known.set(item.id, whole ? inputsStep(item, index)! : null);
+  return known.get(step.id) ?? undefined;
+}
+
+/**
+ * Steps History shows as one row, never listing their outputs: Segment steps,
+ * steps whose several outputs all belong to segments (made within them, or
+ * from signals or values that were) and steps on a whole recording
+ * (`wholeRecordingParent`). The plot chooses among them.
  */
 export function oneRowStep(step: WorkflowStep, index: WorkflowIndex) {
   if (step.segmentSetId) return true;
   if (step.outputIds.length < 2) return false;
   if (step.within) return true;
+  if (wholeRecordingParent(step, index)) return true;
   return step.outputIds.every(
     (id) => (index.nodes.get(id) ?? index.values.get(id))?.segmentId,
   );
@@ -31,7 +83,9 @@ export function oneRowStep(step: WorkflowStep, index: WorkflowIndex) {
 
 /**
  * What a step was made from, in History's small text: a Segment step's
- * recording, otherwise its input signals or values (the first two by name).
+ * recording; for a step on a whole recording, that recording or the earlier
+ * step it followed; otherwise its input signals or values (the first two by
+ * name).
  */
 export function stepInputSummary(
   step: WorkflowStep,
@@ -46,6 +100,16 @@ export function stepInputSummary(
       ? index.project.sources.find((source) => source.id === set.sourceId)?.name
       : 'Workspace time axis';
   }
+  const whole = wholeRecordingParent(step, index);
+  if (whole)
+    return `from ${
+      whole.kind === 'import'
+        ? (index.project.sources.find((source) => source.id === whole.sourceId)
+            ?.name ??
+          whole.fileName ??
+          stepName(whole))
+        : stepName(whole)
+    }`;
   const inputs = [...new Set(step.inputIds)];
   if (!inputs.length) return undefined;
   const names = inputs.slice(0, 2).map((id) => index.label(id));

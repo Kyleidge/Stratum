@@ -599,3 +599,34 @@ void test('values calculated from per-segment values are one History row, naming
   );
   engine.close();
 });
+
+void test('steps on a whole recording are one History row, from the file', async () => {
+  const { engine, torque, speed } = await fixture();
+  const shifted = await engine.deriveMany([speed, torque], 'time-shift', 1);
+  const smoothed = await engine.deriveMany(
+    shifted.map((node) => node.id),
+    'smooth',
+    2,
+  );
+  await engine.deriveMany([smoothed[0].id], 'scale', 2);
+  await engine.deriveMany([torque, speed], 'scale', 3);
+  const index = new WorkflowIndex(engine.project);
+  const steps = engine.project.workflowSteps!.slice(-4);
+  assert.deepEqual(
+    workflowRows(steps, index, new Set()).map((row) => [row.kind, row.inputs]),
+    [
+      ['step', 'from rig.csv'],
+      ['step', `from ${stepName(steps[0])}`],
+      ['single', `from ${index.label(smoothed[0].id)}`],
+      ['step', 'from rig.csv'],
+    ],
+  );
+  // A selected output is shown by its step's one row.
+  assert.deepEqual(
+    workflowRows(steps, index, new Set(), '', shifted[1].id).map(
+      (row) => row.key,
+    ),
+    [steps[0].id, steps[1].id, `output:${steps[2].outputIds[0]}`, steps[3].id],
+  );
+  engine.close();
+});
