@@ -1,5 +1,5 @@
 'use client';
-import { useId, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, Search } from 'lucide-react';
 import {
   Dialog,
@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import UnitField, { UnitOptions, unitState } from '@/components/unit-field';
+import UnitField, { unitState } from '@/components/unit-field';
 import { formatCount } from '@/lib/format-count';
 import {
   layoutProblem,
@@ -140,7 +140,6 @@ export default function WorkflowImportDialog({
   /** The chosen setup, or undefined when cancelled. */
   onClose: (setup?: ImportSetup) => void;
 }) {
-  const listId = useId();
   const { tables, columns } = recording;
   const [layout, setLayout] = useState<DelimitedLayout>(
     () => recording.layout ?? [],
@@ -286,15 +285,16 @@ export default function WorkflowImportDialog({
         <DialogDescription>
           {columns ? (
             <>
-              {recording.format}. Choose the time axis of each signal and give
-              every signal a unit. Each time axis with signals becomes a
-              recording; Compare &amp; align can bring them onto one time base
-              later.
+              {recording.format}. Say how each column is used and which unit its
+              values are in. Values import exactly as they are; to change units,
+              use Derive → Convert units afterwards. Each time axis with signals
+              becomes a recording.
             </>
           ) : tables.length === 1 ? (
             <>
               This {recording.format} file names units Stratum does not
-              recognise, or none. Give every signal a unit before importing.
+              recognise, or none. Say which unit each signal&apos;s values are
+              in; they import exactly as they are.
             </>
           ) : (
             <>
@@ -305,7 +305,6 @@ export default function WorkflowImportDialog({
             </>
           )}
         </DialogDescription>
-        <UnitOptions id={listId} />
         {!!recording.notes?.length && (
           <ul className="workflow-batch-notes">
             {recording.notes.map((note) => (
@@ -353,7 +352,7 @@ export default function WorkflowImportDialog({
                   <tr>
                     <th scope="col">Column</th>
                     <th scope="col">Use as</th>
-                    <th scope="col">Unit</th>
+                    <th scope="col">Unit in the file</th>
                     <th scope="col">First values</th>
                   </tr>
                 </thead>
@@ -466,8 +465,10 @@ export default function WorkflowImportDialog({
                                   <span className="unit-field-problem">
                                     Not a unit of time
                                   </span>
+                                ) : column.unit === 's' ? (
+                                  'Seconds'
                                 ) : (
-                                  'Read as seconds'
+                                  'Clock kept in seconds'
                                 )}
                               </small>
                             </div>
@@ -475,8 +476,7 @@ export default function WorkflowImportDialog({
                             <UnitField
                               value={columnUnits[c]}
                               custom={custom}
-                              label={`Unit of ${header.name}`}
-                              listId={listId}
+                              label={`Unit of ${header.name} in the file`}
                               onKeep={keep}
                               onChange={(unit) =>
                                 setColumnUnits((old) =>
@@ -656,10 +656,9 @@ export default function WorkflowImportDialog({
                             custom={custom}
                             label={
                               original === UNSTATED_UNIT
-                                ? `Unit of ${row.title}`
-                                : `Unit for signals in ${row.title}`
+                                ? `Unit of ${row.title} in the file`
+                                : `Unit meant by ${row.title}`
                             }
-                            listId={listId}
                             onKeep={keep}
                             onChange={(unit) =>
                               setFixes((old) => new Map(old).set(key, unit))

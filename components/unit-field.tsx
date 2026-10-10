@@ -1,4 +1,7 @@
 'use client';
+import { useMemo, useState } from 'react';
+import { Autocomplete } from '@base-ui/react/autocomplete';
+import { ChevronDown } from 'lucide-react';
 import {
   describeUnit,
   UNIT_GROUPS,
@@ -6,18 +9,123 @@ import {
   unitSuggestions,
 } from '@/lib/units';
 
-/** One shared list of recognised units for every unit field in a dialog. */
-export function UnitOptions({ id }: { id: string }) {
+type UnitItem = { label: string; family: string };
+type UnitGroup = { value: string; items: UnitItem[] };
+const GROUPS: UnitGroup[] = UNIT_GROUPS.map((group) => ({
+  value: group.family,
+  items: group.units.map((label) => ({ label, family: group.family })),
+}));
+
+/** Units whose label or quantity contains the query, by quantity. */
+function matchingGroups(query: string): UnitGroup[] {
+  const text = query.trim().toLowerCase();
+  if (!text) return GROUPS;
+  return GROUPS.flatMap((group) => {
+    if (group.value.toLowerCase().includes(text)) return [group];
+    const items = group.items.filter((item) =>
+      item.label.toLowerCase().includes(text),
+    );
+    return items.length ? [{ ...group, items }] : [];
+  });
+}
+
+/**
+ * A unit label typed freely or picked from the recognised units, grouped by
+ * quantity in a scrolling list. It only names a unit; nothing is converted.
+ * Opening the list shows every unit until the user types to filter it.
+ */
+export function UnitInput({
+  value,
+  label,
+  placeholder = 'Unit',
+  invalid,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  /** Accessible name, such as “Unit of Torque in the file”. */
+  label: string;
+  placeholder?: string;
+  invalid?: boolean;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [typed, setTyped] = useState(false);
+  const filtered = useMemo(
+    () => matchingGroups(typed ? value : ''),
+    [typed, value],
+  );
   return (
-    <datalist id={id}>
-      {UNIT_GROUPS.flatMap((group) =>
-        group.units.map((unit) => (
-          <option key={`${group.family}:${unit}`} value={unit}>
-            {group.family}
-          </option>
-        )),
-      )}
-    </datalist>
+    <Autocomplete.Root
+      items={GROUPS}
+      filteredItems={filtered}
+      value={value}
+      openOnInputClick
+      disabled={disabled}
+      itemToStringValue={(item: UnitItem) => item.label}
+      onOpenChange={(open, details) => {
+        // Typing opens a filtered list; clicking opens every unit.
+        if (!open || details.reason !== 'input-change') setTyped(false);
+      }}
+      onValueChange={(next, details) => {
+        if (details.reason === 'input-change') setTyped(true);
+        onChange(next);
+      }}
+    >
+      <div className="unit-input">
+        <Autocomplete.Input
+          aria-label={label}
+          aria-invalid={invalid}
+          maxLength={40}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={placeholder}
+        />
+        <Autocomplete.Trigger
+          className="unit-input-trigger"
+          aria-label={`Choose ${label.charAt(0).toLowerCase()}${label.slice(1)}`}
+        >
+          <ChevronDown size={14} aria-hidden />
+        </Autocomplete.Trigger>
+      </div>
+      <Autocomplete.Portal>
+        <Autocomplete.Positioner
+          className="isolate z-50"
+          sideOffset={4}
+          align="start"
+        >
+          <Autocomplete.Popup className="unit-input-popup">
+            <Autocomplete.Empty className="unit-input-empty">
+              No recognised unit matches. Type the unit if it is not listed.
+            </Autocomplete.Empty>
+            <Autocomplete.List className="unit-input-list">
+              {(group: UnitGroup) => (
+                <Autocomplete.Group
+                  key={group.value}
+                  items={group.items}
+                  className="unit-input-group"
+                >
+                  <Autocomplete.GroupLabel className="unit-input-group-label">
+                    {group.value}
+                  </Autocomplete.GroupLabel>
+                  <Autocomplete.Collection>
+                    {(item: UnitItem) => (
+                      <Autocomplete.Item
+                        key={`${item.family}:${item.label}`}
+                        value={item}
+                        className="unit-input-item"
+                      >
+                        {item.label}
+                      </Autocomplete.Item>
+                    )}
+                  </Autocomplete.Collection>
+                </Autocomplete.Group>
+              )}
+            </Autocomplete.List>
+          </Autocomplete.Popup>
+        </Autocomplete.Positioner>
+      </Autocomplete.Portal>
+    </Autocomplete.Root>
   );
 }
 
@@ -55,16 +163,16 @@ export function unitState(
 }
 
 /**
- * A unit for one signal (or every signal sharing a label): typed with
- * suggestions from the recognised units, set to No unit, or, for a label
- * Stratum does not recognise, kept as a custom unit that never converts.
- * `—` is an unstated unit and '' is no unit.
+ * The unit a file's values are in, for one signal (or every signal sharing
+ * a label): typed or picked from the recognised units, set to No unit, or,
+ * for a label Stratum does not recognise, kept as a custom unit. It names
+ * the unit only; converting is a Derive step after importing. `—` is an
+ * unstated unit and '' is no unit.
  */
 export default function UnitField({
   value,
   custom,
   label,
-  listId,
   onChange,
   onKeep,
 }: {
@@ -72,7 +180,6 @@ export default function UnitField({
   custom: ReadonlySet<string>;
   /** Accessible name, such as “Unit of Torque”. */
   label: string;
-  listId: string;
   onChange: (value: string) => void;
   /** Keeps an unrecognised label as a custom unit. */
   onKeep: (label: string) => void;
@@ -86,21 +193,12 @@ export default function UnitField({
       : [];
   return (
     <div className="unit-field" data-state={state}>
-      <input
-        type="text"
+      <UnitInput
         value={text}
-        list={listId}
-        maxLength={40}
-        spellCheck={false}
-        autoComplete="off"
-        aria-label={label}
-        aria-invalid={state === 'unstated' || state === 'unknown'}
-        placeholder={state === 'none' ? 'No unit' : 'Unit'}
-        onChange={(event) =>
-          onChange(
-            event.target.value.trim() ? event.target.value : UNSTATED_UNIT,
-          )
-        }
+        label={label}
+        invalid={state === 'unstated' || state === 'unknown'}
+        placeholder={state === 'none' ? 'No unit' : 'Unit in the file'}
+        onChange={(next) => onChange(next.trim() ? next : UNSTATED_UNIT)}
       />
       <small aria-live="polite">
         {state === 'known' && (info?.quantity ?? 'Recognised')}

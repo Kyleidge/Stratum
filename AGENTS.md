@@ -96,7 +96,9 @@ There are no server API routes or cloud signal uploads.
   per radian are dimensions) and converts between units of one dimension;
   `sameUnit` compares spellings, `unitSuggestions` offers fixes. Labels match
   exactly (mW is not MW). `components/unit-field.tsx` is the unit input
-  with recognition status; Add/Subtract accept spellings of one unit. Previews run in inspection lanes and never save.
+  (a Base UI Autocomplete of recognised units by quantity, scrolling within
+  the screen) with recognition status; it only names units and never
+  converts, so imports keep values exactly as the file holds them; Add/Subtract accept spellings of one unit. Previews run in inspection lanes and never save.
   `lib/parameter-scale.ts` gives sliders, presets and hints only; the engine
   validates values. `components/segment-plot.tsx` draws trigger thresholds and
   window spans; workflow segment previews run automatically. Operation dialogs

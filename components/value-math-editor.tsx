@@ -1,8 +1,8 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Calculator, Eye } from 'lucide-react';
-import { UnitHint, UnitOptions } from '@/components/unit-field';
+import { UnitHint, UnitInput } from '@/components/unit-field';
 import {
   compileFormula,
   FORMULA_FUNCTIONS,
@@ -119,7 +119,6 @@ export default function ValueMathEditor({
   const [expression, setExpression] = useState(
     editor.expression ?? VALUE_INPUT,
   );
-  const unitListId = useId();
   const [unit, setUnit] = useState(editor.unit ?? first?.unit ?? '');
   // Sources for the formula's other names, as the value pickers use them.
   const [sources, setSources] = useState<Record<string, string>>(() =>
@@ -215,22 +214,17 @@ export default function ValueMathEditor({
                     : ''}
                   . For example <code>a / 12</code> or <code>b / a</code>.
                 </p>
-                <label className="parameter-control-field">
+                <div className="parameter-control-field">
                   <span>Output unit</span>
-                  <div className="number-field">
-                    <input
-                      aria-label="Output unit"
-                      list={unitListId}
-                      maxLength={40}
-                      value={unit}
-                      placeholder="none"
-                      disabled={busy}
-                      onChange={(event) => setUnit(event.target.value)}
-                    />
-                  </div>
-                </label>
+                  <UnitInput
+                    label="Output unit"
+                    value={unit}
+                    disabled={busy}
+                    placeholder="none"
+                    onChange={setUnit}
+                  />
+                </div>
                 <UnitHint unit={unit} />
-                <UnitOptions id={unitListId} />
                 {names.map((name) => (
                   <div key={name} className="parameter-control-field">
                     <span>Value {name}</span>

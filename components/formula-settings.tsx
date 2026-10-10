@@ -1,5 +1,4 @@
 'use client';
-import { useId } from 'react';
 
 import {
   Select,
@@ -10,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { UnitHint, UnitOptions } from '@/components/unit-field';
+import { UnitHint, UnitInput } from '@/components/unit-field';
 import {
   compileFormula,
   FORMULA_FUNCTIONS,
@@ -151,7 +150,6 @@ export default function FormulaSettingsPanel({
   disabled: boolean;
   onChange: (draft: FormulaDraft) => void;
 }) {
-  const unitListId = useId();
   let compiled: ReturnType<typeof compileFormula> | undefined;
   let problem = '';
   try {
@@ -214,24 +212,17 @@ export default function FormulaSettingsPanel({
         {problem ||
           `A is each input${compiled && compiled.signals.length > 1 ? `; ${compiled.signals.slice(1).join(', ')} ${compiled.signals.length === 2 ? 'is a signal' : 'are signals'} on the same sample grid` : ''}${compiled?.values.length ? `; ${compiled.values.join(', ')} ${compiled.values.length === 1 ? 'is a value' : 'are values'}` : ''}. Missing samples stay missing.`}
       </p>
-      <label className="parameter-control-field">
+      <div className="parameter-control-field">
         <span>Output unit</span>
-        <div className="number-field">
-          <input
-            aria-label="Output unit"
-            list={unitListId}
-            maxLength={40}
-            value={draft.unit}
-            disabled={disabled}
-            placeholder="none"
-            onChange={(event) =>
-              onChange({ ...draft, unit: event.target.value })
-            }
-          />
-        </div>
-      </label>
+        <UnitInput
+          label="Output unit"
+          value={draft.unit}
+          disabled={disabled}
+          placeholder="none"
+          onChange={(unit) => onChange({ ...draft, unit })}
+        />
+      </div>
       <UnitHint unit={draft.unit} />
-      <UnitOptions id={unitListId} />
       {compiled?.signals.slice(1).map((letter) => (
         <div key={letter} className="parameter-control-field">
           <span>Signal {letter}</span>

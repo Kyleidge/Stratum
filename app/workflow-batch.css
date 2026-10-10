@@ -944,33 +944,3 @@
 .workflow-import-dialog .workflow-batch-actions > span[data-problem] {
   color: var(--danger);
 }
-.unit-field {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.unit-field input {
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--field);
-  color: var(--ink-1);
-  font: inherit;
-  font-size: var(--text-sm);
-}
-.unit-field[data-state='unstated'] input,
-.unit-field[data-state='unknown'] input,
-.unit-field[data-state='unknown'] select {
-  border-color: var(--danger);
-}
-.unit-field small {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-}
-.unit-field .unit-field-problem {
-  color: var(--danger);
-}
