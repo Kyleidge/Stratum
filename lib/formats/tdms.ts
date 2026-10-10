@@ -18,6 +18,7 @@ import {
   type RecordingFile,
   type RecordingTable,
 } from './recording';
+import type { TimeClock } from '../time-types';
 
 const TOC_METADATA = 1 << 1;
 const TOC_NEW_OBJECT_LIST = 1 << 2;
@@ -98,6 +99,7 @@ const SLICE_ROWS = 1 << 20;
 const MAX_PENDING_VALUES = 8 << 20;
 const NAME_LIMIT = 5;
 
+/** Timestamp properties are Unix seconds (see `PropertyReader.value`). */
 type Property = number | string | boolean;
 type Scaler = {
   type: number;
@@ -334,9 +336,12 @@ class MetadataReader {
         return view.getUint8(at) !== 0;
       case TIMESTAMP: {
         // Seconds since 1904 plus a 2^-64 fraction; fraction first when little.
+        // Moving whole seconds to 1970 first keeps the fraction's precision.
         const seconds = view.getBigInt64(little ? at + 8 : at, little);
         const fraction = view.getBigUint64(little ? at : at + 8, little);
-        return Number(seconds) + Number(fraction) / 2 ** 64;
+        return (
+          Number(seconds - BigInt(EPOCH_1904)) + Number(fraction) / 2 ** 64
+        );
       }
       default:
         return undefined;
@@ -844,6 +849,19 @@ async function firstStamp(scan: Scan, object: number) {
   return [0, 0] as [number, number];
 }
 
+/**
+ * A clock for a TDMS time (UTC), shown in this device's zone at that time.
+ * Undefined for 1904-01-01 00:00 UTC, which TDMS writers use for “not set”.
+ */
+function localClock(unixSeconds: number): TimeClock | undefined {
+  if (unixSeconds === -EPOCH_1904 || !Number.isFinite(unixSeconds))
+    return undefined;
+  const offset = -Math.round(
+    new Date(Math.floor(unixSeconds) * 1000).getTimezoneOffset(),
+  );
+  return { start: unixSeconds, offset };
+}
+
 const isoTime = ([seconds, fraction]: [number, number]) => {
   const date = new Date((seconds - EPOCH_1904 + fraction) * 1000);
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
@@ -864,7 +882,8 @@ async function buildTables(
   /** Timestamp channels per group, which may become a time axis. */
   const stamps = new Map<string, number[]>();
   const unscaled: string[] = [];
-  let startTimes = false;
+  /** Channels with a wf_start_time outside waveform tables. */
+  let unusedStartTimes = false;
   const channelGroups = new Set(
     objects.flatMap((o) => (o.parts?.length === 2 ? [o.parts[0]] : [])),
   );
@@ -918,7 +937,6 @@ async function buildTables(
     const unit = ['unit_string', 'NI_UnitDescription']
       .map((key) => object.properties.get(key))
       .find((value) => typeof value === 'string' && value.trim());
-    if (object.properties.has('wf_start_time')) startTimes = true;
     const list = groups.get(group) ?? [];
     groups.set(group, list);
     list.push({
@@ -1023,9 +1041,27 @@ async function buildTables(
         notes: tableNotes,
       };
       const time = part.time;
+      const startTimes = part.channels.flatMap((c) => {
+        const start = numberOf(objects[c.object].properties, 'wf_start_time');
+        return start === undefined ? [] : [{ channel: c, start }];
+      });
+      if (time.kind !== 'wave' && startTimes.length) unusedStartTimes = true;
       if (time.kind === 'wave') {
         info.start = time.offset;
         info.end = time.offset + (part.rows - 1) * time.increment;
+        // Waveform time t = wf_start_offset + i · wf_increment counts from
+        // wf_start_time, so that is when time 0 happened.
+        const set = startTimes.filter(
+          ({ start }) => localClock(start) !== undefined,
+        );
+        const clock = set.length ? localClock(set[0].start) : undefined;
+        if (clock) {
+          info.clock = clock;
+          if (set.some(({ start }) => start !== set[0].start))
+            tableNotes.push(
+              `The channels start at different times (wf_start_time); clock time follows “${set[0].channel.name}”.`,
+            );
+        }
       } else if (time.kind === 'index') {
         info.start = 0;
         info.end = part.rows - 1;
@@ -1035,6 +1071,9 @@ async function buildTables(
       } else if (time.kind === 'stamp') {
         const iso = isoTime(time.origin);
         info.start = 0;
+        // Time 0 is the first timestamp.
+        const clock = localClock(time.origin[0] - EPOCH_1904 + time.origin[1]);
+        if (clock) info.clock = clock;
         tableNotes.push(
           `Time is “${objects[time.object].parts![1]}” in seconds since its first sample${iso ? `, ${iso}` : ''}.`,
         );
@@ -1063,9 +1102,9 @@ async function buildTables(
     notes.push(
       `Skipped ${plural(unscaled.length, 'channel')} whose NI scaling cannot be applied: ${listNames(unscaled)}.`,
     );
-  if (startTimes)
+  if (unusedStartTimes)
     notes.push(
-      'Absolute start times (wf_start_time) are not applied; time runs from each waveform’s start offset.',
+      'Start times (wf_start_time) of channels without waveform timing are not applied.',
     );
 
   return tables;

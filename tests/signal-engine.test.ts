@@ -54,8 +54,8 @@ void test('CSV errors name the file, the row and the cause', async (t) => {
       /SN\.csv: The header row has only one column\. Separate columns with commas, semicolons or tabs\..*Time \[s\],Speed \[rpm\]/,
     ],
     [
-      'Time,Speed\n2024-01-02 10:00:00,1\n2024-01-02 10:00:01,2',
-      /SN\.csv: Row 2: time “2024-01-02 10:00:00” is a date or clock time\./,
+      'Time,Speed\n2024-01-02 10:00:01,1\n2024-01-02 10:00:00,2',
+      /SN\.csv: Row 3: time “2024-01-02 10:00:00” does not come after the previous row’s time/,
     ],
     ['t,a\n0,1\n0,2', /SN\.csv: Row 3: time 0 s does not come after/],
     ['t,a\n0,1\n1,x', /SN\.csv: Row 3, column “a”: “x” is not a number\./],

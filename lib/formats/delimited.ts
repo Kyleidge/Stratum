@@ -18,7 +18,10 @@ import {
   suggestLayout,
   timeScale,
 } from './delimited-layout';
-import type { DelimitedLayout } from './delimited-layout';
+import type { DelimitedColumn, DelimitedLayout } from './delimited-layout';
+import { ClockTextReader, localOffset } from '../clock-time';
+import type { DateOrder } from '../clock-time';
+import type { TimeClock } from '../time-types';
 import { headerChannel } from './recording';
 import type { RecordingBlock, RecordingFile } from './recording';
 
@@ -78,6 +81,59 @@ function parseNumber(cell: string, decimalComma: boolean) {
   );
 }
 
+/** Day/month order for ambiguous dates: month first only in US English. */
+function preferredOrder(): DateOrder {
+  const language =
+    typeof navigator === 'undefined' ? '' : (navigator.language ?? '');
+  return /^en-US\b/i.test(language) ? 'mdy' : 'dmy';
+}
+
+/**
+ * Reads one time column's cells as seconds: elapsed numbers in its unit, or
+ * seconds since its first cell for clock time, whose clock it records.
+ */
+function timeReader(
+  column: Extract<DelimitedColumn, { role: 'time' }>,
+  number: (cell: string) => number,
+) {
+  const clock = column.clock;
+  if (clock?.kind === 'text') {
+    const reader = new ClockTextReader(clock.order, clock.zone);
+    return {
+      read: (cell: string) => reader.read(cell),
+      clock: () => reader.clock,
+    };
+  }
+  const scale = timeScale(column.unit)!;
+  if (clock?.kind !== 'unix')
+    return {
+      read: (cell: string) => number(cell) * scale,
+      clock: () => undefined,
+    };
+  let first = NaN;
+  let found: TimeClock | undefined;
+  return {
+    read(cell: string) {
+      const value = number(cell);
+      if (!Number.isFinite(value)) return NaN;
+      if (!found) {
+        first = value;
+        const start = value * scale;
+        found = {
+          start,
+          offset:
+            clock.zone === 'local'
+              ? localOffset(Math.floor(start))
+              : clock.zone,
+        };
+      }
+      // Differences of nearby large numbers are exact.
+      return (value - first) * scale;
+    },
+    clock: () => found,
+  };
+}
+
 export async function openDelimited(
   file: Blob & { name?: string },
   layout?: DelimitedLayout,
@@ -100,7 +156,7 @@ export async function openDelimited(
     .feed(text.replace(/^\uFEFF/, ''))
     .slice(1, PREVIEW_ROWS + 1)
     .filter((cells) => cells.length === raw.length);
-  const suggested = suggestLayout(headers, rows, number);
+  const suggested = suggestLayout(headers, rows, number, preferredOrder());
   const columns = layout ?? suggested;
   // A chosen layout must be usable; a suggested one is shown to be fixed and
   // only stops reading (batch runs).
@@ -129,7 +185,12 @@ export async function openDelimited(
     const parser = new CsvParser(delimiter);
     const decoder = new TextDecoder(label, { fatal: label === 'utf-8' });
     const width = raw.length;
-    const scale = timeScale((columns[table.time] as { unit: string }).unit)!;
+    const timeColumn = columns[table.time] as Extract<
+      DelimitedColumn,
+      { role: 'time' }
+    >;
+    const time = timeReader(timeColumn, number);
+    const scale = timeColumn.clock ? 1 : timeScale(timeColumn.unit)!;
     const timeName = tables.length > 1 ? raw[table.time] : undefined;
     let header = true;
     let line = 1;
@@ -153,10 +214,17 @@ export async function openDelimited(
           table.signals.every((c) => !cells[c].trim())
         )
           continue;
-        const t = number(timeCell) * scale;
+        const t = time.read(timeCell);
         if (!Number.isFinite(t) || t <= end)
           throw new Error(
-            timeProblem(line, timeCell, end / scale, timeName, scale),
+            timeProblem(
+              line,
+              timeCell,
+              end / scale,
+              timeName,
+              scale,
+              timeColumn.clock?.kind,
+            ),
           );
         end = t;
         times.push(t);
@@ -169,10 +237,12 @@ export async function openDelimited(
       }
     };
     const block = (progress: number): RecordingBlock => {
+      const clock = time.clock();
       const result = {
         time: Float64Array.from(times),
         values: values.map((column) => Float64Array.from(column)),
         progress,
+        ...(clock ? { clock } : {}),
       };
       times = [];
       values = table.signals.map(() => []);

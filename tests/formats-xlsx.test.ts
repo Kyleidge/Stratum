@@ -5,6 +5,9 @@ import { XmlScanner, openXlsx, unescapeXml } from '../lib/formats/xlsx';
 import { BLOCK_ROWS } from '../lib/formats/recording';
 import type { RecordingFile } from '../lib/formats/recording';
 
+// Dates are wall-clock times read in this device's zone: pin one.
+process.env.TZ = 'Europe/Berlin';
+
 const fixture = (name: string) =>
   new Blob([
     readFileSync(new URL(`./fixtures/formats/${name}`, import.meta.url)),
@@ -246,8 +249,14 @@ void test('XLSX fixture: sheets, headers, units, gaps, text and error cells', as
 
   assert.deepEqual(labels(file, 1), ['Pressure [bar]']);
   assert.deepEqual(file.tables[1].notes, [
-    'Column A holds dates or times; time is in seconds since the first row.',
+    'Column A holds dates or times; time is in seconds since the first row, and its clock time is kept.',
   ]);
+  // 2024-03-01 12:00:00 on the wall clock, CET here; seconds have no clock.
+  assert.equal(file.tables[0].clock, undefined);
+  assert.deepEqual(file.tables[1].clock, {
+    start: 1_709_294_400 - 3600,
+    offset: 60,
+  });
   const dated = await columns(file, 1);
   close(
     dated.time,
@@ -268,9 +277,15 @@ void test('XLSX fixture with shared strings, times of day and sparse cells', asy
   );
   assert.deepEqual(labels(file, 0), ['Flow [l/min]', 'Flow (2) [l/min]']);
   assert.deepEqual(file.tables[0].notes, [
-    'Column A holds dates or times; time is in seconds since the first row.',
+    'Column A holds dates or times; time is in seconds since the first row, and its clock time is kept.',
     'Skipped column D (“Note”): it holds text, not numbers.',
   ]);
+  // Times of day without dates: 08:00:00, undated.
+  assert.deepEqual(file.tables[0].clock, {
+    start: 8 * 3600,
+    offset: 0,
+    undated: true,
+  });
   const { time, values } = await columns(file, 0);
   close(
     time,
@@ -435,6 +450,23 @@ void test('XLSX date styles: built-in and custom formats in column A', async () 
     [0, 21600],
     [0, 21600],
   ]);
+  // Serial 45000.5 is 2023-03-15 12:00 on the wall clock (CET here).
+  const clock = { start: 1_678_881_600 - 3600, offset: 60 };
+  assert.deepEqual(
+    file.tables.map((table) => table.clock),
+    [undefined, undefined, clock, clock],
+  );
+  // The 1904 date system counts days from 1904-01-01 (serial 1462 in 1900).
+  const parts = workbook(
+    { Stamp: sheet(3).replace('45000.5', String(45000.5 - 1462)) },
+    { 'xl/styles.xml': styles },
+  );
+  parts['xl/workbook.xml'] = parts['xl/workbook.xml'].replace(
+    '<sheets>',
+    '<workbookPr date1904="1"/><sheets>',
+  );
+  const dated1904 = await openXlsx(await zip(parts));
+  assert.deepEqual(dated1904.tables[0].clock, clock);
 });
 
 void test('XLSX errors are plain-language', async () => {

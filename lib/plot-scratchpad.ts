@@ -139,6 +139,8 @@ export type PlotSheet = {
   layout: 'overlay' | 'stacked' | 'axes';
   grid: boolean;
   zeroTime?: boolean;
+  /** Label time with clock times where the traces' time tells them. */
+  clockTime?: boolean;
   window?: PlotRange;
   axes?: PlotAxes;
   annotations?: PlotAnnotation[];
@@ -256,6 +258,7 @@ export function readPlotSheets(raw: string | null): PlotSheet[] {
               : ('overlay' as const),
           grid: sheet.grid !== false,
           zeroTime: sheet.zeroTime === true,
+          ...(sheet.clockTime === true ? { clockTime: true } : {}),
           measuring: sheet.measuring === true,
           ...(Array.isArray(sheet.cursors) &&
           sheet.cursors.length === 2 &&

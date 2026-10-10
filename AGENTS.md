@@ -19,6 +19,14 @@ There are no server API routes or cloud signal uploads.
   `components/time-workbench.tsx` exposes Compare & align. Time outputs use the
   workspace scope (`sourceId: ''`); derive provenance from every parent, never
   invent a source recording. Ordinary unary outputs inherit their time reference.
+  Absolute time is a `TimeClock` (Unix seconds of axis time 0, display offset,
+  `undated`) on a recording (`Source.clock`, set by readers through
+  `RecordingTable.clock`/`RecordingBlock.clock`) and its `absolute` reference;
+  sample times always stay relative seconds, never Unix seconds. Zero time moves
+  the clock, Time shift keeps it; `clock` align anchors share one clock timeline
+  (`alignedReference`). `lib/clock-time.ts` parses date/time text, formats and
+  ticks clock times; CSV time columns take a `ClockFormat` (text or Unix), set
+  in the import dialog by `components/time-format-field.tsx`.
   Workspace segmentation uses its current time axis. See `docs/time-bases.md`.
   Keep time settings in workflow history for atomic Edit/replay and archive
   validation. Samples CSV identifies the time reference and all source recordings.

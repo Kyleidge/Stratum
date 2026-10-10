@@ -6,11 +6,27 @@
  * whatever it is given.
  */
 import { describeUnit, unitConversion } from '../units';
+import { detectDateOrder, isClockText } from '../clock-time';
+import type { DateOrder } from '../clock-time';
 import type { RecordingChannel } from './recording';
 
+/**
+ * A time column that tells clock time. `zone` reads text without a stated
+ * zone and sets the zone times show in: minutes east of UTC, or 'local' for
+ * this device's zone.
+ */
+export type ClockFormat =
+  /** Dates and/or times of day as text; `order` settles 10/11/2026. */
+  | { kind: 'text'; order: DateOrder; zone: number | 'local' }
+  /** Numbers in the column's unit of time since 1970-01-01 UTC. */
+  | { kind: 'unix'; zone: number | 'local' };
+
 export type DelimitedColumn =
-  /** A time axis; `unit` is a unit of time ('' means seconds). */
-  | { role: 'time'; unit: string }
+  /**
+   * A time axis; `unit` is a unit of time ('' means seconds). Without
+   * `clock` it holds elapsed time from an unknown start.
+   */
+  | { role: 'time'; unit: string; clock?: ClockFormat }
   /** A signal sampled on the time axis in column `time`. */
   | { role: 'signal'; time: number }
   | { role: 'skip' };
@@ -66,9 +82,13 @@ export function layoutProblem(
   for (const [index, column] of layout.entries()) {
     const name = `“${headers[index].name}”`;
     if (column?.role === 'time') {
+      const clock = column.clock;
+      if (clock !== undefined && clockFormatProblem(clock))
+        return `Time column ${name}: ${clockFormatProblem(clock)}`;
       if (
-        typeof column.unit !== 'string' ||
-        timeScale(column.unit) === undefined
+        clock?.kind !== 'text' &&
+        (typeof column.unit !== 'string' ||
+          timeScale(column.unit) === undefined)
       )
         return `Time column ${name} is in ${column.unit}, which is not a unit of time. Choose s, ms, min or another unit of time.`;
     } else if (column?.role === 'signal') {
@@ -85,21 +105,87 @@ export function layoutProblem(
   return undefined;
 }
 
+function clockFormatProblem(clock: ClockFormat): string | undefined {
+  if (!clock || typeof clock !== 'object') return 'unknown time format.';
+  if (clock.kind !== 'text' && clock.kind !== 'unix')
+    return 'unknown time format.';
+  if (clock.kind === 'text' && clock.order !== 'dmy' && clock.order !== 'mdy')
+    return 'choose day/month or month/day.';
+  if (
+    clock.zone !== 'local' &&
+    (!Number.isInteger(clock.zone) || Math.abs(clock.zone) > 18 * 60)
+  )
+    return 'choose a time zone.';
+  return undefined;
+}
+
 /** Names that read as a time axis: Time, t2, ECU time, Time_B, Zeit … */
 const TIME_NAME =
-  /^(?:[a-z0-9]{1,10}[\s_.-]+)?(?:time|zeit|timestamp|t)(?:[\s_.-]+[a-z0-9]{1,10}|\d+)?$/i;
+  /^(?:[a-z0-9]{1,10}[\s_.-]+)?(?:time|zeit|timestamp|datetime|date|datum|t)(?:[\s_.-]+[a-z0-9]{1,10}|\d+)?$/i;
+/** Names of Unix-time columns: Unix time, epoch_ms, POSIX … */
+const UNIX_NAME = /\b(?:unix|epoch|posix)|(?:^|_)(?:unix|epoch|posix)/i;
+/** Unix seconds from 2000 to 2100: elapsed times never run that long. */
+const UNIX_RANGE = [946684800, 4102444800];
+
+/**
+ * How a time column's preview cells tell time: elapsed numbers, Unix time
+ * or clock text. `unit` is the column's unit, as for elapsed time.
+ */
+export function suggestClock(
+  name: string,
+  unit: string,
+  cells: string[],
+  numbers: (cell: string) => number,
+  fallback: DateOrder = 'dmy',
+): { unit: string; clock?: ClockFormat } | undefined {
+  const filled = cells.map((cell) => cell.trim()).filter(Boolean);
+  if (!filled.length) return undefined;
+  // “Time [UTC]” names the zone of text without one.
+  const zone = /^(?:UTC|GMT|Z)$/i.test(unit) ? 0 : 'local';
+  if (filled.every(isClockText))
+    return {
+      unit: '',
+      clock: {
+        kind: 'text',
+        order: detectDateOrder(filled, fallback).order,
+        zone,
+      },
+    };
+  if (!filled.every((cell) => Number.isFinite(numbers(cell)))) return undefined;
+  const first = numbers(filled[0]);
+  const inRange = (scale: number) =>
+    first * scale >= UNIX_RANGE[0] && first * scale <= UNIX_RANGE[1];
+  const stated = unit === '—' ? undefined : timeScale(unit);
+  if (stated !== undefined && unit !== '—')
+    return UNIX_NAME.test(name) || inRange(stated)
+      ? { unit, clock: { kind: 'unix', zone: 'local' } }
+      : { unit };
+  for (const [scaleUnit, scale] of [
+    ['s', 1],
+    ['ms', 1e-3],
+    ['µs', 1e-6],
+    ['ns', 1e-9],
+  ] as const)
+    if (inRange(scale))
+      return { unit: scaleUnit, clock: { kind: 'unix', zone: 'local' } };
+  return UNIX_NAME.test(name)
+    ? { unit: 's', clock: { kind: 'unix', zone: 'local' } }
+    : { unit: 's' };
+}
 
 /**
  * The layout to start from. The first column is always a time axis, as
  * before. A later column is another time axis only when its name reads as
  * time, its unit (if any) is a unit of time and its preview values strictly
  * increase; signals use the nearest time axis to their left. Columns with
- * text in the preview are skipped.
+ * text in the preview are skipped, except dates and times of day, which make
+ * clock-time axes; so do numbers that can only be Unix time.
  */
 export function suggestLayout(
   headers: RecordingChannel[],
   rows: string[][],
   numbers: (cell: string) => number,
+  order: DateOrder = 'dmy',
 ): DelimitedLayout {
   const numeric = headers.map((_, c) =>
     rows.every((row) => {
@@ -117,18 +203,43 @@ export function suggestLayout(
       values.every((value, i) => !i || value > values[i - 1])
     );
   };
+  const cells = (c: number) => rows.map((row) => row[c] ?? '');
+  const clockText = (c: number) =>
+    !numeric[c] &&
+    cells(c).some((cell) => cell.trim()) &&
+    cells(c).every((cell) => !cell.trim() || isClockText(cell));
+  const timeColumn = (c: number): DelimitedColumn => {
+    const header = headers[c];
+    const suggestion = suggestClock(
+      header.name,
+      header.unit,
+      cells(c),
+      numbers,
+      order,
+    );
+    return {
+      role: 'time',
+      unit:
+        suggestion?.clock?.kind === 'text'
+          ? ''
+          : header.unit === '—'
+            ? (suggestion?.unit ?? 's')
+            : header.unit,
+      ...(suggestion?.clock ? { clock: suggestion.clock } : {}),
+    };
+  };
   let time = 0;
   return headers.map((header, c): DelimitedColumn => {
-    if (c === 0)
-      return { role: 'time', unit: header.unit === '—' ? 's' : header.unit };
+    if (c === 0) return timeColumn(0);
     if (
-      numeric[c] &&
       TIME_NAME.test(header.name) &&
-      (header.unit === '—' || timeScale(header.unit) !== undefined) &&
-      increasing(c)
+      (clockText(c) ||
+        (numeric[c] &&
+          (header.unit === '—' || timeScale(header.unit) !== undefined) &&
+          increasing(c)))
     ) {
       time = c;
-      return { role: 'time', unit: header.unit === '—' ? 's' : header.unit };
+      return timeColumn(c);
     }
     return numeric[c] ? { role: 'signal', time } : { role: 'skip' };
   });

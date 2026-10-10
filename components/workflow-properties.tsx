@@ -1,5 +1,7 @@
 'use client';
 
+import { referenceClock } from '@/lib/time-types';
+import { describeClock, formatOffset } from '@/lib/clock-time';
 import { useEffect, useState } from 'react';
 import {
   ArrowUpLeft,
@@ -280,6 +282,7 @@ function SelectionDetails({
   const signalId = node?.id ?? value?.inputId;
   const range = signalId ? graph.ranges.get(signalId) : undefined;
   const time = signalId ? graph.timeReferences.get(signalId) : undefined;
+  const clock = referenceClock(time);
   // A step's segments are shown under Within, not as inputs.
   const inputs =
     selection.kind === 'output'
@@ -672,6 +675,17 @@ function SelectionDetails({
                 <dt>Reference</dt>
                 <dd title={time.name}>{time.name}</dd>
               </div>
+              {clock && (
+                <div>
+                  <dt>Clock</dt>
+                  <dd
+                    className="workflow-property-number"
+                    title={`Clock time at ${formatValue(range[0], 3)} s; ${clock.undated ? 'the file gives times of day only' : formatOffset(clock.offset)}`}
+                  >
+                    {describeClock(clock, range[0])}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Start</dt>
                 <dd className="workflow-property-number">

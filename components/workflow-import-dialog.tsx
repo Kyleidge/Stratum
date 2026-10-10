@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import UnitField, { unitState } from '@/components/unit-field';
+import TimeFormatField from '@/components/time-format-field';
+import { detectDateOrder, isClockText } from '@/lib/clock-time';
 import { formatCount } from '@/lib/format-count';
 import {
   layoutProblem,
@@ -39,6 +41,9 @@ const PRESELECT_LIMIT = 16;
 const SHOWN = 100;
 const TIME_UNITS = UNIT_GROUPS.find((group) => group.family === 'Time')
   ?.units ?? ['s'];
+/** Preview numbers, with a decimal comma where it cannot separate columns. */
+const previewNumber = (cell: string) =>
+  Number(cell.trim().replace(/^([+-]?\d*),(\d+)$/, '$1.$2'));
 
 /** What the import dialog decided; the engine validates it again. */
 export type ImportSetup = {
@@ -339,7 +344,10 @@ export default function WorkflowImportDialog({
   const columnProblem = (c: number) => {
     const column = layout[c];
     if (nameIssues.has(c)) return true;
-    if (column.role === 'time') return timeScale(column.unit) === undefined;
+    if (column.role === 'time')
+      return (
+        column.clock?.kind !== 'text' && timeScale(column.unit) === undefined
+      );
     if (column.role === 'signal')
       return (
         layout[column.time]?.role !== 'time' || unfixed(columnUnits[c], custom)
@@ -352,6 +360,19 @@ export default function WorkflowImportDialog({
   const shown = attentionOnly
     ? columnMatches.filter((c) => attention.includes(c))
     : columnMatches;
+  /** Columns whose preview cells are all dates or times of day. */
+  const clockColumns = new Set(
+    columns
+      ? columns.headers.flatMap((_, c) => {
+          const cells = columns.rows.map((row) => row[c]?.trim() ?? '');
+          return !columns.numeric[c] &&
+            cells.some(Boolean) &&
+            cells.every((cell) => !cell || isClockText(cell))
+            ? [c]
+            : [];
+        })
+      : [],
+  );
   const chooseRole = (c: number, role: DelimitedColumn['role']) =>
     setLayout((old) =>
       old[c].role === role
@@ -359,20 +380,32 @@ export default function WorkflowImportDialog({
         : setRole(
             old,
             c,
-            role === 'time'
+            role === 'time' && clockColumns.has(c)
               ? {
                   role: 'time',
-                  unit:
-                    timeScale(columnUnits[c]) !== undefined &&
-                    columnUnits[c] !== UNSTATED_UNIT &&
-                    columnUnits[c]
-                      ? columnUnits[c]
-                      : 's',
+                  unit: '',
+                  clock: {
+                    kind: 'text',
+                    order: detectDateOrder(
+                      columns!.rows.map((row) => row[c] ?? ''),
+                    ).order,
+                    zone: 'local',
+                  },
                 }
-              : role === 'skip'
-                ? { role: 'skip' }
-                : // setRole moves it onto the nearest time axis.
-                  { role: 'signal', time: -1 },
+              : role === 'time'
+                ? {
+                    role: 'time',
+                    unit:
+                      timeScale(columnUnits[c]) !== undefined &&
+                      columnUnits[c] !== UNSTATED_UNIT &&
+                      columnUnits[c]
+                        ? columnUnits[c]
+                        : 's',
+                  }
+                : role === 'skip'
+                  ? { role: 'skip' }
+                  : // setRole moves it onto the nearest time axis.
+                    { role: 'signal', time: -1 },
           ),
     );
   const fixedSignals = fixRows.reduce(
@@ -421,7 +454,10 @@ export default function WorkflowImportDialog({
             <section className="import-recordings" aria-label="Recordings">
               {setup.map((table) => {
                 const time = layoutTables(layout)[table.index]?.time ?? 0;
-                const unit = (layout[time] as { unit?: string }).unit ?? 's';
+                const axis = layout[time] as Extract<
+                  DelimitedColumn,
+                  { role: 'time' }
+                >;
                 const names = table.channels.map((channel) => channel.name);
                 const broken = table.channels.some((channel) =>
                   unfixed(channel.unit, custom),
@@ -436,8 +472,12 @@ export default function WorkflowImportDialog({
                     <div>
                       <strong>{table.name || fileName}</strong>
                       <small>
-                        Clock in {unit} ·{' '}
-                        {formatCount(table.channels.length, 'signal')}
+                        {axis.clock?.kind === 'text'
+                          ? 'Dates and times'
+                          : axis.clock?.kind === 'unix'
+                            ? `Unix time in ${axis.unit}`
+                            : `Elapsed time in ${axis.unit || 's'}`}{' '}
+                        · {formatCount(table.channels.length, 'signal')}
                       </small>
                       <small className="import-recording-signals">
                         {names.slice(0, 4).join(', ')}
@@ -573,7 +613,9 @@ export default function WorkflowImportDialog({
                           <strong title={header.name}>{header.name}</strong>
                         )}
                         <small>
-                          {columns.numeric[c] ? values.join('  ') : 'Text'}
+                          {columns.numeric[c] || clockColumns.has(c)
+                            ? values.join('  ')
+                            : 'Text'}
                         </small>
                         {nameIssues.has(c) ? (
                           <small className="import-name-problem">
@@ -613,7 +655,8 @@ export default function WorkflowImportDialog({
                             disabled={
                               role !== 'skip' &&
                               !columns.numeric[c] &&
-                              column.role !== role
+                              column.role !== role &&
+                              !(role === 'time' && clockColumns.has(c))
                             }
                             onClick={() => chooseRole(c, role)}
                           >
@@ -670,54 +713,20 @@ export default function WorkflowImportDialog({
                       </div>
                       <div className="import-row-unit">
                         {column.role === 'time' ? (
-                          <div
-                            className="unit-field"
-                            data-state={
-                              timeScale(column.unit) === undefined
-                                ? 'unknown'
-                                : 'known'
+                          <TimeFormatField
+                            name={header.name}
+                            column={column}
+                            cells={columns.rows.map((row) => row[c] ?? '')}
+                            units={TIME_UNITS}
+                            number={previewNumber}
+                            onChange={(next) =>
+                              setLayout((old) =>
+                                old.map((item, index) =>
+                                  index === c ? next : item,
+                                ),
+                              )
                             }
-                          >
-                            <select
-                              value={column.unit}
-                              aria-label={`Time unit of ${header.name}`}
-                              aria-invalid={
-                                timeScale(column.unit) === undefined
-                              }
-                              onChange={(event) =>
-                                setLayout((old) =>
-                                  old.map((item, index) =>
-                                    index === c
-                                      ? {
-                                          role: 'time',
-                                          unit: event.target.value,
-                                        }
-                                      : item,
-                                  ),
-                                )
-                              }
-                            >
-                              {!TIME_UNITS.includes(column.unit) && (
-                                <option value={column.unit}>
-                                  {column.unit}
-                                </option>
-                              )}
-                              {TIME_UNITS.map((unit) => (
-                                <option key={unit} value={unit}>
-                                  {unit}
-                                </option>
-                              ))}
-                            </select>
-                            <small>
-                              {timeScale(column.unit) === undefined ? (
-                                <span className="unit-field-problem">
-                                  Not a unit of time
-                                </span>
-                              ) : column.unit === 's' ? null : (
-                                'Clock kept in seconds'
-                              )}
-                            </small>
-                          </div>
+                          />
                         ) : column.role === 'signal' ? (
                           <UnitField
                             value={columnUnits[c]}
