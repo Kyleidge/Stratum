@@ -32,7 +32,7 @@ export default function NameField({
         ? 'Leave blank for an automatic name. You can rename it later.'
         : hasNameToken(value)
           ? '{input} is each output’s input, {segment} its segment and {n} its number.'
-          : `Each output is named “${kind === 'value' ? `${name} · input` : `input · ${name}`}”, and the step “${name}”. Use {input}, {segment} or {n} to arrange it.`;
+          : `Names the step; its outputs follow it (“${name} · segment” or “${name} · input”), also when you rename it. Use {input}, {segment} or {n} to name each output instead.`;
   return (
     <div className="name-field">
       <label className="parameter-control-field">
