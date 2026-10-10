@@ -172,6 +172,8 @@ import type {
 import { randomId } from './random-id';
 import {
   chosenNames,
+  earlierChosenName,
+  followsStepName,
   outputInputLabel,
   outputSegmentLabel,
 } from './output-names';
@@ -546,13 +548,25 @@ export class SignalEngine {
           source.id === id ? { ...source, name } : source,
         ),
       });
-    if (this.project.workflowSteps?.some((step) => step.id === id))
+    const step = this.project.workflowSteps?.find((step) => step.id === id);
+    if (step) {
+      // Outputs named after the step when it was created follow it now.
+      let labels = this.project.labels;
+      if (labels && step.name && followsStepName({ ...step, name })) {
+        const index = new WorkflowIndex(this.project);
+        labels = { ...labels };
+        for (const output of step.outputIds)
+          if (labels[output] === earlierChosenName(index, output, step.name))
+            delete labels[output];
+      }
       return this.save({
         ...this.project,
-        workflowSteps: this.project.workflowSteps.map((step) =>
-          step.id === id ? { ...step, name } : step,
+        labels,
+        workflowSteps: this.project.workflowSteps!.map((item) =>
+          item.id === id ? { ...item, name } : item,
         ),
       });
+    }
     if (
       !this.project.nodes.some((node) => node.id === id && !node.internal) &&
       !this.project.values?.some((value) => value.id === id) &&

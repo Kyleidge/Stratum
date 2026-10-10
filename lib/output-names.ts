@@ -32,11 +32,70 @@ export function outputSegmentLabel(index: WorkflowIndex, id: string): string {
 }
 
 /**
+ * Whether a step's outputs are named after it: a named Derive or Value step
+ * with several outputs. Renaming the step renames them, except outputs that
+ * were given names of their own.
+ */
+export const followsStepName = (step: WorkflowStep) =>
+  !!step.name &&
+  step.outputIds.length > 1 &&
+  (step.kind === 'derive' || step.kind === 'value') &&
+  !step.segmentSetId;
+
+/**
+ * The names a named step gives its outputs: its name, then whatever tells
+ * them apart: their segment when they are in several, their input when one
+ * segment holds several ("Phasing time · Segment 01"). Numbers settle any
+ * outputs still alike.
+ */
+export function followedLabels(
+  index: WorkflowIndex,
+  step: WorkflowStep,
+): Map<string, string> {
+  const parts = step.outputIds.map((id) => ({
+    segment: outputSegmentLabel(index, id),
+    input: outputInputLabel(index, id),
+  }));
+  const bySegment = new Map<string, string>();
+  let inputs = false;
+  for (const { segment, input } of parts) {
+    const seen = bySegment.get(segment);
+    if (seen !== undefined && seen !== input) inputs = true;
+    bySegment.set(segment, input);
+  }
+  const segments = bySegment.size > 1;
+  const name = step.name ?? '';
+  const labels = parts.map(({ segment, input }) =>
+    [
+      name,
+      segments ? segment : '',
+      // An input within the segment already names it.
+      inputs
+        ? segments && input.startsWith(`${segment} · `)
+          ? input.slice(segment.length + 3)
+          : input
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  );
+  const alike = new Set(labels).size < labels.length;
+  return new Map(
+    step.outputIds.map((id, position) => [
+      id,
+      (alike ? `${labels[position]} ${position + 1}` : labels[position])
+        .slice(0, 160)
+        .trim(),
+    ]),
+  );
+}
+
+/**
  * Names chosen when a step is created. A Segment step takes the name itself
  * (its segments stay numbered). One output takes the name exactly. Several
- * outputs fill `{input}`, `{segment}` and `{n}`; without them the name
- * replaces the operation's title in each automatic name, and also names the
- * step.
+ * outputs fill `{input}`, `{segment}` and `{n}` into names of their own;
+ * without them the name names the step, and its outputs follow it
+ * (`followedLabels`).
  */
 export function chosenNames(
   index: WorkflowIndex,
@@ -49,25 +108,39 @@ export function chosenNames(
     return { labels: {}, stepName: name };
   if (step.outputIds.length === 1)
     return { labels: { [step.outputIds[0]]: name } };
-  const tokens = hasNameToken(name);
+  if (!hasNameToken(name)) return { labels: {}, stepName: name };
   const labels: Record<string, string> = {};
   step.outputIds.forEach((id, position) => {
     const input = outputInputLabel(index, id);
     const within = outputSegmentLabel(index, id);
-    // An input already within the segment names it.
-    const segment = input.startsWith(within) ? '' : within;
-    const label = tokens
-      ? name
-          .replaceAll('{n}', String(position + 1))
-          .replaceAll('{input}', () => input)
-          .replaceAll('{segment}', () => within)
-      : // Automatic names read "Speed · Moving average" for signals and
-        // "Mean · Speed" for values; the chosen name replaces the title.
-        (index.values.has(id) ? [name, segment, input] : [segment, input, name])
-          .filter(Boolean)
-          .join(' · ');
-    const trimmed = label.slice(0, 160).trim();
-    if (trimmed) labels[id] = trimmed;
+    const label = name
+      .replaceAll('{n}', String(position + 1))
+      .replaceAll('{input}', () => input)
+      .replaceAll('{segment}', () => within)
+      .slice(0, 160)
+      .trim();
+    if (label) labels[id] = label;
   });
-  return { labels, ...(tokens ? {} : { stepName: name }) };
+  return { labels };
+}
+
+/**
+ * The name `chosenNames` gave an output of a step named `name` before
+ * outputs followed their step, so a rename can let those follow too.
+ */
+export function earlierChosenName(
+  index: WorkflowIndex,
+  id: string,
+  name: string,
+): string {
+  const input = outputInputLabel(index, id);
+  const within = outputSegmentLabel(index, id);
+  const segment = input.startsWith(within) ? '' : within;
+  return (
+    index.values.has(id) ? [name, segment, input] : [segment, input, name]
+  )
+    .filter(Boolean)
+    .join(' · ')
+    .slice(0, 160)
+    .trim();
 }

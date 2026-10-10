@@ -101,7 +101,11 @@ There are no server API routes or cloud signal uploads.
   sticky `.operation-footer` with a one-line summary. Create stays disabled while
   the preview reports an error. New steps take an optional name
   (`components/name-field.tsx`; `chosenNames` in `lib/output-names.ts`), sent
-  as `create-named` so it commits with the step; Edit hides it. Derive and Value remember the last operation in
+  as `create-named` so it commits with the step; Edit hides it. A named
+  Derive/Value step with several outputs names them live (`followedLabels`:
+  name, then segment and/or input where they differ), so renaming the step
+  renames them; explicit `labels` win, and a rename drops labels the earlier
+  snapshot naming wrote (`earlierChosenName`). Derive and Value remember the last operation in
   localStorage; trigger thresholds default to the input's range midpoint with
   offset 0. New segments are numbered per step ("Segment 01"; nested ones after
   their parent, "Segment 01.02"); saved names never change. Compare & align

@@ -1,6 +1,7 @@
 import { FUNCTIONS } from './signal-functions';
 import { bindingValueIds } from './value-bindings';
 import { calculatedInput } from './value-math';
+import { followedLabels, followsStepName } from './output-names';
 import { TIME_OPERATIONS } from './time-types';
 import { valueTitle, type ValueOperation } from './workflow-types';
 import type { Project, SignalNode } from './signal-types';
@@ -313,6 +314,8 @@ export class WorkflowIndex {
   readonly branchNames = new Map<string, string>();
   /** File segments by ID, with their sets. */
   readonly segments: ReadonlyMap<string, SegmentEntry>;
+  /** Output names of steps they follow, by step, as first needed. */
+  private readonly followed = new Map<string, Map<string, string>>();
   constructor(readonly project: Project) {
     this.nodes = new Map(project.nodes.map((node) => [node.id, node]));
     this.segments = segmentEntries(project);
@@ -373,6 +376,16 @@ export class WorkflowIndex {
     if (this.project.labels?.[id]) return this.project.labels[id];
     const segment = this.segments.get(id)?.segment;
     if (segment) return `${segment.name} · ${segmentInterval(segment)}`;
+    const step = this.owner.get(id);
+    if (step && followsStepName(step)) {
+      let names = this.followed.get(step.id);
+      if (!names) {
+        names = followedLabels(this, step);
+        this.followed.set(step.id, names);
+      }
+      const name = names.get(id);
+      if (name) return name;
+    }
     const node = this.nodes.get(id);
     if (!node) {
       const value = this.values.get(id);

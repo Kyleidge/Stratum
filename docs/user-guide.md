@@ -85,6 +85,9 @@ downstream mappings, the edit is rejected and the existing work stays intact.
 **Remove recording** removes a recording and its analysis from the workspace.
 The header's **Undo** and **Redo** retain the last 20 changes across restarts.
 Recordings, operations and individual output display names can be renamed.
+A named step with several outputs names them after itself, adding what tells
+them apart (“Phasing time · Segment 01”), and renaming the step renames them;
+an output renamed on its own keeps its name.
 Original samples are never edited.
 
 ## Calculate values

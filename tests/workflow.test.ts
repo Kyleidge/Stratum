@@ -14,6 +14,7 @@ import {
   WorkflowIndex,
 } from '../lib/workflow-history';
 import { workflowRows } from '../lib/workflow-tree';
+import { earlierChosenName } from '../lib/output-names';
 import type {
   EngineRequest,
   EngineResponse,
@@ -1109,8 +1110,8 @@ void test('a name chosen at creation names the outputs in the same Undo entry', 
     assert.deepEqual(engine.project.labels ?? {}, {});
     await engine.travel('redo');
 
-    // Several outputs: the name replaces each automatic title and names
-    // the step.
+    // Several outputs: the name names the step, and its outputs follow it
+    // with whatever tells them apart.
     await engine.createNamed(
       {
         type: 'derive-many',
@@ -1122,8 +1123,8 @@ void test('a name chosen at creation names the outputs in the same Undo entry', 
     );
     const batch = newest();
     assert.deepEqual(batch.outputIds.map(label), [
-      `${label(torque)} · Shifted`,
-      `${label(speed)} · Shifted`,
+      `Shifted · ${label(torque)}`,
+      `Shifted · ${label(speed)}`,
     ]);
     assert.equal(batch.name, 'Shifted');
     await engine.createNamed(
@@ -1185,10 +1186,62 @@ void test('a name chosen at creation names the outputs in the same Undo entry', 
       'Area',
     );
     const index = new WorkflowIndex(engine.project);
+    const area = newest();
     assert.deepEqual(
-      newest().outputIds.map(label),
+      area.outputIds.map(label),
+      phases.outputIds.map((id) => `Area · ${index.segmentLabel(id)}`),
+    );
+    await engine.createNamed(
+      {
+        type: 'calculate-values',
+        inputIds: [torque],
+        operation: 'duration',
+        within: { setId: phases.segmentSetId! },
+      },
+      'Phasing time',
+    );
+    const durations = newest();
+    assert.deepEqual(
+      durations.outputIds.map(label),
+      phases.outputIds.map((id) => `Phasing time · ${index.segmentLabel(id)}`),
+    );
+
+    // Renaming the step renames its outputs, except one named on its own.
+    await engine.rename(area.outputIds[1], 'Second area');
+    await engine.rename(area.id, 'Charge');
+    assert.deepEqual(area.outputIds.map(label), [
+      `Charge · ${index.segmentLabel(phases.outputIds[0])}`,
+      'Second area',
+    ]);
+    // Values within the outputs follow them too.
+    await engine.createNamed(
+      {
+        type: 'calculate-values',
+        inputIds: [area.outputIds[0]],
+        operation: 'maximum',
+      },
+      '',
+    );
+    assert.equal(
+      label(newest().outputIds[0]),
+      `Maximum · Charge · ${index.segmentLabel(phases.outputIds[0])}`,
+    );
+    await engine.rename(area.id, 'Energy');
+    assert.equal(
+      label(newest().outputIds[0]),
+      `Maximum · Energy · ${index.segmentLabel(phases.outputIds[0])}`,
+    );
+
+    // Names the earlier snapshot naming wrote follow a rename too.
+    const current = new WorkflowIndex(engine.project);
+    for (const id of durations.outputIds)
+      await engine.rename(id, earlierChosenName(current, id, 'Phasing time'));
+    assert.match(label(durations.outputIds[0]), / · Torque$/);
+    await engine.rename(durations.id, 'Cam phasing time');
+    assert.deepEqual(
+      durations.outputIds.map(label),
       phases.outputIds.map(
-        (id) => `${index.segmentLabel(id)} · ${label(torque)} · Area`,
+        (id) => `Cam phasing time · ${index.segmentLabel(id)}`,
       ),
     );
 
