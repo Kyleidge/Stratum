@@ -234,10 +234,11 @@ export async function workflowUiSmoke() {
       modal
         .querySelector<HTMLElement>('[role="radio"][aria-label="Triggers"]')!
         .click();
-      await delay();
-      assert(
-        !modal.querySelector('.segment-preview strong'),
-        'Switching methods kept a stale preview.',
+      // The window plan must clear before the debounced trigger preview
+      // arrives; a slow runner may take more than one delay to render.
+      await until(
+        () => !modal.querySelector('.segment-preview strong'),
+        'Switching methods kept a stale preview',
       );
       for (const [label, value] of [
         ['Start threshold', '1000'],
