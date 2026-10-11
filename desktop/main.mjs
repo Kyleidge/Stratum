@@ -13,6 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { registerDesktopFiles } from './files.mjs';
+import { watchAutomationParent } from './automation.mjs';
 import { attachBackupSmoke } from './backup-smoke.mjs';
 import { applicationMenu } from './menu.mjs';
 import { createUpdater } from './updater.mjs';
@@ -37,6 +38,25 @@ const backupSmoke = process.argv.includes('--backup-smoke');
 const smoke = process.argv.includes('--smoke') || uiSmoke || backupSmoke;
 // The report mockup uses local sample data and never opens the workspace.
 const mockup = !smoke && process.argv.includes('--report-mockup');
+/**
+ * UI automation for the MCP server (`mcp/ui-session.ts`): a hidden window
+ * with the profile and answered file dialogs under `--automation-dir`, driven
+ * over the remote debugging port the server passes. `--automation-url` loads
+ * a development server instead of the bundled renderer, without the bridge.
+ */
+const automation = !smoke && !mockup && process.argv.includes('--automation');
+const option = (name) =>
+  process.argv
+    .find((arg) => arg.startsWith(`--${name}=`))
+    ?.slice(name.length + 3);
+const automationDir = automation
+  ? resolve(
+      option('automation-dir') ??
+        mkdtempSync(resolve(tmpdir(), 'stratum-automation-')),
+    )
+  : undefined;
+const automationUrl = automation ? option('automation-url') : undefined;
+if (automationDir) app.setPath('userData', resolve(automationDir, 'profile'));
 if (smoke || mockup)
   app.setPath(
     'userData',
@@ -44,12 +64,15 @@ if (smoke || mockup)
       resolve(tmpdir(), mockup ? 'stratum-mockup-' : 'stratum-native-smoke-'),
     ),
   );
+// Test profiles run beside the user's app; only test windows are hidden.
+const isolated = smoke || mockup || automation;
+const hidden = smoke || automation;
 // A running user app must not cause a smoke test to exit without testing.
-const singleInstance = smoke || mockup || app.requestSingleInstanceLock();
+const singleInstance = isolated || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 let window, desktopFiles;
 const updater = createUpdater({
-  enabled: !smoke && !mockup,
+  enabled: !isolated,
   beforeInstall: () => desktopFiles?.backupBeforeQuit(),
 });
 const downloads = [];
@@ -70,7 +93,7 @@ async function createWindow() {
     height: 980,
     minWidth: 820,
     minHeight: 720,
-    show: !smoke,
+    show: !hidden,
     backgroundColor: '#13191d',
     title: 'Stratum · Signal Workbench',
     icon: fileURLToPath(new URL('./icons/icon.png', import.meta.url)),
@@ -79,15 +102,24 @@ async function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: !smoke,
-      preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),
+      backgroundThrottling: !hidden,
+      // Automation windows render offscreen: never shown, yet animating, so
+      // dialogs and menus open as they do for a user.
+      ...(automation ? { offscreen: true } : {}),
+      // A development server page is a browser page: it gets no bridge.
+      ...(automationUrl
+        ? {}
+        : {
+            preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),
+          }),
     },
   });
   desktopFiles.attachWindow(window);
   if (backupSmoke) attachBackupSmoke(window);
+  if (automation) watchAutomationParent(Number(option('automation-parent')));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
-  if (!smoke) {
+  if (!hidden) {
     let recovering = false;
     const recover = async (detail) => {
       if (recovering || window.isDestroyed()) return;
@@ -362,12 +394,18 @@ async function createWindow() {
     });
   }
   try {
+    if (automation) {
+      const url = new URL(automationUrl ?? 'stratus://app/index.html');
+      url.searchParams.set('automation', '1');
+      await window.loadURL(url.toString());
+      return;
+    }
     await window.loadURL(
       `stratus://app/index.html${uiSmoke ? '?ui-smoke=1' : backupSmoke ? '?backup-smoke=1' : smoke ? '?smoke=1' : mockup ? '?report-mockup=1' : process.argv.includes('--refresh-example') ? '?refresh-example=1' : ''}`,
     );
   } catch (error) {
     // did-fail-load owns recovery in normal mode; do not exit underneath its dialog.
-    if (smoke || window.isDestroyed()) throw error;
+    if (hidden || window.isDestroyed()) throw error;
   }
 }
 
@@ -381,9 +419,7 @@ if (singleInstance) {
   void app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(
-        smoke || mockup ? null : applicationMenu({ updater }),
-      );
+      Menu.setApplicationMenu(isolated ? null : applicationMenu({ updater }));
       // Smoke runs (temporary profile) answer file dialogs without showing them.
       desktopFiles = registerDesktopFiles({
         test: smoke
@@ -391,8 +427,16 @@ if (singleInstance) {
               dir: resolve('outputs'),
               saved: (name, automatic) => automatic || downloaded.add(name),
             }
-          : undefined,
+          : automationDir
+            ? { dir: resolve(automationDir, 'files') }
+            : undefined,
       });
+      if (automationDir)
+        session.defaultSession.on('will-download', (_event, item) => {
+          const output = resolve(automationDir, 'files');
+          mkdirSync(output, { recursive: true });
+          item.setSavePath(resolve(output, item.getFilename()));
+        });
       if (uiSmoke)
         session.defaultSession.on('will-download', (_event, item) => {
           const name = item.getFilename();
@@ -452,7 +496,7 @@ if (singleInstance) {
       });
     })
     .catch((error) => {
-      if (!smoke)
+      if (!hidden)
         dialog.showErrorBox(
           'Stratum could not start',
           error instanceof Error ? error.message : String(error),

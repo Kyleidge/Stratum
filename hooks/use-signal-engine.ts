@@ -128,6 +128,55 @@ export function useSignalEngine(
       waiting.clear();
     };
   }, [request, initialization]);
+  // UI automation (`?automation`, set only by the MCP server's sessions):
+  // the workbench's own requests, with committed projects applied to it.
+  const snapshot = {
+    project,
+    revision,
+    ready,
+    busy,
+    error,
+    status,
+    canUndo,
+    canRedo,
+    undoLabel,
+    redoLabel,
+  };
+  const state = useRef(snapshot);
+  useEffect(() => {
+    state.current = snapshot;
+  });
+  useEffect(() => {
+    if (!new URL(location.href).searchParams.has('automation')) return;
+    const automation = {
+      get state() {
+        return state.current;
+      },
+      async request(message: EngineRequest) {
+        const response = await request(message);
+        if (response.type === 'project') {
+          setProject(response.project);
+          setRevision(response.revision);
+          setCanUndo(!!response.canUndo);
+          setCanRedo(!!response.canRedo);
+          setUndoLabel(response.undoLabel);
+          setRedoLabel(response.redoLabel);
+        }
+        return response;
+      },
+      cancel() {
+        worker.current?.postMessage({
+          type: 'cancel',
+          requestIds: [...pending.current.keys()],
+        });
+      },
+    };
+    Object.assign(globalThis, { stratumAutomation: automation });
+    return () => {
+      if (Reflect.get(globalThis, 'stratumAutomation') === automation)
+        Reflect.deleteProperty(globalThis, 'stratumAutomation');
+    };
+  }, [request]);
   async function mutate(
     message: EngineRequest,
     label: string,

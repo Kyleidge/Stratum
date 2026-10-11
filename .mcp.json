@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "stratum": {
+      "command": "node",
+      "args": ["mcp/start.mjs"]
+    }
+  }
+}
