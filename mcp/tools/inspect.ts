@@ -10,8 +10,14 @@ import {
   search,
   segmentSets,
 } from '../describe';
-import { argList, objectArg, TARGET, type ServerContext } from '../context';
-import { plotPng } from '../plot-image';
+import {
+  argList,
+  objectArg,
+  OVERWRITE,
+  TARGET,
+  type ServerContext,
+} from '../context';
+import { plotPng, plotSvg } from '../plot-image';
 import type { Tool, ToolResult } from '../protocol';
 
 const READ = { readOnlyHint: true } as const;
@@ -22,6 +28,26 @@ const within = objectArg(
 
 export function inspectTools(context: ServerContext): Tool[] {
   return [
+    {
+      name: 'show_in_app',
+      title: 'Show in Stratum',
+      description:
+        'Selects a step, signal, value or segment in the Stratum window (History, plot and Details), so the user can see it. Use it to point at what you created or found.',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, target: TARGET },
+        required: ['id'],
+      },
+      annotations: { readOnlyHint: true },
+      run: async (args) => {
+        const backend = context.backend(args.target ?? 'ui');
+        if (!backend.show)
+          throw new Error(
+            'There is no Stratum window to show it in. Use target "ui" after ui_launch.',
+          );
+        return backend.show(String(args.id));
+      },
+    },
     {
       name: 'list_history',
       title: 'History',
@@ -273,6 +299,7 @@ export function inspectTools(context: ServerContext): Tool[] {
           title: { type: 'string' },
           width: { type: 'integer', description: 'Pixels (default 960).' },
           savePath: { type: 'string', description: 'Also write the PNG.' },
+          overwrite: OVERWRITE,
           points: {
             type: 'integer',
             description: 'Also return up to this many envelope points each.',
@@ -298,12 +325,21 @@ export function inspectTools(context: ServerContext): Tool[] {
           unit: index.nodes.get(plot.id)?.unit ?? '',
           plot,
         }));
-        const png = await plotPng(series, {
+        const options = {
           title: args.title as string | undefined,
           width: args.width as number | undefined,
-        });
+        };
+        // The app rasterises in its window; the harness uses sharp.
+        const png = backend.renderPng
+          ? Buffer.from(await backend.renderPng(plotSvg(series, options)))
+          : await plotPng(series, options);
         const path = args.savePath
-          ? context.save(png, args.savePath as string, 'plot.png')
+          ? context.save(
+              png,
+              args.savePath as string,
+              'plot.png',
+              !!args.overwrite,
+            )
           : undefined;
         const points = Number(args.points ?? 0);
         const summary = series.map((item) => ({

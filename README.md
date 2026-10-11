@@ -36,6 +36,8 @@ from.
   change, with a preview of what will be affected. Undo and Redo survive
   restarts.
 - **Your data stays on your computer.** No accounts, no uploads, no server.
+  If you choose to let an AI assistant work in a workspace, it reads only
+  what you allow.
 - **Built for long, high-rate recordings.** Files are streamed in pieces, plots
   use persistent min/max indexes, and processing runs off the UI thread.
 
@@ -103,6 +105,9 @@ them.
   HTML summary.
 - **Workspace backups** (`.stratum`) that are validated in full before they
   restore, plus optional automatic backups on close and every 30 minutes.
+- **AI assistants** such as Claude Desktop can work in your workspace through
+  MCP when you allow it: their steps appear in History and can be undone
+  ([AI assistants](docs/ai-assistants.md)).
 - **Ctrl+K** searches every step and output, alongside light and dark themes
   and keyboard access throughout.
 
@@ -145,6 +150,7 @@ More sample recordings and exercises are in [examples](examples/README.md).
 | [Beginner's guide](docs/beginners-guide.md) ([PDF](output/pdf/stratum-beginners-guide.pdf)) | An illustrated walk-through from first import to report |
 | [User guide](docs/user-guide.md)                                                            | Every part of the workspace, in reference form          |
 | [Batch workflows](docs/batch-workflows.md)                                                  | Workflow files, checks, batch runs and per-item reports |
+| [AI assistants](docs/ai-assistants.md)                                                      | Letting Claude Desktop or another MCP app work for you  |
 | [File formats](docs/file-formats.md)                                                        | What each recording reader supports                     |
 | [Time bases](docs/time-bases.md)                                                            | Aligning recordings from different clocks               |
 | [Filters](docs/filters.md)                                                                  | Filter definitions and their responses                  |

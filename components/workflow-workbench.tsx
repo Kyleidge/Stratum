@@ -132,6 +132,7 @@ import {
 } from './workflow-management';
 import WorkflowStorage from './workflow-storage';
 import DesktopAutoBackup from './desktop-auto-backup';
+import DesktopAssistant from './desktop-assistant';
 import WorkflowList from './workflow-list';
 import { describeChange, savedCommand } from '@/lib/workflow-lifecycle';
 import type { WorkflowCommand } from '@/lib/workflow-lifecycle';
@@ -745,6 +746,29 @@ export default function WorkflowWorkbench() {
     setLineageRoot(null);
     select({ kind: 'step', id });
   }
+  // An AI assistant or UI automation shows a step or output (show_in_app).
+  useEffect(() =>
+    engine.automation.setRevealer((id) => {
+      setWorkspaceView('data');
+      const step = index.steps.get(id);
+      if (step) {
+        selectStep(id);
+        return `Showing ${reference(step)} ${stepName(step)}.`;
+      }
+      if (
+        !index.nodes.has(id) &&
+        !index.values.has(id) &&
+        !index.segments.has(id)
+      )
+        throw new Error(`Nothing in the workspace has the ID "${id}".`);
+      if (index.nodes.get(id)?.internal)
+        throw new Error(
+          'That signal is internal; show the output that uses it.',
+        );
+      follow(id);
+      return `Showing ${index.label(id)}.`;
+    }),
+  );
   function switchSource(id: string) {
     setSourceId(id);
     setBatchPanel(true);
@@ -3415,6 +3439,7 @@ export default function WorkflowWorkbench() {
           }}
         />
       )}
+      <DesktopAssistant automation={engine.automation} />
       <DesktopAutoBackup
         request={request}
         revision={engine.revision}

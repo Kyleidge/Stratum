@@ -6,11 +6,17 @@ client) work in their Stratum workspace through the same operations the
 workbench offers. Its tools are a public interface; change them as carefully
 as a file format. It adds no dependencies.
 
+Users turn it on in Workspace → AI assistants; see
+[AI assistants](ai-assistants.md). Their assistant runs Stratum as Node with
+the bundled `dist-desktop/assistant-server.mjs` (`mcp/app-server.ts`), which
+works in the user's running app through a private channel. It offers the
+user tools below without `target` (`tests/fixtures/mcp-app-tools.json`) and
+needs full paths for files.
+
 This page describes the developer harness in the repository: the same tools
-with a headless engine target and `ui_*` tools that drive a hidden Electron
-window, for testing Stratum and the server itself. The user-facing entry
-point (`Stratum.exe --mcp`, working on the user's live workspace with their
-consent) builds on it.
+with a headless engine target, plus developer-only tools (marked
+`developer: true`): `ui_*` tools that drive a hidden Electron window, raw
+requests and project dumps, for testing Stratum and the server itself.
 
 ## Setup
 
@@ -140,23 +146,32 @@ workbench's state and its request function.
 
 ## Extending it
 
-Keep the server in step with the app; it is how agents test Stratum.
+Keep the server in step with the app: it is how users' assistants work in
+Stratum and how agents test it.
 
 - **New engine request**: add it to `EngineRequest` and handle it in
   `lib/engine-requests.ts`. Its exhaustive `never` check fails the type check
   until it is handled, and `engine_request` and `catalog` pick it up with no
-  server change. Add a typed tool when it is a user-facing operation.
-- **New tool**: add it to a group in `mcp/tools/` (or a new group in
-  `TOOL_GROUPS` in `mcp/server.ts`). Give it a clear description, a JSON
-  schema with `target: TARGET` when it reads or changes a workspace, and a
-  result that names things as the UI does (`mcp/describe.ts`).
+  server change. Add a typed tool when it is a user-facing operation, and add
+  the request to `ASSISTANT_REQUESTS` (`lib/assistant-protocol.ts`) so the
+  app answers it for assistants.
+- **New tool**: add it to a group in `mcp/tools/` (or a new group in both
+  `TOOL_GROUPS` in `mcp/server.ts` and `USER_TOOL_GROUPS` in
+  `mcp/app-server.ts`). Give it a clear description, a JSON schema with
+  `target: TARGET` when it reads or changes a workspace (the app server
+  removes it), and a result that names things as the UI does
+  (`mcp/describe.ts`). Mark harness-only tools `developer: true`. Writing
+  tools take `overwrite` and go through `context.save`. Then update
+  `tests/fixtures/mcp-app-tools.json` (`UPDATE_MCP_TOOLS=1`): user tools are
+  a public interface, so never rename or remove a tool or argument.
 - **New dialog or control**: give it an accessible role and name; that is
   what `ui_snapshot` shows and targets match.
 - **Catalogs** are read from `FUNCTIONS`, `VALUE_FUNCTIONS` and the source,
   so new operations appear automatically.
-- **Tests**: `tests/mcp-server.test.ts` (in `pnpm test`) covers the protocol
-  and engine tools; the `mcp-ui` native smoke (`tests/mcp-ui-smoke.mjs`)
-  drives a real window.
+- **Tests**: `tests/mcp-server.test.ts` covers the protocol and engine tools,
+  and `tests/mcp-app.test.ts` the assistant channel and the public tool
+  interface (both in `pnpm test`). The native smokes `mcp-ui` and `mcp-app`
+  drive a real window, the latter through the bundled assistant server.
 
 ## Limits
 

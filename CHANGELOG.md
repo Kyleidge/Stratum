@@ -65,6 +65,15 @@ time-series recordings. Recordings and workspaces stay on your computer.
   workflow and run it on many recordings, with pass/fail checks, a batch
   review view and one PDF report per item. One Undo removes a whole batch.
 
+### AI assistants
+
+- Allow an AI assistant such as Claude Desktop to work in your workspace
+  through the Model Context Protocol: it reads your recordings and History,
+  creates and edits steps, runs workflows and shows you results in the
+  window. Its changes appear in History and can be undone. Access is off
+  until you turn it on in **Workspace → AI assistants**, which also gives the
+  configuration to paste into the assistant.
+
 ### Desktop app
 
 - Windows installer for the current user (no administrator rights), with a

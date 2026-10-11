@@ -9,7 +9,8 @@ are time intervals of a whole recording (not signals); Derive, Value and nested
 Segment steps work within the entire signal, one segment or all of a step's.
 The primary navigation is chronological operation history with explicit output
 membership and direct input/lineage links. Data stays local to the device.
-There are no server API routes or cloud signal uploads.
+There are no server API routes or cloud signal uploads; only an AI assistant
+the user explicitly allows receives what its tools read.
 
 ## Architecture
 
@@ -284,22 +285,33 @@ There are no server API routes or cloud signal uploads.
   the newest 10 and removes stale partials. Failures are shown in the app and
   once at the next launch. Smoke runs (`--smoke`, `--ui-smoke`,
   `--backup-smoke`; temporary profile only) answer dialogs from `outputs/`.
-- MCP server (`mcp/`, `docs/mcp-server.md`, `.mcp.json`; `node mcp/start.mjs`):
-  dependency-free stdio MCP. It is a user feature (AI assistants working in
-  the user's workspace); its tool names and inputs are a public interface,
-  so keep them stable. In the repository it is also the test harness: engine tools run the
-  real `SignalEngine` in memory (fake-indexeddb); with `target: "ui"` they go
-  through the workbench's own worker in a `ui_launch` session, which runs
-  `desktop/main.mjs --automation` (hidden, offscreen, temporary profile,
-  dialogs answered from its folder; it quits when its parent PID is gone,
-  `desktop/automation.mjs`) driven over CDP by the `ui_*` tools. Requests from the worker and
-  the server share `lib/engine-requests.ts`, whose `never` check makes every
-  `EngineRequest` handled there (and reachable via `engine_request`). When a
-  feature adds a user-facing operation, request or dialog, extend the server:
-  a typed tool in `mcp/tools/` (with `target`), names via `mcp/describe.ts`,
-  accessible roles and names for `ui_snapshot`, and tests in
-  `tests/mcp-server.test.ts` or the `mcp-ui` native smoke. Pages opened with
-  `?automation` expose `globalThis.stratumAutomation`; never set it otherwise.
+- MCP server (`mcp/`): AI assistant access is a user feature
+  (`docs/ai-assistants.md`). Off until the user allows it in Workspace → AI
+  assistants (`components/assistant-settings.tsx`; `assistant-settings.json`
+  in userData). Then `desktop/assistant.mjs` opens a private local pipe
+  (`desktop/assistant-pipe.mjs`: user-only socket or named pipe, a token in
+  `assistant-endpoint.json`) and forwards calls to the workbench, which
+  answers with its own engine requests (`lib/assistant-host.ts`, a whitelist
+  in `lib/assistant-protocol.ts`, `components/desktop-assistant.tsx`), so an
+  assistant's changes appear in History, are announced with a toast and can
+  be undone. MCP clients run `Stratum.exe` as Node (`ELECTRON_RUN_AS_NODE=1`;
+  a Windows GUI process has no stdin) with
+  `dist-desktop/assistant-server.mjs` (bundled from `mcp/app-server.ts` by
+  `desktop/assistant.vite.config.ts`, unpacked from the asar), which starts
+  Stratum when needed. Its tools are a public interface
+  (`docs/file-format-stability.md`; `tests/fixtures/mcp-app-tools.json`):
+  full paths only, no overwriting unasked, no developer tools. The
+  repository's developer harness (`node mcp/start.mjs`, `.mcp.json`,
+  `docs/mcp-server.md`) adds an in-memory engine target and `ui_*` tools that
+  drive `desktop/main.mjs --automation` (hidden, offscreen, temporary profile,
+  dialogs answered from its folder, quits when its parent PID is gone) over
+  CDP; `?automation` pages expose `globalThis.stratumAutomation`. Worker and
+  server share `lib/engine-requests.ts`, whose `never` check makes every
+  `EngineRequest` handled there. When a feature adds a user-facing operation,
+  extend the tools (`mcp/tools/`, names via `mcp/describe.ts`, marking
+  harness-only ones `developer: true`), give dialogs accessible roles and
+  names, and test in `tests/mcp-*.test.ts` or the `mcp-ui`/`mcp-app` native
+  smokes.
 - `components/workflow-list.tsx`: render disclosure rows only while open, with
   30-item pages. Keep large lineage and checked-input lists bounded in the DOM.
 - `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
@@ -571,7 +583,8 @@ native smoke on Linux (headless) and Windows.
   saved workflow to identical values, checks across Edit/Undo, batch backups and
   item deletion.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
-- `pnpm mcp`: start the MCP server on stdio (normally started by the client).
+- `pnpm mcp`: start the developer MCP harness on stdio (normally started by
+  the client).
 - `pnpm desktop:smokes`: build the desktop renderer, then run every native
   smoke in sequence (`tests/native-smokes.mjs`; add new checks to its
   `SMOKES` list) with a pass/fail summary and logs in `outputs/smoke-logs/`.

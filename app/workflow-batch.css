@@ -389,6 +389,19 @@
   color: var(--ink-1);
   font-size: var(--text-md);
 }
+.workflow-assistant-config {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line-mid);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-1);
+  font: var(--text-xs) var(--font-mono);
+  white-space: pre;
+  user-select: text;
+}
 .workflow-app .workflow-import-more {
   min-width: 0;
   margin-left: -5px;

@@ -16,6 +16,7 @@ import {
   rmSync,
   statSync,
   utimesSync,
+  writeFileSync,
   createWriteStream,
 } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -38,6 +39,8 @@ export type LaunchOptions = {
   theme?: 'dark' | 'light';
   /** Rebuild `dist-desktop` before a desktop launch. */
   build?: 'auto' | 'always' | 'never';
+  /** Start with AI assistant access allowed (to test the assistant). */
+  assistant?: boolean;
   progress?: (message: string) => void;
 };
 
@@ -334,6 +337,13 @@ export class UiSession implements Backend {
       );
     const dir = mkdtempSync(join(tmpdir(), 'stratum-mcp-ui-'));
     mkdirSync(join(dir, 'files'), { recursive: true });
+    if (options.assistant) {
+      mkdirSync(join(dir, 'profile'), { recursive: true });
+      writeFileSync(
+        join(dir, 'profile', 'assistant-settings.json'),
+        JSON.stringify({ enabled: true }),
+      );
+    }
     const port = await freePort();
     const electron = createRequire(import.meta.url)('electron') as string;
     const headless =

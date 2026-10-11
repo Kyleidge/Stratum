@@ -32,6 +32,11 @@ export type CallContext = {
 
 export type Tool = {
   name: string;
+  /**
+   * Developer harness only (raw access, the engine reset, UI driving); the
+   * user-facing app server leaves it out.
+   */
+  developer?: true;
   title?: string;
   description: string;
   inputSchema: JsonSchema;

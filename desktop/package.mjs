@@ -184,6 +184,8 @@ try {
         buildResources: path('./icons/'),
       },
       asar: true,
+      // The AI assistant server runs as Node from outside the archive.
+      asarUnpack: ['dist-desktop/assistant-server.mjs'],
       npmRebuild: false,
       nodeGypRebuild: false,
       extraResources: [

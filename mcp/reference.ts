@@ -210,11 +210,19 @@ export function referenceTools(context: ServerContext): Tool[] {
       name: 'catalog',
       title: 'Operation catalog',
       description:
-        'What operations exist and their settings: "derive" functions, "value" calculations, "segment" definitions, "time" (Compare & align) settings, "checks", and the raw "requests" protocol types.',
+        context.mode === 'app'
+          ? 'What operations exist and their settings: "derive" functions, "value" calculations, "segment" definitions, "time" (Compare & align) settings and "checks".'
+          : 'What operations exist and their settings: "derive" functions, "value" calculations, "segment" definitions, "time" (Compare & align) settings, "checks", and the raw "requests" protocol types.',
       inputSchema: {
         type: 'object',
         properties: {
-          section: { type: 'string', enum: [...CATALOG_SECTIONS] },
+          section: {
+            type: 'string',
+            // The protocol source ships only with the repository.
+            enum: CATALOG_SECTIONS.filter(
+              (section) => context.mode !== 'app' || section !== 'requests',
+            ),
+          },
         },
         required: ['section'],
       },
