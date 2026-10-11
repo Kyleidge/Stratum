@@ -130,10 +130,11 @@ the desktop bridge, as a browser would.
 The server drives the page over the DevTools protocol (`mcp/cdp.ts`): real
 mouse and keyboard input, file choosers, evaluation and console messages.
 Page helpers (`mcp/page-helpers.ts`) resolve targets and build snapshots.
-Screenshots and window resizes go through the window's control channel
-(`desktop/automation.mjs`: JSON lines on stdin, replies on stdout), because a
-never-shown window can only be captured by the main process. The app quits
-when the server closes that channel. Pages opened with `?automation` expose
+Screenshots and viewport sizes use the same protocol; offscreen rendering
+keeps frames coming for a window that is never shown. The window quits when
+the server's process is gone (`desktop/automation.mjs` polls the PID passed
+as `--automation-parent`; stdin is not used, since a Windows GUI process has
+none). Pages opened with `?automation` expose
 `globalThis.stratumAutomation` from `hooks/use-signal-engine.ts`: the
 workbench's state and its request function.
 

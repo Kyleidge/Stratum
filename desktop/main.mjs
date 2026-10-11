@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { registerDesktopFiles } from './files.mjs';
-import { attachAutomation } from './automation.mjs';
+import { watchAutomationParent } from './automation.mjs';
 import { attachBackupSmoke } from './backup-smoke.mjs';
 import { applicationMenu } from './menu.mjs';
 import { createUpdater } from './updater.mjs';
@@ -116,7 +116,7 @@ async function createWindow() {
   });
   desktopFiles.attachWindow(window);
   if (backupSmoke) attachBackupSmoke(window);
-  if (automation) attachAutomation(window);
+  if (automation) watchAutomationParent(Number(option('automation-parent')));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   if (!hidden) {

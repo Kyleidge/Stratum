@@ -1,55 +1,20 @@
 import { app } from 'electron';
-import { createInterface } from 'node:readline';
 
 /**
- * The control channel of an automation window (`--automation`, used by the
- * MCP server's UI sessions): JSON lines on stdin, replies on stdout marked
- * with `STRATUM_AUTOMATION `. Hidden windows draw only when captured, so
- * screenshots go through `capturePage` as the native smoke tests do; resizes
- * change the real window, so layouts match a user's. The app quits when its
- * controller goes away (stdin closes), so no hidden window outlives it.
+ * An automation window (`--automation`, the MCP developer harness's UI
+ * sessions) quits when the process that started it is gone, so no hidden
+ * window outlives its controller. That process passes its PID; polling it
+ * works on every platform, unlike stdin, which a Windows GUI app lacks.
  */
-export function attachAutomation(window) {
-  // Narrow layouts (History and Details drawers) must stay reachable.
-  window.setMinimumSize(320, 240);
-  const lines = createInterface({ input: process.stdin });
-  lines.on('close', () => app.exit(0));
-  lines.on('line', async (line) => {
-    let request;
+export function watchAutomationParent(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  const timer = setInterval(() => {
     try {
-      request = JSON.parse(line);
+      process.kill(pid, 0);
     } catch {
-      return;
+      clearInterval(timer);
+      app.exit(0);
     }
-    const reply = (body) =>
-      process.stdout.write(
-        `STRATUM_AUTOMATION ${JSON.stringify({ id: request.id, ...body })}\n`,
-      );
-    try {
-      if (window.isDestroyed()) throw new Error('The window is closed.');
-      if (request.command === 'capture') {
-        const rect = request.rect
-          ? {
-              x: Math.round(request.rect.x),
-              y: Math.round(request.rect.y),
-              width: Math.max(1, Math.round(request.rect.width)),
-              height: Math.max(1, Math.round(request.rect.height)),
-            }
-          : undefined;
-        const image = await window.webContents.capturePage(rect, {
-          stayHidden: true,
-        });
-        reply({ png: image.toPNG().toString('base64') });
-      } else if (request.command === 'resize') {
-        window.setContentSize(
-          Math.round(request.width),
-          Math.round(request.height),
-        );
-        const [width, height] = window.getContentSize();
-        reply({ width, height });
-      } else reply({ error: `Unknown command: ${request.command}` });
-    } catch (error) {
-      reply({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+  }, 2000);
+  timer.unref?.();
 }

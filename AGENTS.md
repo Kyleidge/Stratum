@@ -291,8 +291,8 @@ There are no server API routes or cloud signal uploads.
   real `SignalEngine` in memory (fake-indexeddb); with `target: "ui"` they go
   through the workbench's own worker in a `ui_launch` session, which runs
   `desktop/main.mjs --automation` (hidden, offscreen, temporary profile,
-  dialogs answered from its folder; `desktop/automation.mjs` captures and
-  resizes) driven over CDP by the `ui_*` tools. Requests from the worker and
+  dialogs answered from its folder; it quits when its parent PID is gone,
+  `desktop/automation.mjs`) driven over CDP by the `ui_*` tools. Requests from the worker and
   the server share `lib/engine-requests.ts`, whose `never` check makes every
   `EngineRequest` handled there (and reachable via `engine_request`). When a
   feature adds a user-facing operation, request or dialog, extend the server:

@@ -21,7 +21,6 @@ import {
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { EngineCommand } from '../lib/engine-requests';
@@ -166,8 +165,6 @@ export class UiSession implements Backend {
   readonly target = 'ui';
   readonly console: ConsoleEntry[] = [];
   private exited = false;
-  private controlSerial = 0;
-  private replies = new Map<number, (reply: Record<string, unknown>) => void>();
   width: number;
   height: number;
 
@@ -183,13 +180,6 @@ export class UiSession implements Backend {
     this.width = size.width;
     this.height = size.height;
     child.once('exit', () => (this.exited = true));
-    if (child.stdout)
-      createInterface({ input: child.stdout }).on('line', (line) => {
-        if (!line.startsWith('STRATUM_AUTOMATION ')) return;
-        const reply = JSON.parse(line.slice(19)) as Record<string, unknown>;
-        this.replies.get(reply.id as number)?.(reply);
-        this.replies.delete(reply.id as number);
-      });
     const log = (level: string, text: string) => {
       // Electron's own sandbox bundle reports frames without a preload
       // (development pages); it is not the app's output.
@@ -370,12 +360,13 @@ export class UiSession implements Backend {
       join(root, 'desktop/main.mjs'),
       '--automation',
       `--automation-dir=${dir}`,
+      `--automation-parent=${process.pid}`,
       ...(options.source === 'dev' ? [`--automation-url=${url}`] : []),
     ];
     progress?.('Starting the Stratum window…');
     const child = spawn(electron, args, {
       cwd: root,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         ...(noSandbox ? { ELECTRON_DISABLE_SANDBOX: '1' } : {}),
@@ -514,30 +505,15 @@ export class UiSession implements Backend {
   }
 
   async resize(width: number, height: number) {
-    const size = await this.control<{ width: number; height: number }>(
-      'resize',
-      { width, height },
-    );
-    this.width = size.width;
-    this.height = size.height;
-    await sleep(150);
-  }
-
-  /** A command on the window's control channel (desktop/automation.mjs). */
-  private control<T>(command: string, body: Record<string, unknown> = {}) {
-    const id = ++this.controlSerial;
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.replies.delete(id);
-        reject(new Error(`The window did not answer "${command}".`));
-      }, 60_000);
-      this.replies.set(id, (reply) => {
-        clearTimeout(timer);
-        if (typeof reply.error === 'string') reject(new Error(reply.error));
-        else resolve(reply as T);
-      });
-      this.child.stdin?.write(`${JSON.stringify({ id, command, ...body })}\n`);
+    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
     });
+    this.width = width;
+    this.height = height;
+    await sleep(150);
   }
 
   /** Waits for `selector` to be visible and returns its centre. */
@@ -693,9 +669,23 @@ export class UiSession implements Backend {
     let png = '';
     for (let attempt = 1; !png; attempt++)
       try {
-        ({ png } = await this.control<{ png: string }>(
-          'capture',
-          clip ? { rect: clip } : {},
+        ({ data: png } = await this.cdp.send<{ data: string }>(
+          'Page.captureScreenshot',
+          {
+            format: 'png',
+            ...(clip
+              ? {
+                  clip: {
+                    x: Math.max(0, clip.x),
+                    y: Math.max(0, clip.y),
+                    width: Math.max(1, clip.width),
+                    height: Math.max(1, clip.height),
+                    scale: 1,
+                  },
+                }
+              : {}),
+          },
+          30_000,
         ));
       } catch (error) {
         if (attempt >= 4) throw error;
