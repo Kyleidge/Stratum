@@ -11,6 +11,13 @@ Engine-only changes under `lib/` can skip the browser with
 `.claude/skills/run-stratum/engine-smoke.mjs`. All paths are relative to the
 repository root. Verified on Windows 10 with Git Bash; Linux is untested.
 
+**Prefer the `stratum` MCP server when its tools are available**
+(`mcp__stratum__*`; see `docs/mcp-server.md`). It runs the engine headlessly
+(`load_example`, `derive`, `read_samples`, `workflow_run`…) and drives the
+real desktop window (`ui_launch`, `ui_snapshot`, `ui_click`,
+`ui_screenshot`) with no Python, Playwright or Chrome, on Linux and Windows.
+The driver below remains for clients without MCP.
+
 ## Prerequisites
 
 - Python 3 with Playwright (`python -m playwright --version` → 1.63), plus

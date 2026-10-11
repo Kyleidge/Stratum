@@ -27,6 +27,8 @@ const SMOKES = [
   { name: 'report-workspace', args: ['tests/report-workspace-smoke.mjs'] },
   { name: 'report-plot', args: ['tests/report-plot-smoke.mjs'] },
   { name: 'report-builder', args: ['tests/report-builder-smoke.mjs'] },
+  // Runs under Node: the MCP server launches its own Electron window.
+  { name: 'mcp-ui', node: true, args: ['tests/mcp-ui-smoke.mjs'] },
 ];
 // Each check has its own shorter timeout; this only stops a hung process.
 const LIMIT_MS = 10 * 60 * 1000;
@@ -67,15 +69,19 @@ const flags = headless
   : [];
 mkdirSync(logs, { recursive: true });
 
-function run({ name, args }) {
+function run({ name, args, node }) {
   const log = `${logs}${name}.log`;
   const started = Date.now();
   return new Promise((resolve) => {
     const out = createWriteStream(log);
-    const child = spawn(electron, [...flags, ...args], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawn(
+      node ? process.execPath : electron,
+      node ? args : [...flags, ...args],
+      {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     child.stdout.pipe(out, { end: false });
     child.stderr.pipe(out, { end: false });
     const timer = setTimeout(() => {

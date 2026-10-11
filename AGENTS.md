@@ -284,6 +284,20 @@ There are no server API routes or cloud signal uploads.
   the newest 10 and removes stale partials. Failures are shown in the app and
   once at the next launch. Smoke runs (`--smoke`, `--ui-smoke`,
   `--backup-smoke`; temporary profile only) answer dialogs from `outputs/`.
+- MCP server (`mcp/`, `docs/mcp-server.md`, `.mcp.json`; `node mcp/start.mjs`):
+  dependency-free stdio MCP for agents testing Stratum. Engine tools run the
+  real `SignalEngine` in memory (fake-indexeddb); with `target: "ui"` they go
+  through the workbench's own worker in a `ui_launch` session, which runs
+  `desktop/main.mjs --automation` (hidden, offscreen, temporary profile,
+  dialogs answered from its folder; `desktop/automation.mjs` captures and
+  resizes) driven over CDP by the `ui_*` tools. Requests from the worker and
+  the server share `lib/engine-requests.ts`, whose `never` check makes every
+  `EngineRequest` handled there (and reachable via `engine_request`). When a
+  feature adds a user-facing operation, request or dialog, extend the server:
+  a typed tool in `mcp/tools/` (with `target`), names via `mcp/describe.ts`,
+  accessible roles and names for `ui_snapshot`, and tests in
+  `tests/mcp-server.test.ts` or the `mcp-ui` native smoke. Pages opened with
+  `?automation` expose `globalThis.stratumAutomation`; never set it otherwise.
 - `components/workflow-list.tsx`: render disclosure rows only while open, with
   30-item pages. Keep large lineage and checked-input lists bounded in the DOM.
 - `docs/workflow-proposal.md`: design rationale, interaction rules and compatibility.
@@ -555,6 +569,7 @@ native smoke on Linux (headless) and Windows.
   saved workflow to identical values, checks across Edit/Undo, batch backups and
   item deletion.
 - Run `pnpm desktop:build` when shared application or desktop code changes.
+- `pnpm mcp`: start the MCP server on stdio (normally started by the client).
 - `pnpm desktop:smokes`: build the desktop renderer, then run every native
   smoke in sequence (`tests/native-smokes.mjs`; add new checks to its
   `SMOKES` list) with a pass/fail summary and logs in `outputs/smoke-logs/`.
