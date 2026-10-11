@@ -5,7 +5,7 @@ import { MAX_RECORDING_CHANNELS } from './formats/recording';
  * helps, the expected format; the engine prefixes the file name.
  */
 export const CSV_FORMAT_EXAMPLE = 'Time [s],Speed [rpm],Torque [Nm]';
-const FORMAT_HINT = `The first row holds headers such as ${CSV_FORMAT_EXAMPLE}, with time in seconds in the first column.`;
+const FORMAT_HINT = `The first row holds headers such as ${CSV_FORMAT_EXAMPLE}, with time in the first column (seconds, or dates and times).`;
 const CANCELLED = 'Operation cancelled.';
 
 function quote(text: string) {
@@ -42,7 +42,8 @@ function looksLikeDate(cell: string) {
 
 /**
  * Row numbers count the header as row 1, as spreadsheets do. `column` names
- * the time column when a file has several; `scale` is seconds per unit.
+ * the time column when a file has several; `scale` is seconds per unit;
+ * `clock` is how the column tells clock time, if it does.
  */
 export function timeProblem(
   row: number,
@@ -50,19 +51,26 @@ export function timeProblem(
   previous: number,
   column?: string,
   scale = 1,
+  clock?: 'text' | 'unix',
 ): string {
   const text = cell.trim();
   const where = column ? `Row ${row}, column ${quote(column)}` : `Row ${row}`;
   const unit = scale === 1 ? 's' : 'units';
   if (!text)
-    return `${where}: the time cell is empty. Every row needs a time${column ? ' where its signals have values' : ' in seconds'}.`;
+    return `${where}: the time cell is empty. Every row needs a time${column || clock ? ' where its signals have values' : ' in seconds'}.`;
+  if (clock === 'text')
+    return looksLikeDate(text)
+      ? `${where}: time ${quote(text)} does not come after the previous row’s time, or is not a real date and time. Times must increase from row to row; check the day and month order.`
+      : `${where}: time ${quote(text)} is not a date and time. Use dates such as 2026-10-10 14:03:22.120 or times of day such as 14:03:22.`;
   if (looksLikeDate(text))
-    return `${where}: time ${quote(text)} is a date or clock time. A time column must hold elapsed time (0, 0.1, 0.2, …).`;
+    return `${where}: time ${quote(text)} is a date or clock time, but the column is read as elapsed time. Read it as “Date and time” instead.`;
   const value = Number(text);
   if (!Number.isFinite(value))
     return /^-?\d+,\d+$/.test(text)
       ? `${where}: time ${quote(text)} uses a decimal comma. Use a decimal point (0.5).`
       : `${where}: time ${quote(text)} is not a number.`;
+  if (clock === 'unix')
+    return `${where}: time ${value.toLocaleString()} does not come after the previous time. Times must increase from row to row.`;
   return `${where}: time ${value.toLocaleString()}${unit === 's' ? ' s' : ''} does not come after the previous time ${previous.toLocaleString()}${unit === 's' ? ' s' : ''}. Times must increase from row to row.`;
 }
 

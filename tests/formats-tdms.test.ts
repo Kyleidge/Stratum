@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import { BLOCK_ROWS, type RecordingFile } from '../lib/formats/recording';
 import { openTdms } from '../lib/formats/tdms';
 
+// Clock times show in this device's zone: pin one with daylight saving.
+process.env.TZ = 'Europe/Berlin';
+
 const FIXTURES = new URL('./fixtures/formats/', import.meta.url);
 const fixture = (name: string) =>
   new Blob([readFileSync(new URL(name, FIXTURES))]);
@@ -101,7 +104,10 @@ class Bytes {
   }
 }
 
-type Property = [string, 'text' | 'u32' | 'f64', string | number];
+type Property =
+  | [string, 'text' | 'u32' | 'f64', string | number]
+  /** A timestamp: seconds since 1904 and a 2^-64 fraction. */
+  | [string, 'stamp', [number, bigint]];
 type Daqmx = {
   type: number;
   count: number;
@@ -160,6 +166,7 @@ function segment(options: {
       for (const [name, kind, value] of o.props ?? []) {
         meta.text(name);
         if (kind === 'text') meta.u32(0x20).text(String(value));
+        else if (kind === 'stamp') meta.u32(TIMESTAMP).stamp(...value);
         else if (kind === 'u32') meta.u32(7).u32(Number(value));
         else meta.u32(10).f64(Number(value));
       }
@@ -236,8 +243,19 @@ void test('TDMS fixture written by nptdms matches nptdms values, units and timin
   );
   assert.deepEqual(recording.notes, [
     'Skipped 2 text or timestamp channels: Engine/Label, Engine/Stamp.',
-    'Absolute start times (wf_start_time) are not applied; time runs from each waveform’s start offset.',
   ]);
+  // wf_start_time 2024-03-01 12:00 UTC, shown in this device's zone (CET);
+  // “Slow” has no start time, and a time channel or index has no clock.
+  assert.deepEqual(
+    recording.tables.map((t) => t.clock),
+    [
+      { start: 1_709_294_400, offset: 60 },
+      undefined,
+      undefined,
+      undefined,
+      { start: 1_709_294_400.123456, offset: 60 },
+    ],
+  );
   const want = expected['tdms-basic.tdms'];
 
   const engine = recording.tables[0];
@@ -830,6 +848,13 @@ void test('TDMS timestamp channels become seconds since their first sample', asy
     `Time is “Stamp” in seconds since its first sample, ${new Date((base - 2_082_844_800) * 1000).toISOString()}.`,
   ]);
   assert.deepEqual(first.channels, [{ name: 'Value', unit: '—' }]);
+  // Time 0 is the first timestamp: late May 2024, CEST here.
+  assert.deepEqual(first.clock, {
+    start: base - 2_082_844_800 + 2 ** -30,
+    offset: 120,
+  });
+  assert.deepEqual(second.clock, { start: 100 - 2_082_844_800, offset: 60 });
+  assert.equal(third.clock, undefined);
   const data = await readAll(recording, 0);
   assert.deepEqual(
     data.time,
@@ -843,6 +868,58 @@ void test('TDMS timestamp channels become seconds since their first sample', asy
   assert.deepEqual(third.notes, [
     'No time channel or waveform timing: time is the sample number.',
   ]);
+});
+
+void test('TDMS wf_start_time is the clock of waveform tables', async () => {
+  // Seconds since 1904 near mid 2024, plus half a second.
+  const base = 3_800_000_000;
+  const half = BigInt(2 ** 63);
+  const wave = (start: [number, bigint]): Property[] => [
+    ['wf_increment', 'f64', 0.1],
+    ['wf_start_time', 'stamp', start],
+  ];
+  const recording = await openTdms(
+    file(
+      segment({
+        toc: META | NEW_LIST | RAW,
+        objects: [
+          {
+            path: "/'W'/'a'",
+            index: { type: U8, count: 2 },
+            props: wave([base, half]),
+          },
+          {
+            path: "/'W'/'b'",
+            index: { type: U8, count: 2 },
+            props: wave([base + 1, half]),
+          },
+          {
+            path: "/'P'/'c'",
+            index: { type: U8, count: 2 },
+            props: [['wf_start_time', 'stamp', [base, half]]],
+          },
+          // 1904-01-01 00:00 means “not set”.
+          {
+            path: "/'Z'/'d'",
+            index: { type: U8, count: 2 },
+            props: wave([0, BigInt(0)]),
+          },
+        ],
+        data: new Uint8Array(8),
+      }),
+    ),
+  );
+  assert.deepEqual(recording.notes, [
+    'Start times (wf_start_time) of channels without waveform timing are not applied.',
+  ]);
+  const [w, p, z] = recording.tables;
+  assert.deepEqual(w.clock, { start: base - 2_082_844_800 + 0.5, offset: 120 });
+  assert.deepEqual(w.notes, [
+    'The channels start at different times (wf_start_time); clock time follows “a”.',
+  ]);
+  assert.equal(p.clock, undefined);
+  assert.equal(z.clock, undefined);
+  assert.deepEqual((await readAll(recording, 0)).time, [0, 0.1]);
 });
 
 void test('TDMS problems give plain-language errors', async () => {

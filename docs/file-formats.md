@@ -64,15 +64,24 @@ differ (ignoring case) among the signals on one time axis; with several time
 axes, a time column's name names its recording. Each time axis with signals becomes one
 recording, named `file · time column` when there are several. A time axis may
 be in any unit of time (`s`, `ms`, `µs`, `min`, `h`); it is converted to
-seconds. The column layout (`lib/formats/delimited-layout.ts`) is suggested
-as follows, and batch runs use the suggestion:
+seconds. A time axis tells **elapsed time**, **Unix time** (numbers in its
+unit since 1970-01-01 UTC) or **date and time** text; the last two keep the
+recording's clock time, with the zone and day/month order chosen in the
+dialog (see `docs/time-bases.md`). The column layout
+(`lib/formats/delimited-layout.ts`) is suggested as follows, and batch runs
+use the suggestion:
 
 - The first column is a time axis (seconds unless its header names a unit).
+  Dates and times of day in it make it a date-and-time axis; numbers that can
+  only be Unix time (2000–2100 in s, ms, µs or ns) or a name such as
+  `Unix time` or `epoch_ms` make it a Unix-time axis. `Time [UTC]` reads text
+  without a zone as UTC; otherwise it is read in this computer's zone.
 - A later column is another time axis when its name reads as time (`Time 2`,
-  `t2`, `ECU time`, `Time_B`, `Zeit` …), its unit (if any) is a unit of time
-  and its values strictly increase in the first 200 rows. Signals use the
-  nearest time axis to their left.
-- Columns with text in the first rows are skipped with a note.
+  `t2`, `ECU time`, `Time_B`, `Zeit`, `Timestamp`, `Date` …) and it holds
+  dates or times of day, or its unit (if any) is a unit of time and its
+  values strictly increase in the first 200 rows. Signals use the nearest
+  time axis to their left.
+- Other columns with text in the first rows are skipped with a note.
 
 Where time axes have different lengths, a row whose time cell is empty is
 skipped for that axis only when its signals are empty too; a value without a
@@ -88,7 +97,9 @@ row and cause of a problem.
 Each channel group with numeric channels is a table, named by its acquisition
 name, then its source name, then `Group n`. Time is the master channel after
 its conversion; an angle, distance or index master is used as the axis with a
-note, and a group without a master uses the sample number.
+note, and a group without a master uses the sample number. Tables timed by a
+time master keep the header's start time as their clock time (time 0); a zero
+start time means none.
 
 - **MDF 4:** DT, DL, DZ (deflate and transposed deflate) and HL data blocks;
   sorted and unsorted groups with 1–8 byte record IDs and VLSD records;
@@ -97,11 +108,16 @@ note, and a group without a master uses the sample number.
   channels. Conversions: identity, linear, rational, algebraic (a safe formula
   evaluator, never `eval`), value-to-value tables with and without
   interpolation and value-range tables. Unfinalized (`UnFinMF`) files are read
-  as far as their data blocks reach, with a note.
+  as far as their data blocks reach, with a note. The start time is UTC shown
+  at `hd_tz_offset_min` + `hd_dst_offset_min` when the offsets are flagged
+  valid, UTC shown as UTC when not, and local wall time read in this device's
+  zone when flagged local.
 - **MDF 3:** record IDs before and after records, all integer and IEEE types in
   either byte order, bit offsets, long names, and linear, tabular, polynomial,
   exponential, logarithmic, rational and formula conversions (exponential and
-  logarithmic follow the MDF 3 specification).
+  logarithmic follow the MDF 3 specification). The start time is the 3.20
+  local time stamp less its UTC offset in hours (shown at that offset), else
+  the header's date and time text read as wall time in this device's zone.
 - **Skipped with a note:** strings, byte arrays, MIME and CANopen date/time
   channels, VLSD and sync channels, structures and arrays, VAX floats.
   Text conversions (value-to-text, text tables, bitfields) keep the raw number
@@ -126,8 +142,12 @@ Within each TDMS group, channels sharing a length and timing form a table. Time
 comes from waveform timing (`wf_start_offset` + i · `wf_increment`), else from a
 numeric time channel (`Time`, `t`, `Zeit` …; ms, µs, ns, min and h convert to
 seconds), else from a timestamp channel as seconds since its first sample (to
-sub-microsecond precision), else the sample number. `wf_start_time` is noted,
-not applied. Channel units come from `unit_string`.
+sub-microsecond precision), else the sample number. Channel units come from
+`unit_string`. Waveform tables keep `wf_start_time` as their clock time (time 0,
+before `wf_start_offset`; the first channel's when they differ, with a note),
+and timestamp-timed tables their first timestamp. TDMS times are UTC and are
+shown in this device's zone; 1904-01-01 00:00 means unset. Start times of
+channels without waveform timing are noted, not applied.
 
 ## MATLAB MAT
 
@@ -146,7 +166,9 @@ be up to 512 MiB uncompressed. v7.3 (HDF5) files are rejected with a hint.
 Each worksheet with numeric data is a table named after the sheet. The first
 non-empty row holds headers (`Torque [Nm]` gives the unit) and column A holds
 time in seconds; date/time-formatted time becomes seconds since the first row,
-with a note. Empty and error cells are missing; text cells in number columns are
+with a note, and the first row sets the clock time: serials are wall-clock days
+(the 1900 or the workbook's `date1904` system) read in this device's zone, and
+values below one day are times of day without a date. Empty and error cells are missing; text cells in number columns are
 missing; rows without a time are skipped. Columns that hold only
 text in the first 100 rows are left out. Sheets stream through a small XML
 scanner, so large sheets never sit in memory whole. Old `.xls`, `.xlsb` and

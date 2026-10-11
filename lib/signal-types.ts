@@ -82,6 +82,8 @@ export type Source = {
   synthetic: boolean;
   exampleKey?: string;
   chunkRanges: [number, number][];
+  /** When the recording's time 0 happened, if the file says. */
+  clock?: import('./time-types').TimeClock;
 };
 export type Segment = {
   id: string;

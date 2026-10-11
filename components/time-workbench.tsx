@@ -28,6 +28,9 @@ import type {
   Project,
 } from '@/lib/signal-types';
 import type { TimeAnchor, TimeReference, TimeSettings } from '@/lib/time-types';
+import { referenceClock } from '@/lib/time-types';
+import { alignedReference, groupClock } from '@/lib/time-model';
+import { describeClock } from '@/lib/clock-time';
 import { RegionNumber, RegionSelect, finite } from './region-controls';
 import OperationCards from './operation-cards';
 import OperationInputs from './operation-inputs';
@@ -37,7 +40,7 @@ import { randomId } from '@/lib/random-id';
 
 type Mode = 'overlay' | TimeSettings['kind'];
 type AnchorForm = {
-  mode: 'start' | 'point' | 'offset' | 'event';
+  mode: 'start' | 'clock' | 'point' | 'offset' | 'event';
   time: string;
   second: string;
   trigger: string;
@@ -148,6 +151,17 @@ export default function TimeWorkbench({
     }
     return [...result].map(([key, inputIds]) => ({ key, inputIds }));
   }, [ids, bySignal, graph]);
+  // Recordings that each know their clock time line up by it by default.
+  const clockDefault =
+    !bySignal &&
+    groups.length > 1 &&
+    groups.every((group) =>
+      referenceClock(graph.timeReferences.get(group.inputIds[0])),
+    );
+  const fallbackAnchor = (): AnchorForm => ({
+    ...blankAnchor(),
+    mode: clockDefault ? 'clock' : 'start',
+  });
   const [anchors, setAnchors] = useState<Record<string, AnchorForm>>(() => {
     const result: Record<string, AnchorForm> = {};
     if (saved?.kind === 'align')
@@ -308,8 +322,11 @@ export default function TimeWorkbench({
   const patchAnchor = (key: string, patch: Partial<AnchorForm>) =>
     setAnchors((old) => ({
       ...old,
-      [key]: { ...(old[key] ?? blankAnchor()), ...patch },
+      [key]: { ...(old[key] ?? fallbackAnchor()), ...patch },
     }));
+  const byClock = groups.some(
+    (group) => (anchors[group.key] ?? fallbackAnchor()).mode === 'clock',
+  );
   /** The saved settings; throws a plain reason while they are incomplete. */
   function build(): TimeSettings | undefined {
     if (!ids.length) throw new Error('Choose at least one signal.');
@@ -318,7 +335,11 @@ export default function TimeWorkbench({
         references.find((ref) => ref.id === referenceId) ??
         (saved?.kind === 'align' && saved.reference.id === referenceId
           ? saved.reference
-          : { id: newReferenceId, name: name.trim(), kind: referenceKind });
+          : {
+              id: newReferenceId,
+              name: name.trim(),
+              kind: byClock ? 'absolute' : referenceKind,
+            });
       if (!reference.name) throw new Error('Name the new timeline.');
       return {
         kind: 'align',
@@ -326,7 +347,7 @@ export default function TimeWorkbench({
         target: finite(target),
         secondTarget: drift ? finite(secondTarget) : undefined,
         groups: groups.map((group) => {
-          const form = anchors[group.key] ?? blankAnchor();
+          const form = anchors[group.key] ?? fallbackAnchor();
           if (form.mode === 'event' && !form.trigger)
             throw new Error(
               'Choose the signal whose crossing marks the event.',
@@ -343,8 +364,8 @@ export default function TimeWorkbench({
                   },
                   occurrence: finite(form.occurrence),
                 }
-              : form.mode === 'start'
-                ? { kind: 'start' }
+              : form.mode === 'start' || form.mode === 'clock'
+                ? { kind: form.mode }
                 : {
                     kind: 'point',
                     time:
@@ -629,6 +650,8 @@ export default function TimeWorkbench({
                         groups,
                         anchors,
                         patchAnchor,
+                        fallbackAnchor,
+                        byClock,
                       }}
                     />
                   )}
@@ -887,6 +910,8 @@ function AlignSettings({
   groups,
   anchors,
   patchAnchor,
+  fallbackAnchor,
+  byClock,
 }: {
   project: Project;
   graph: SignalGraph;
@@ -910,6 +935,9 @@ function AlignSettings({
   groups: { key: string; inputIds: string[] }[];
   anchors: Record<string, AnchorForm>;
   patchAnchor: (key: string, patch: Partial<AnchorForm>) => void;
+  fallbackAnchor: () => AnchorForm;
+  /** Some group lines up by clock time, so the timeline tells clock time. */
+  byClock: boolean;
 }) {
   return (
     <>
@@ -944,23 +972,30 @@ function AlignSettings({
               onChange={(event) => setName(event.target.value)}
             />
           </label>
-          <RegionSelect
-            label="Times on this timeline are"
-            value={referenceKind}
-            onChange={(value) =>
-              setReferenceKind(value as TimeReference['kind'])
-            }
-            items={[
-              {
-                value: 'relative',
-                label: 'Seconds from an event',
-              },
-              {
-                value: 'absolute',
-                label: 'Clock time · Unix seconds',
-              },
-            ]}
-          />
+          {byClock ? (
+            <p>
+              Clock time: time 0 is the earliest first sample, and times show as
+              clock times.
+            </p>
+          ) : (
+            <RegionSelect
+              label="Times on this timeline are"
+              value={referenceKind}
+              onChange={(value) =>
+                setReferenceKind(value as TimeReference['kind'])
+              }
+              items={[
+                {
+                  value: 'relative',
+                  label: 'Seconds from an event',
+                },
+                {
+                  value: 'absolute',
+                  label: 'Clock time · Unix seconds',
+                },
+              ]}
+            />
+          )}
         </div>
       )}
       <RegionNumber
@@ -1004,7 +1039,10 @@ function AlignSettings({
       >
         {(visible) =>
           visible.map((group) => {
-            const form = anchors[group.key] ?? blankAnchor();
+            const form = anchors[group.key] ?? fallbackAnchor();
+            const clock = referenceClock(
+              graph.timeReferences.get(group.inputIds[0]),
+            );
             const patch = (value: Partial<AnchorForm>) =>
               patchAnchor(group.key, value);
             return (
@@ -1022,13 +1060,23 @@ function AlignSettings({
                     patch({ mode: value as AnchorForm['mode'] })
                   }
                   items={[
+                    ...(clock || form.mode === 'clock'
+                      ? [{ value: 'clock', label: 'By clock time' }]
+                      : []),
                     { value: 'start', label: 'Where the signal starts' },
                     { value: 'offset', label: 'Shift by a fixed time' },
                     { value: 'point', label: 'A time I enter' },
                     { value: 'event', label: 'When a signal crosses a level' },
                   ]}
                 />
-                {form.mode !== 'start' && (
+                {form.mode === 'clock' && (
+                  <p>
+                    {clock
+                      ? `Starts ${describeClock(clock, graph.ranges.get(group.inputIds[0])?.[0] ?? 0)}`
+                      : 'These signals have no clock time. Choose another anchor.'}
+                  </p>
+                )}
+                {form.mode !== 'start' && form.mode !== 'clock' && (
                   <RegionNumber
                     label={
                       form.mode === 'offset'
@@ -1138,16 +1186,37 @@ function TimePreview({
   // aligned = target + scale × (time − anchor).
   const mapping = new Map<string, (time: number) => number>();
   let events = false;
+  let timeline: TimeReference | undefined;
+  try {
+    timeline = align ? alignedReference(graph, align) : undefined;
+  } catch {
+    timeline = undefined;
+  }
   if (align)
     for (const group of align.groups) {
-      const anchorTime = (anchor?: TimeAnchor) =>
-        anchor?.kind === 'point'
+      const anchorTime = (anchor: TimeAnchor | undefined, target: number) => {
+        if (anchor?.kind === 'clock') {
+          try {
+            return (
+              timeline!.clock!.start -
+              groupClock(graph, group.inputIds).start +
+              target
+            );
+          } catch {
+            return undefined;
+          }
+        }
+        return anchor?.kind === 'point'
           ? anchor.time
           : anchor?.kind === 'start'
             ? graph.ranges.get(group.inputIds[0])?.[0]
             : undefined;
-      const first = anchorTime(group.anchor);
-      const second = anchorTime(group.secondAnchor);
+      };
+      const first = anchorTime(group.anchor, align.target);
+      const second = anchorTime(
+        group.secondAnchor,
+        align.secondTarget ?? align.target,
+      );
       if (first === undefined) {
         events = true;
         continue;

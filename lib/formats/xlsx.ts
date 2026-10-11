@@ -2,8 +2,9 @@
  * Excel .xlsx/.xlsm workbooks. Every worksheet with numbers in column A
  * becomes a table: row 1 names the channels (“Torque [Nm]” gives a unit),
  * column A is time in seconds, or seconds since the first row when it holds
- * dates. Parts are inflated and scanned as streams by a small XML tokenizer,
- * so a large sheet never sits in memory as a whole.
+ * dates (whose first row then sets the clock time). Parts are inflated and
+ * scanned as streams by a small XML tokenizer, so a large sheet never sits in
+ * memory as a whole.
  */
 import {
   BLOCK_ROWS,
@@ -19,6 +20,8 @@ import type {
   RecordingFile,
   RecordingTable,
 } from './recording';
+import { localOffset } from '../clock-time';
+import type { TimeClock } from '../time-types';
 
 /** Data rows read by open() to find column A's type and the used columns. */
 const PREVIEW_ROWS = 100;
@@ -389,6 +392,25 @@ function dateFormat(id: number, code?: string) {
   return /[dmyhs]/i.test(section);
 }
 
+/**
+ * The clock of a date-formatted column A from its first serial. Serials are
+ * local wall-clock days since 1899-12-30 (or 1904-01-01), read in this
+ * device's zone; a serial below 1 is a time of day without a date.
+ */
+function serialClock(serial: number, date1904: boolean): TimeClock | undefined {
+  if (!Number.isFinite(serial) || serial < 0) return undefined;
+  // Serial days carry about 10 µs of precision; round to 0.1 ms like times.
+  if (serial < 1)
+    return {
+      start: Math.round(serial * 864e6) / 1e4,
+      offset: 0,
+      undated: true,
+    };
+  const wall = Math.round((serial - (date1904 ? 24107 : 25569)) * 864e6) / 1e4;
+  const offset = localOffset(Math.floor(wall));
+  return { start: wall - offset * 60, offset };
+}
+
 type Sheet = {
   name: string;
   entry: Entry;
@@ -474,8 +496,13 @@ export async function openXlsx(file: Blob): Promise<RecordingFile> {
     throw new Error(NOT_XLSX);
   }
   const sheetList: { name: string; id: string }[] = [];
+  let date1904 = false;
   await scanPart(file, bytes, workbook, {
     open(name, raw) {
+      if (name === 'workbookPr') {
+        const flag = attributes(raw).date1904;
+        date1904 = flag === '1' || flag === 'true';
+      }
       if (name !== 'sheet') return;
       const attrs = attributes(raw);
       sheetList.push({ name: attrs.name ?? '', id: attrs.id ?? '' });
@@ -523,6 +550,7 @@ export async function openXlsx(file: Blob): Promise<RecordingFile> {
     let dataRows = 0;
     let rowCells = 0;
     let timeStyle: number | undefined;
+    let firstTime = NaN;
     const numeric = new Set<number>();
     const textual = new Set<number>();
     let done = false;
@@ -536,8 +564,14 @@ export async function openXlsx(file: Blob): Promise<RecordingFile> {
           else {
             rowCells++;
             (cell.kind === 'number' ? numeric : textual).add(column);
-            if (column === 0 && cell.kind === 'number')
-              timeStyle ??= cell.style;
+            if (
+              column === 0 &&
+              cell.kind === 'number' &&
+              timeStyle === undefined
+            ) {
+              timeStyle = cell.style;
+              firstTime = cell.number;
+            }
           }
         },
         row() {
@@ -584,9 +618,10 @@ export async function openXlsx(file: Blob): Promise<RecordingFile> {
         `The sheet “${name}” has ${columns.length.toLocaleString()} columns; a recording can have at most ${MAX_RECORDING_CHANNELS.toLocaleString()} signals.`,
       );
     const dates = !!dateStyles[timeStyle];
+    const clock = dates ? serialClock(firstTime, date1904) : undefined;
     const sheetNotes = dates
       ? [
-          'Column A holds dates or times; time is in seconds since the first row.',
+          `Column A holds dates or times; time is in seconds since the first row${clock ? ', and its clock time is kept' : ''}.`,
         ]
       : [];
     const sheet: Sheet = {
@@ -602,6 +637,7 @@ export async function openXlsx(file: Blob): Promise<RecordingFile> {
         channels: [],
         rows: dimensionEnd > headerRow ? dimensionEnd - headerRow : undefined,
         notes: [...sheetNotes],
+        ...(clock ? { clock } : {}),
       },
     };
     sheets.push(sheet);

@@ -1,3 +1,4 @@
+import { referenceClock } from './time-types';
 import { renderToStaticMarkup } from 'react-dom/server';
 import SignalChart, {
   formatValue,
@@ -273,6 +274,15 @@ export async function captureReportPlot(
       valueAxes: panel.axes,
       traceId: stacked ? first?.node.id : undefined,
       timeLabel: sheet.zeroTime ? 'Elapsed time (s)' : 'Time (s)',
+      // Clock labels need one time reference on the axis.
+      clock:
+        sheet.clockTime && !sheet.zeroTime && panelClocks.length === 1
+          ? referenceClock(
+              [...graph.timeReferences.values()].find(
+                (reference) => reference.id === panelClocks[0],
+              ),
+            )
+          : undefined,
       cursors:
         sheet.measuring && !independent
           ? (sheet.cursors ?? [

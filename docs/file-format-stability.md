@@ -26,7 +26,10 @@ a newer one.
 - **Time** is in seconds. Raw timestamps are the recording's own axis, strictly
   increasing; intervals exclude their end unless it is a recording/parent end
   (migrated legacy intervals keep inclusive ends). `createdAt`/`updatedAt` are
-  ISO 8601 UTC strings.
+  ISO 8601 UTC strings. A recording or time reference may carry a `clock`
+  (`start`: Unix seconds of axis time 0; `offset`: whole minutes east of UTC;
+  optional `undated: true`); sample times stay relative to it. An `absolute`
+  time reference without a clock counts Unix seconds.
 - **Units** are free text. Stratum never converts implicitly, and labels keep
   their meaning: a registered label's factor never changes, so saved `convert`
   steps stay exact. `lib/units.ts` recognises registered labels, SI-prefixed
@@ -57,7 +60,9 @@ Versioned NDJSON (`lib/workspace-archive.ts`): a header record
 its pre-rename spelling), sample column records, then a completion record
 that counts them. Version 2 added file segments (`segmentSets`, and `within`,
 `segmentInputIds` and `segmentId` on steps, signals and values); version 1
-backups still restore. The header always comes first. Since 1.0 it also carries
+backups still restore. Clock times (`clock` on recordings and time
+references, and `clock` alignment anchors) were added to version 2 before 1.0
+shipped, so 1.0 reads them. The header always comes first. Since 1.0 it also carries
 optional `app` (the writing Stratum version), `createdAt` (ISO UTC) and
 `schema` (`WORKSPACE_SCHEMA_VERSION`); readers must not require them, so
 earlier backups still restore. `ARCHIVE_VERSION` is written and is the newest
@@ -89,7 +94,8 @@ bump.
   binding, and takes only `count` and `duration` checks. A `value` step with
   `function: calculate` is a formula over earlier value steps (`expression`,
   `unit`, `values`; `a` is each input value). It was added to version 2
-  before 1.0 shipped, so 1.0 reads it.
+  before 1.0 shipped, so 1.0 reads it, as it reads `anchor: { kind: clock }`
+  (line groups up by clock time) on `time` `align` steps.
 - **Version 1**: a `segment` step crops its `input`/`inputs` into signals
   (`independently`, `scope`). Version 1 files keep this meaning and replay as
   before; `within` is refused in them. Stratum writes version 2, except that a

@@ -43,6 +43,7 @@ import {
   ArrowUp,
   ArrowDown,
   LockKeyhole,
+  Clock3,
   FilePlus2,
   MoreHorizontal,
 } from 'lucide-react';
@@ -76,6 +77,7 @@ import type {
   Project,
 } from '@/lib/signal-types';
 import type { SignalGraph } from '@/lib/signal-graph';
+import { referenceClock } from '@/lib/time-types';
 import type { WorkflowIndex } from '@/lib/workflow-history';
 import { usePlotView } from '@/hooks/use-plot-view';
 import type { PlotJob } from '@/lib/plot-view';
@@ -375,6 +377,21 @@ export default function PlotScratchpad({
     );
     return [...new Set(names.filter(Boolean))].join(' · ');
   }
+  /** The clock a panel's time axis is labelled with, if any. */
+  function clockFor(clockId: string | undefined) {
+    if (!sheet.clockTime || sheet.zeroTime || !clockId) return undefined;
+    for (const reference of graph.timeReferences.values())
+      if (reference.id === clockId) return referenceClock(reference);
+    return undefined;
+  }
+  const clockAvailable =
+    !sheet.zeroTime &&
+    (stacked || clocks.size === 1) &&
+    [...clocks].some((id) =>
+      [...graph.timeReferences.values()].some(
+        (reference) => reference.id === id && referenceClock(reference),
+      ),
+    );
   function plotJobs(viewport: PlotRange): PlotJob[] {
     return visibleIds
       .filter((id) => index.nodes.has(id))
@@ -768,6 +785,8 @@ export default function PlotScratchpad({
       valueAxes:
         valueAxes ?? axisGroups.filter((axis) => shownAxes.has(axis.key)),
       timeLabel: sheet.zeroTime ? 'Elapsed time (s)' : 'Time (s)',
+      // Clock labels need one time reference on the axis.
+      clock: clockIds.length === 1 ? clockFor(clockIds[0]) : undefined,
       onValueRange: (key, range) => {
         rememberView();
         setValueAxis(key, {
@@ -1555,6 +1574,24 @@ export default function PlotScratchpad({
                         >
                           <MoveHorizontal size={14} />
                           <span>Align starts</span>
+                        </button>
+                      )}
+                      {(clockAvailable || !!sheet.clockTime) && (
+                        <button
+                          aria-label="Label time with clock times"
+                          aria-pressed={!!sheet.clockTime && !sheet.zeroTime}
+                          disabled={!clockAvailable}
+                          title={
+                            clockAvailable
+                              ? 'Label the time axis with the clock times the recordings started at'
+                              : 'Clock time needs traces with a clock on one time reference, or Stacked panels'
+                          }
+                          onClick={() =>
+                            update({ clockTime: !sheet.clockTime })
+                          }
+                        >
+                          <Clock3 size={14} />
+                          <span>Clock time</span>
                         </button>
                       )}
                     </fieldset>

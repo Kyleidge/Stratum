@@ -23,7 +23,9 @@ containing its current traces.
 | Scalar value               | Add a dashed reference line over its evaluated interval | Select its input signal, with an explanation in the editor |
 
 Turn on **Align starts** to compare segments by elapsed time. This is a display
-setting; it does not change timestamps or create a workflow operation.
+setting; it does not change timestamps or create a workflow operation. For
+recordings that know their clock time, **Clock time** labels the time axis with
+clock times instead of seconds; it is also a display setting.
 **Overlay** draws traces on one time axis and gives each unit its own lane;
 **Y axes** overlays different units on independent scales; **Stacked** gives each
 trace a panel. Traces need a shared clock, or elapsed-time display, to share a

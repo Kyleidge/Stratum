@@ -5,7 +5,12 @@ import {
   isArithmetic,
   isBinaryOperation,
 } from './signal-arithmetic';
-import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
+import {
+  TIME_OPERATIONS,
+  timeInputs,
+  COMPARISON_MATH,
+  clockProblem,
+} from './time-types';
 import { validateTimeRecipe, validateTimeSettings } from './time-model';
 import type { Project, SegmentationDefinition } from './signal-types';
 import { validateWorkflowRecords } from './workflow-checks';
@@ -317,6 +322,10 @@ export function validateWorkspace(value: unknown): Project {
       !source.channels.length
     )
       throw new Error('Invalid recording metadata.');
+    if (source.clock !== undefined && clockProblem(source.clock))
+      throw new Error(
+        `Invalid recording start time: ${clockProblem(source.clock)}`,
+      );
     source.channels.forEach((id, channel) => {
       const node = nodes.get(id);
       if (
@@ -387,7 +396,10 @@ export function validateWorkspace(value: unknown): Project {
         !node.timeReference.id ||
         typeof node.timeReference.name !== 'string' ||
         !node.timeReference.name.trim() ||
-        !['relative', 'absolute'].includes(node.timeReference.kind))
+        !['relative', 'absolute'].includes(node.timeReference.kind) ||
+        (node.timeReference.clock !== undefined &&
+          (node.timeReference.kind !== 'absolute' ||
+            !!clockProblem(node.timeReference.clock))))
     )
       throw new Error('Invalid time reference.');
     if (node.operation in TIME_OPERATIONS || node.timeRecipe) {

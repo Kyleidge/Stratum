@@ -10,8 +10,14 @@ import type { RecordingFile } from './formats/recording';
 import type { DelimitedLayout } from './formats/delimited-layout';
 import { SignalGraph } from './signal-graph';
 import { timeNodes, workspaceTimeScope } from './time-model';
-import { TIME_OPERATIONS, timeInputs } from './time-types';
-import type { TimeSettings } from './time-types';
+import {
+  TIME_OPERATIONS,
+  clockProblem,
+  referenceClock,
+  timeInputs,
+} from './time-types';
+import { isoClockTime } from './clock-time';
+import type { TimeClock, TimeSettings } from './time-types';
 import {
   CHECKPOINT_FIELDS,
   CHECKPOINTED,
@@ -1780,10 +1786,17 @@ export class SignalEngine {
           ),
         );
         nodes.push(...channels);
+        const { clock: blockClock, ...stored } = written;
+        const clock = blockClock ?? table.clock;
+        if (clock && clockProblem(clock))
+          throw new Error(
+            `${grouped ? `${table.name}: ` : ''}The file’s start time cannot be read.`,
+          );
         sources.push({
           id,
           name: grouped ? `${fileName} · ${tableName(index)}` : fileName,
-          ...written,
+          ...stored,
+          ...(clock ? { clock: { ...clock } } : {}),
           bytes: written.rows * (channels.length + 1) * 8,
           channels: channels.map((node) => node.id),
           synthetic: options.synthetic ?? false,
@@ -1830,6 +1843,7 @@ export class SignalEngine {
     let start = 0;
     let end = -Infinity;
     const chunkRanges: [number, number][] = [];
+    let clock: TimeClock | undefined;
     let overview: IndexBuilder[] | undefined = [];
     const flush = async () => {
       if (!fill) return;
@@ -1867,6 +1881,7 @@ export class SignalEngine {
       )
         throw new Error('The file reader returned columns of unequal length.');
       if (!rows && count) start = block.time[0];
+      clock ??= block.clock;
       for (let r = 0; r < count;) {
         const take = Math.min(count - r, CHUNK_SIZE - fill);
         for (let k = r; k < r + take; k++) {
@@ -1901,7 +1916,7 @@ export class SignalEngine {
     if (overview)
       for (const [c, builder] of overview.entries())
         await this.writeIndex([id, 0, indexKey(c)], builder.finish(rows));
-    return { rows, chunks, start, end, chunkRanges };
+    return { rows, chunks, start, end, chunkRanges, clock };
   }
   async workflowExample(refresh = false, sourceId?: string) {
     const existing = sourceId
@@ -5222,10 +5237,19 @@ export class SignalEngine {
       limit,
       'Samples CSV exceeds the 64 MiB export limit. Export fewer signals or shorter segments.',
     );
+    // Signals whose time tells clock time add their samples' clock times.
+    const clocks = new Map(
+      [...new Set(ids)].map((id) => [
+        id,
+        referenceClock(this.graph().timeReferences.get(id)),
+      ]),
+    );
+    const withClock = [...clocks.values()].some(Boolean);
     await out.write(
-      'Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value\r\n',
+      `Signal,Signal ID,Recording,Unit,Time reference,Time reference ID,Time meaning,Time (s),Value${withClock ? ',Clock time' : ''}\r\n`,
     );
     for (const id of new Set(ids)) {
+      const clock = clocks.get(id);
       const node = this.find(id);
       const source = this.project.sources.find(
         (item) => item.id === node.sourceId,
@@ -5260,7 +5284,7 @@ export class SignalEngine {
         const lines: string[] = [];
         for (let i = 0; i < chunk.time.length; i++)
           lines.push(
-            `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}\r\n`,
+            `${prefix},${chunk.time[i]},${Number.isFinite(chunk.values[i]) ? chunk.values[i] : ''}${withClock ? `,${clock ? isoClockTime(clock, chunk.time[i]) : ''}` : ''}\r\n`,
           );
         await out.write(lines.join(''));
         this.check();

@@ -7,10 +7,48 @@ independent, undoable operation if a later file fails or is cancelled.
 
 Sources, time references and sample grids are separate concepts. A source owns
 immutable imported columns. A time reference names the meaning of timestamps.
-A grid contains the actual sample timestamps, which may be irregular. Imports
-currently accept strictly increasing numeric seconds and initially have separate
-relative time references. Date-string parsing and automatic clock discovery are
-not included. Equal numbers in two files never establish a clock relationship.
+A grid contains the actual sample timestamps, which may be irregular. Every
+recording starts on its own time reference. Equal numbers in two files never
+establish a clock relationship; only clock times do.
+
+## Relative and absolute (clock) time
+
+Sample times are always seconds on the recording's own axis, strictly
+increasing. A recording whose file says when it happened also keeps a
+**clock** (`TimeClock` in `lib/time-types.ts`): `start`, the Unix time (UTC
+seconds) of axis time 0; `offset`, the minutes east of UTC the file's clock
+showed, in which its times are shown; and `undated` for files that give times
+of day without dates. Times stay small numbers relative to `start`, so a
+microsecond recording keeps its resolution; a Unix-seconds double would not.
+Its time reference is then `absolute` with that clock; without one it is
+`relative` (elapsed time from an unknown instant).
+
+Clocks come from:
+
+- **Delimited text** time columns read as _Date and time_ (ISO 8601 such as
+  `2026-10-10T14:03:22.120+01:00`, `2026/10/10 14:03`, `10.10.2026 14:03:22`,
+  `10/10/2026 2:03 PM`, a date alone, or a time of day alone) or _Unix time_
+  (numbers in any unit of time since 1970-01-01 UTC). Time 0 is the first row.
+  Text without a zone is read in the chosen zone, by default this computer's
+  zone at the first row, kept for the whole recording so a daylight-saving
+  change never makes time jump. Text with a zone (`Z`, `+01:00`) keeps it. Day
+  and month order is detected from dates that settle it, otherwise from the
+  computer's language (month first only in US English) and can be chosen in
+  the import dialog. Times of day pass midnight when they fall back by more
+  than 12 hours. A file with separate date and time columns imports with the
+  time-of-day column as its clock.
+- **MDF 4 and 3** header start times, **TDMS** `wf_start_time` or timestamp
+  axes, and **Excel** date-formatted time columns (see `docs/file-formats.md`).
+
+Derived signals inherit the clock with their time reference. **Time shift**
+keeps it (a shift corrects a clock), and **Zero time** moves it to the
+signal's start, so clock times are unchanged. Details shows a signal's clock
+start, and **Clock time** on the plot toolbar labels a time axis that shows
+one time reference (one recording, or a Stacked panel) with clock times
+(ticks at round seconds, minutes and hours, the date at midnight and in the
+axis title); it is a display setting saved with the plot. Samples CSV adds
+a `Clock time` column (ISO 8601 with the clock's offset, to the microsecond)
+when an exported signal has a clock; it is blank for those without.
 
 ## Compare and align
 
@@ -32,7 +70,15 @@ applies to the entire selected group, preserving channel delays. Alternatively,
 align each signal separately, for example to compare repeated segments.
 
 Supported anchors are group start, a signed manual offset, a selected timestamp,
-or a numbered rising/falling threshold event with an optional signed offset.
+**clock time**, or a numbered rising/falling threshold event with an optional
+signed offset. Lining up recordings that have clocks defaults to clock time.
+Clock anchors put every group on a timeline that tells clock time: an existing
+one keeps its clock, and a new one starts at the earliest first sample of the
+clock-anchored groups, shown in the first group's offset; the line-up time is
+seconds from that instant. A group whose time reference has no clock, or a mix
+of dated and time-of-day clocks, is refused. A relative timeline cannot take
+clock anchors. Clock times are only as right as the recorders' clocks: correct
+a known offset with an extra shift, or drift with a second anchor.
 Threshold crossings interpolate adjacent finite samples and never bridge missing
 samples. The event signal is an explicit lineage dependency. A missing event
 rejects the whole operation.

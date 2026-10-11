@@ -727,12 +727,12 @@ function readAnchor(
   const map = reader.map(value, context);
   const kind = reader.choice(
     map.kind,
-    ['point', 'start', 'event'],
+    ['point', 'start', 'clock', 'event'],
     `${context} kind`,
     undefined,
     map,
   );
-  if (kind === 'start') {
+  if (kind === 'start' || kind === 'clock') {
     reader.keys(map, ['kind'], context);
     return { kind };
   }

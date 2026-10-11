@@ -6,6 +6,9 @@ import { compileFormula, openMdf } from '../lib/formats/mdf';
 import { BLOCK_ROWS, MAX_RECORDING_CHANNELS } from '../lib/formats/recording';
 import type { RecordingFile } from '../lib/formats/recording';
 
+// Clock tests read header times in a fixed zone with daylight saving.
+process.env.TZ = 'Europe/Berlin';
+
 const fixtures = new URL('./fixtures/formats/', import.meta.url);
 
 type Expected = {
@@ -70,6 +73,10 @@ for (const name of [
     assert.deepEqual(file.tables[0].notes, [
       'Text labels were not applied to Gear; raw values are shown.',
     ]);
+    // asammdf writes 2024-01-02 03:04:05 UTC with a zero offset (MDF 3 as a
+    // local time stamp with a 0 h offset); every table here is timed.
+    for (const table of file.tables)
+      assert.deepEqual(table.clock, { start: 1_704_164_645, offset: 0 });
     for (const [t, want] of expected.tables.entries()) {
       const table = file.tables[t];
       assert.deepEqual(
@@ -150,6 +157,14 @@ class Mdf4 {
   }
   ascii(at: number, text: string) {
     this.out.set(at, new TextEncoder().encode(text));
+  }
+  /** Sets the header's start time fields. */
+  start(ns: bigint, flags: number, tz = 0, dst = 0) {
+    const hd = this.out.view(64 + 24 + 6 * 8, 32);
+    hd.setBigUint64(0, ns, true);
+    hd.setInt16(8, tz, true);
+    hd.setInt16(10, dst, true);
+    hd.setUint8(12, flags);
   }
   /** Appends a block; returns its offset and a view of its data section. */
   block(id: string, links: number[], dataSize: number, length?: number) {
@@ -585,6 +600,50 @@ void test('a virtual angle master, missing masters and nested conversions', asyn
   ]);
 });
 
+void test('the header start time is the clock of time-mastered tables', async () => {
+  const open = async (ns: bigint, flags: number, tz = 0, dst = 0) => {
+    const m = new Mdf4();
+    m.start(ns, flags, tz, dst);
+    const time = m.channels([
+      { name: 't', type: 3, sync: 1, conversion: m.cc(1, [0, 0.5]) },
+      { name: 'A', type: 6 },
+    ]);
+    const angle = m.channels([
+      { name: 'Crank', type: 3, sync: 2, unit: 'rad' },
+      { name: 'B', type: 6 },
+    ]);
+    const plain = m.channels([{ name: 'C', type: 6 }]);
+    const groups = [time, angle, plain].map((channels) =>
+      m.groups([{ cycles: 2, dataBytes: 0, channels }]),
+    );
+    const file = await openMdf(
+      m.finish(groups.map((cg) => ({ groups: cg, data: 0 }))),
+    );
+    // Only the time master counts from the start time.
+    assert.equal(file.tables[1].clock, undefined);
+    assert.equal(file.tables[2].clock, undefined);
+    return file.tables[0].clock;
+  };
+  // UTC with valid offsets: shown at tz + dst, nanoseconds kept.
+  assert.deepEqual(await open(BigInt('1700000000123456789'), 2, 60, 60), {
+    start: 1_700_000_000 + 0.123456789,
+    offset: 120,
+  });
+  // UTC without valid offsets: shown as UTC.
+  assert.deepEqual(await open(BigInt(1.7e18), 0, 60, 60), {
+    start: 1_700_000_000,
+    offset: 0,
+  });
+  // Local time in an unknown zone: read in this device's zone (CEST).
+  const wall = Date.UTC(2024, 6, 1, 12) / 1000;
+  assert.deepEqual(await open(BigInt(wall) * BigInt(1e9) + BigInt(250), 1), {
+    start: wall - 7200 + 2.5e-7,
+    offset: 120,
+  });
+  // Zero is an unknown start time.
+  assert.equal(await open(BigInt(0), 2), undefined);
+});
+
 void test('groups of only virtual channels need no data blocks', async () => {
   const m = new Mdf4();
   const cn = m.channels([
@@ -804,12 +863,15 @@ const latin1 = (text: string) =>
 
 class Mdf3 {
   out = new Bytes();
-  constructor(private little: boolean) {
+  constructor(
+    private little: boolean,
+    hdSize = 164,
+  ) {
     this.out.reserve(64);
     this.out.set(0, new TextEncoder().encode('MDF     3.30    test    '));
     this.out.view(24, 2).setUint16(0, little ? 0 : 1, true);
     this.u16(28, 330);
-    const hd = this.block('HD', 164);
+    const hd = this.block('HD', hdSize);
     assert.equal(hd, 64);
   }
   u16(at: number, value: number) {
@@ -1068,4 +1130,45 @@ void test('formulas compile without eval and reject anything else', () => {
     'X; alert(1)',
   ])
     assert.equal(compileFormula(bad), null, bad);
+});
+
+void test('MDF 3 start times: the 3.20 time stamp, else date and time text', async () => {
+  const open = async (m: Mdf3) => {
+    const time = m.channels([
+      { name: 'time', type: 1, bits: 16, dataType: 0 },
+      { name: 'x', start: 16, bits: 8, dataType: 0 },
+    ]);
+    const file = await openMdf(
+      m.finish(m.group(time, 0, 3, 2), 0, new Uint8Array(6)),
+    );
+    return file.tables[0].clock;
+  };
+  // A local time stamp with its UTC offset in hours (big-endian here).
+  const stamped = new Mdf3(false, 208);
+  stamped.out.set(64 + 18, latin1('01:01:1999'));
+  stamped.out.set(64 + 28, latin1('00:00:00'));
+  stamped.out
+    .view(64 + 164, 8)
+    .setBigUint64(0, BigInt('1700007200000000001'), false);
+  stamped.out.view(64 + 172, 2).setInt16(0, 2, false);
+  assert.deepEqual(await open(stamped), {
+    start: 1_700_000_000 + 1e-9,
+    offset: 120,
+  });
+  // Without a time stamp: local wall time on this device (CET in January).
+  for (const size of [164, 208]) {
+    const dated = new Mdf3(true, size);
+    dated.out.set(64 + 18, latin1('02:01:2024'));
+    dated.out.set(64 + 28, latin1('03:04:05'));
+    assert.deepEqual(await open(dated), {
+      start: Date.UTC(2024, 0, 2, 3, 4, 5) / 1000 - 3600,
+      offset: 60,
+    });
+  }
+  // Blank or impossible dates give no clock.
+  assert.equal(await open(new Mdf3(true)), undefined);
+  const wrong = new Mdf3(true);
+  wrong.out.set(64 + 18, latin1('31:04:2024'));
+  wrong.out.set(64 + 28, latin1('03:04:05'));
+  assert.equal(await open(wrong), undefined);
 });

@@ -1,6 +1,18 @@
 import type { Project, SignalNode, Source } from './signal-types';
-import type { TimeAnchor, TimeRecipe, TimeSettings } from './time-types';
-import { TIME_OPERATIONS, timeInputs, COMPARISON_MATH } from './time-types';
+import type {
+  TimeAnchor,
+  TimeClock,
+  TimeRecipe,
+  TimeReference,
+  TimeSettings,
+} from './time-types';
+import {
+  TIME_OPERATIONS,
+  timeInputs,
+  COMPARISON_MATH,
+  clockProblem,
+  referenceClock,
+} from './time-types';
 import { arithmeticUnit } from './signal-arithmetic';
 import { SignalGraph } from './signal-graph';
 import { CrossingDetector, validTriggerNoise } from './segmentation';
@@ -103,6 +115,12 @@ export function validateTimeSettings(settings: TimeSettings) {
       !['absolute', 'relative'].includes(settings.reference.kind)
     )
       throw new Error('Name the comparison time reference.');
+    if (settings.reference.clock !== undefined) {
+      const problem = clockProblem(settings.reference.clock);
+      if (problem) throw new Error(problem);
+      if (settings.reference.kind !== 'absolute')
+        throw new Error('Only a clock-time timeline can have a start time.');
+    }
     finite(settings.target);
     if (settings.secondTarget !== undefined) finite(settings.secondTarget);
     if (!Array.isArray(settings.groups) || !settings.groups.length)
@@ -123,7 +141,7 @@ export function validateTimeSettings(settings: TimeSettings) {
           )
             throw new Error('Choose an edge and positive event occurrence.');
           finite(anchor.trigger.threshold, anchor.trigger.offset);
-        } else if (anchor.kind !== 'start')
+        } else if (anchor.kind !== 'start' && anchor.kind !== 'clock')
           throw new Error('Invalid time anchor.');
       }
       if (
@@ -161,6 +179,72 @@ export function validateTimeSettings(settings: TimeSettings) {
     throw new Error('Limit this operation to 10,000 inputs.');
 }
 
+type AlignSettings = Extract<TimeSettings, { kind: 'align' }>;
+
+const usesClock = (group: AlignSettings['groups'][number]) =>
+  group.anchor.kind === 'clock' || group.secondAnchor?.kind === 'clock';
+
+/** The clock of a group of signals that share a time reference. */
+export function groupClock(graph: SignalGraph, ids: string[]): TimeClock {
+  const reference = graph.timeReferences.get(ids[0])!;
+  const clock = referenceClock(reference);
+  if (!clock)
+    throw new Error(
+      `${reference.name} has no clock time, so it cannot be lined up by clock. Choose another anchor for it.`,
+    );
+  return clock;
+}
+
+/**
+ * The timeline aligned results use. With clock anchors it tells clock
+ * time: the chosen reference's clock, or one starting at the earliest first
+ * sample of the clock-anchored groups.
+ */
+export function alignedReference(
+  graph: SignalGraph,
+  settings: AlignSettings,
+): TimeReference {
+  const clocked = settings.groups.filter(usesClock);
+  if (!clocked.length) return structuredClone(settings.reference);
+  const clocks = clocked.map((group) => groupClock(graph, group.inputIds));
+  if (new Set(clocks.map((clock) => !!clock.undated)).size > 1)
+    throw new Error(
+      'Recordings with dates and recordings with only times of day cannot be lined up by clock time.',
+    );
+  // An existing timeline keeps its clock; a legacy clock-time timeline
+  // counts Unix seconds.
+  const existing = [...graph.timeReferences.values()].find(
+    (reference) => reference.id === settings.reference.id,
+  );
+  if (existing && !referenceClock(existing))
+    throw new Error(
+      `${existing.name} does not tell clock time. Line signals up by clock on a new timeline or one that does.`,
+    );
+  const chosen = settings.reference.clock ?? referenceClock(existing);
+  if (chosen && !!chosen.undated !== !!clocks[0].undated)
+    throw new Error(
+      'This timeline’s clock and the signals’ clocks differ: one has dates, the other only times of day.',
+    );
+  const start = Math.min(
+    ...clocked.map(
+      (group, index) =>
+        clocks[index].start +
+        Math.min(...group.inputIds.map((id) => graph.ranges.get(id)![0])),
+    ),
+  );
+  return {
+    ...structuredClone(settings.reference),
+    kind: 'absolute',
+    clock: chosen
+      ? { ...chosen }
+      : {
+          start,
+          offset: clocks[0].offset,
+          ...(clocks[0].undated ? { undated: true as const } : {}),
+        },
+  };
+}
+
 export async function timeNodes(
   project: Project,
   settings: TimeSettings,
@@ -180,6 +264,8 @@ export async function timeNodes(
       );
     return reference;
   };
+  const aligned =
+    settings.kind === 'align' ? alignedReference(graph, settings) : undefined;
   const add = (
     inputId: string,
     recipe: TimeRecipe,
@@ -199,7 +285,7 @@ export async function timeNodes(
       timeRecipe: recipe,
       timeReference:
         settings.kind === 'align'
-          ? structuredClone(settings.reference)
+          ? structuredClone(aligned)
           : graph.timeReferences.get(inputId),
       color: parent.color,
       createdAt: new Date().toISOString(),
@@ -210,8 +296,12 @@ export async function timeNodes(
   async function anchorTime(
     anchor: TimeAnchor,
     ids: string[],
+    target: number,
   ): Promise<number> {
     if (anchor.kind === 'point') return anchor.time;
+    // The group's own time of the instant `target` stands for.
+    if (anchor.kind === 'clock')
+      return aligned!.clock!.start - groupClock(graph, ids).start + target;
     if (anchor.kind === 'start') return graph.ranges.get(ids[0])![0];
     sameClock([...ids, anchor.trigger.signalId]);
     const detector = new CrossingDetector(anchor.trigger);
@@ -231,9 +321,17 @@ export async function timeNodes(
     for (const group of settings.groups) {
       check();
       sameClock(group.inputIds);
-      const anchor = await anchorTime(group.anchor, group.inputIds);
+      const anchor = await anchorTime(
+        group.anchor,
+        group.inputIds,
+        settings.target,
+      );
       const second = group.secondAnchor
-        ? await anchorTime(group.secondAnchor, group.inputIds)
+        ? await anchorTime(
+            group.secondAnchor,
+            group.inputIds,
+            settings.secondTarget!,
+          )
         : undefined;
       const scale =
         second === undefined

@@ -1252,6 +1252,12 @@
 .import-row select[aria-invalid='true'] {
   border-color: var(--danger);
 }
+/* Time format, unit or order, and zone share the unit column. */
+.time-format-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
 .import-list-more {
   margin: 0;
   padding: 12px;
