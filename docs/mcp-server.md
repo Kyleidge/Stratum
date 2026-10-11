@@ -1,10 +1,16 @@
 # Stratum MCP server
 
-`mcp/` is a [Model Context Protocol](https://modelcontextprotocol.io) server
-that lets an agent (Claude Code, Codex or any MCP client) test Stratum
-directly: run the real signal engine headlessly, and drive the real workbench
-in a hidden Electron window. It is a development tool. It is not part of the
-shipped app and adds no dependencies.
+`mcp/` is a [Model Context Protocol](https://modelcontextprotocol.io) server.
+It is a user feature: it lets a user's AI assistant (Claude Desktop or any MCP
+client) work in their Stratum workspace through the same operations the
+workbench offers. Its tools are a public interface; change them as carefully
+as a file format. It adds no dependencies.
+
+This page describes the developer harness in the repository: the same tools
+with a headless engine target and `ui_*` tools that drive a hidden Electron
+window, for testing Stratum and the server itself. The user-facing entry
+point (`Stratum.exe --mcp`, working on the user's live workspace with their
+consent) builds on it.
 
 ## Setup
 

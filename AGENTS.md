@@ -285,7 +285,9 @@ There are no server API routes or cloud signal uploads.
   once at the next launch. Smoke runs (`--smoke`, `--ui-smoke`,
   `--backup-smoke`; temporary profile only) answer dialogs from `outputs/`.
 - MCP server (`mcp/`, `docs/mcp-server.md`, `.mcp.json`; `node mcp/start.mjs`):
-  dependency-free stdio MCP for agents testing Stratum. Engine tools run the
+  dependency-free stdio MCP. It is a user feature (AI assistants working in
+  the user's workspace); its tool names and inputs are a public interface,
+  so keep them stable. In the repository it is also the test harness: engine tools run the
   real `SignalEngine` in memory (fake-indexeddb); with `target: "ui"` they go
   through the workbench's own worker in a `ui_launch` session, which runs
   `desktop/main.mjs --automation` (hidden, offscreen, temporary profile,
