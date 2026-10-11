@@ -17,6 +17,7 @@ import {
   AlertDialogFooter,
 } from '@/components/ui/alert-dialog';
 import { formatCount } from '@/lib/format-count';
+import AssistantSettings from './assistant-settings';
 import {
   desktopBridge,
   fileErrorMessage,
@@ -323,6 +324,9 @@ export default function WorkflowStorage({
                 </p>
               )}
             </>
+          )}
+          {bridge?.assistant && (
+            <AssistantSettings assistant={bridge.assistant} open={open} />
           )}
           <p className="workflow-muted">
             Workflow files (.stratum.yaml) are opened, run and saved from the

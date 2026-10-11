@@ -178,3 +178,18 @@ Values, samples and summary CSV, HTML summaries, report PDFs and plot images
 are outputs for people and other tools. Columns keep their meaning; new
 columns may be added. Stratum reads an exported CSV back only as a new
 recording.
+
+## AI assistant tools (MCP)
+
+The tools Stratum's assistant server offers (`mcp/app-server.ts`, see
+[AI assistants](ai-assistants.md)) are an interface that users' assistants
+and their saved prompts depend on. A tool keeps its name and meaning; an
+argument keeps its name, type and meaning, and no existing tool gains a new
+required argument. Add tools and optional arguments instead. Results may gain
+fields. `tests/mcp-app.test.ts` compares the tools with
+`tests/fixtures/mcp-app-tools.json`; update that file only for an intended,
+compatible addition (`UPDATE_MCP_TOOLS=1 pnpm test`). The private channel
+between the server and the app (`lib/assistant-protocol.ts`) ships inside one
+Stratum version and needs no compatibility. Its settings file
+(`assistant-settings.json` in the profile, `{ "enabled": boolean }`) follows
+the rules above.

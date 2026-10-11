@@ -955,3 +955,7 @@
     max-width: 96px;
   }
 }
+/* An AI assistant's change, above the report toast. */
+.workflow-toast.workflow-assistant-toast {
+  bottom: 92px;
+}

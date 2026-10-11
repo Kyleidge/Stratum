@@ -1,0 +1,208 @@
+[
+  {
+    "name": "stratum_status",
+    "arguments": [],
+    "required": []
+  },
+  {
+    "name": "workspace_save",
+    "arguments": ["overwrite", "path"],
+    "required": ["path"]
+  },
+  {
+    "name": "workspace_open",
+    "arguments": ["path"],
+    "required": ["path"]
+  },
+  {
+    "name": "load_example",
+    "arguments": ["example"],
+    "required": ["example"]
+  },
+  {
+    "name": "undo",
+    "arguments": [],
+    "required": []
+  },
+  {
+    "name": "redo",
+    "arguments": [],
+    "required": []
+  },
+  {
+    "name": "show_in_app",
+    "arguments": ["id"],
+    "required": ["id"]
+  },
+  {
+    "name": "list_history",
+    "arguments": [
+      "limit",
+      "offset",
+      "outputLimit",
+      "recording",
+      "show",
+      "text"
+    ],
+    "required": []
+  },
+  {
+    "name": "describe",
+    "arguments": ["id"],
+    "required": ["id"]
+  },
+  {
+    "name": "search",
+    "arguments": ["limit", "text"],
+    "required": ["text"]
+  },
+  {
+    "name": "list_recordings",
+    "arguments": [],
+    "required": []
+  },
+  {
+    "name": "list_segments",
+    "arguments": ["id"],
+    "required": []
+  },
+  {
+    "name": "list_batches",
+    "arguments": [],
+    "required": []
+  },
+  {
+    "name": "read_samples",
+    "arguments": ["count", "id", "offset"],
+    "required": ["id"]
+  },
+  {
+    "name": "signal_statistics",
+    "arguments": ["ids", "operation", "parameters", "within"],
+    "required": ["ids"]
+  },
+  {
+    "name": "measure",
+    "arguments": ["a", "b", "ids"],
+    "required": ["a", "b", "ids"]
+  },
+  {
+    "name": "plot",
+    "arguments": [
+      "ids",
+      "overwrite",
+      "points",
+      "range",
+      "savePath",
+      "title",
+      "width"
+    ],
+    "required": ["ids"]
+  },
+  {
+    "name": "import_recording",
+    "arguments": [
+      "custom",
+      "layout",
+      "names",
+      "paths",
+      "tableNames",
+      "tables",
+      "units"
+    ],
+    "required": ["paths"]
+  },
+  {
+    "name": "derive",
+    "arguments": [
+      "bindings",
+      "formula",
+      "inputIds",
+      "name",
+      "operation",
+      "parameter",
+      "preview",
+      "range",
+      "unit",
+      "within"
+    ],
+    "required": ["inputIds", "operation"]
+  },
+  {
+    "name": "calculate_values",
+    "arguments": [
+      "bindings",
+      "expression",
+      "inputIds",
+      "name",
+      "operation",
+      "parameters",
+      "preview",
+      "unit",
+      "within"
+    ],
+    "required": ["inputIds", "operation"]
+  },
+  {
+    "name": "segment",
+    "arguments": [
+      "definition",
+      "name",
+      "preview",
+      "referenceId",
+      "sourceId",
+      "within"
+    ],
+    "required": ["definition", "sourceId"]
+  },
+  {
+    "name": "time_operation",
+    "arguments": ["name", "settings"],
+    "required": ["settings"]
+  },
+  {
+    "name": "edit_step",
+    "arguments": ["command", "stepId"],
+    "required": ["command", "stepId"]
+  },
+  {
+    "name": "delete_step",
+    "arguments": ["stepId"],
+    "required": ["stepId"]
+  },
+  {
+    "name": "rename",
+    "arguments": ["id", "name"],
+    "required": ["id", "name"]
+  },
+  {
+    "name": "set_checks",
+    "arguments": ["checks", "stepId"],
+    "required": ["checks", "stepId"]
+  },
+  {
+    "name": "workflow_validate",
+    "arguments": ["recipe"],
+    "required": ["recipe"]
+  },
+  {
+    "name": "workflow_extract",
+    "arguments": ["name", "overwrite", "recording", "savePath", "stepIds"],
+    "required": ["name", "recording"]
+  },
+  {
+    "name": "workflow_run",
+    "arguments": ["batchName", "channelMap", "files", "recipe"],
+    "required": ["files", "recipe"]
+  },
+  {
+    "name": "export_data",
+    "arguments": ["ids", "kind", "overwrite", "path"],
+    "required": ["ids", "kind", "path"]
+  },
+  {
+    "name": "catalog",
+    "arguments": ["section"],
+    "required": ["section"]
+  }
+]

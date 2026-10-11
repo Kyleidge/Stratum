@@ -29,6 +29,7 @@ const SMOKES = [
   { name: 'report-builder', args: ['tests/report-builder-smoke.mjs'] },
   // Runs under Node: the MCP server launches its own Electron window.
   { name: 'mcp-ui', node: true, args: ['tests/mcp-ui-smoke.mjs'] },
+  { name: 'mcp-app', node: true, args: ['tests/mcp-app-smoke.mjs'] },
 ];
 // Each check has its own shorter timeout; this only stops a hung process.
 const LIMIT_MS = 10 * 60 * 1000;

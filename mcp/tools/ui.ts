@@ -5,7 +5,7 @@
  */
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ServerContext } from '../context';
+import { OVERWRITE, type ServerContext } from '../context';
 import type { Tool, ToolResult } from '../protocol';
 import { UiSession } from '../ui-session';
 
@@ -30,9 +30,12 @@ export function uiTools(context: ServerContext): Tool[] {
     text: string,
     selector?: string,
     savePath?: string,
+    overwrite = false,
   ): Promise<ToolResult> => {
     const png = await ui.screenshot(selector);
-    const path = savePath ? context.save(png, savePath, 'screen.png') : '';
+    const path = savePath
+      ? context.save(png, savePath, 'screen.png', overwrite)
+      : '';
     return {
       content: [
         { type: 'image', data: png.toString('base64'), mimeType: 'image/png' },
@@ -49,6 +52,7 @@ export function uiTools(context: ServerContext): Tool[] {
   return [
     {
       name: 'ui_launch',
+      developer: true,
       title: 'Launch the Stratum UI',
       description:
         'Opens the real workbench in a hidden Electron window with an empty, temporary workspace (closing any earlier session). "desktop" (default) loads the bundled desktop renderer, rebuilding dist-desktop first when sources changed (about a minute); "dev" loads the development server (started on port 3107 if needed) so code edits hot-reload. File dialogs and downloads use the session\'s files folder.',
@@ -68,6 +72,11 @@ export function uiTools(context: ServerContext): Tool[] {
           width: { type: 'integer', description: 'Viewport (default 1440).' },
           height: { type: 'integer', description: 'Viewport (default 900).' },
           theme: { type: 'string', enum: ['dark', 'light'] },
+          assistant: {
+            type: 'boolean',
+            description:
+              'Allow AI assistants in the session profile, to test the assistant channel with the bundled server.',
+          },
         },
       },
       run: async (args, call) => {
@@ -81,6 +90,7 @@ export function uiTools(context: ServerContext): Tool[] {
           width: args.width as number | undefined,
           height: args.height as number | undefined,
           theme: args.theme as 'dark' | 'light' | undefined,
+          assistant: !!args.assistant,
           progress: (message) => call.progress(message),
         });
         return image(
@@ -91,6 +101,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_close',
+      developer: true,
       title: 'Close the UI session',
       description: 'Closes the window and deletes its temporary profile.',
       inputSchema: { type: 'object', properties: {} },
@@ -102,6 +113,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_screenshot',
+      developer: true,
       title: 'Screenshot',
       description: 'A PNG of the window, or of one element.',
       inputSchema: {
@@ -109,6 +121,7 @@ export function uiTools(context: ServerContext): Tool[] {
         properties: {
           target: TARGET_ARG,
           savePath: { type: 'string', description: 'Also write the PNG.' },
+          overwrite: OVERWRITE,
         },
       },
       annotations: { readOnlyHint: true },
@@ -118,10 +131,12 @@ export function uiTools(context: ServerContext): Tool[] {
           `${session().width}×${session().height}`,
           args.target as string | undefined,
           args.savePath as string | undefined,
+          !!args.overwrite,
         ),
     },
     {
       name: 'ui_snapshot',
+      developer: true,
       title: 'Snapshot visible controls',
       description:
         'An indented outline of what is visible: landmarks, dialogs, headings and controls with refs (e.g. [e12]) and states (checked, disabled, value…). Use refs as targets. withText adds text blocks; target narrows to one element (waited for up to 5 s).',
@@ -147,6 +162,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_text',
+      developer: true,
       title: 'Read text',
       description:
         'The visible text (innerText) of an element, or of the page.',
@@ -169,6 +185,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_query',
+      developer: true,
       title: 'Count and describe matches',
       description:
         "How many elements match a target (and how many are visible), with the first one's role, name and states. Does not wait.",
@@ -182,6 +199,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_click',
+      developer: true,
       title: 'Click',
       description:
         'A real mouse click on an element\'s centre (waits up to timeoutMs for it). count 2 double-clicks; modifiers such as ["Control"] or ["Shift"] extend selections. Refuses when another element covers it unless force.',
@@ -212,6 +230,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_hover',
+      developer: true,
       title: 'Hover',
       description: 'Moves the mouse over an element (tooltips, hover states).',
       inputSchema: {
@@ -228,6 +247,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_fill',
+      developer: true,
       title: 'Fill a field',
       description:
         'Focuses a text, number or search field, selects its content and types the text in its place (as typing does, so React sees it).',
@@ -250,6 +270,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_type',
+      developer: true,
       title: 'Type text',
       description: 'Types text into whatever has focus.',
       inputSchema: {
@@ -265,6 +286,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_press',
+      developer: true,
       title: 'Press keys',
       description:
         'Presses a key or combination in the focused element: "Enter", "Escape", "F2", "Control+K", "Control+Z", "Shift+ArrowDown", "Alt+ArrowRight". Several separated by spaces press in turn.',
@@ -290,6 +312,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_select',
+      developer: true,
       title: 'Choose a native select option',
       description:
         'Chooses an option of a native <select> by label or value. For Base UI menus and selects, click the trigger and then the option instead.',
@@ -315,6 +338,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_drag',
+      developer: true,
       title: 'Drag',
       description:
         'Drags with the left button from an element (or point) to another element, a point, or by an offset: plot panning, range edges, sliders.',
@@ -357,6 +381,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_scroll',
+      developer: true,
       title: 'Scroll or wheel',
       description:
         'Sends mouse-wheel movement over an element (or the page centre): scrolls lists, zooms plots.',
@@ -393,6 +418,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_upload',
+      developer: true,
       title: 'Answer a file choice',
       description:
         'Clicks a control that asks for a file (Import, Run workflow, Restore…) and answers with these files. Desktop sessions answer the native dialog with one file at a time.',
@@ -420,6 +446,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_wait',
+      developer: true,
       title: 'Wait',
       description:
         'Waits for an element to become visible (or hidden), for text to appear on the page, or for the workbench to finish its current work (idle).',
@@ -466,6 +493,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_eval',
+      developer: true,
       title: 'Evaluate JavaScript',
       description:
         'Evaluates an expression in the page (promises are awaited) and returns its JSON value. globalThis.stratumAutomation has state (project, busy, error…) and request(message).',
@@ -481,6 +509,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_console',
+      developer: true,
       title: 'Console messages',
       description:
         'Recent console messages and uncaught exceptions from the page (newest last).',
@@ -514,6 +543,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_resize',
+      developer: true,
       title: 'Resize the viewport',
       description:
         'Sets the viewport size. Below 1240 px Details becomes a drawer; below 820 px History does too.',
@@ -538,6 +568,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_reload',
+      developer: true,
       title: 'Reload the page',
       description:
         'Reloads the workbench (the workspace persists in the session profile) and waits until it is ready.',
@@ -550,6 +581,7 @@ export function uiTools(context: ServerContext): Tool[] {
     },
     {
       name: 'ui_files',
+      developer: true,
       title: 'Saved files and downloads',
       description:
         'Files in the session folder: exports, downloads and backups the UI saved (native save dialogs are answered here), newest first.',

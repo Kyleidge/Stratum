@@ -1,6 +1,6 @@
 /** Workflow files, batches and exports. */
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import {
   itemIdFromFileName,
@@ -8,9 +8,15 @@ import {
   serializeWorkflow,
 } from '../../lib/workflow-recipe';
 import { extractWorkflow } from '../../lib/workflow-extract';
-import { fileRef, type Backend } from '../backend';
+import { fileRef, textFile, type Backend } from '../backend';
 import { batches, findRecording } from '../describe';
-import { argList, stringList, TARGET, type ServerContext } from '../context';
+import {
+  argList,
+  OVERWRITE,
+  stringList,
+  TARGET,
+  type ServerContext,
+} from '../context';
 import {
   formatJson,
   type CallContext,
@@ -56,14 +62,23 @@ export async function runBatch(
   call: CallContext,
   options: {
     recipe: string;
-    files: string[];
+    /** Paths (with * and ?), or generated recordings (examples). */
+    files: string[] | { name: string; text: string }[];
     batchName?: string;
     channelMap?: Record<string, string>;
   },
 ) {
   const text = recipeText(context, options.recipe);
   const recipe = parseWorkflow(text);
-  const files = expand(context, options.files);
+  const files = options.files.every((item) => typeof item === 'string')
+    ? expand(context, options.files).map((path) => ({
+        name: basename(path),
+        file: fileRef(path),
+      }))
+    : options.files.map((item) => ({
+        name: item.name,
+        file: textFile(item.name, item.text),
+      }));
   if (!files.length) throw new Error('No files match.');
   const batchId = randomUUID();
   const failures: { name: string; message: string }[] = [];
@@ -74,7 +89,7 @@ export async function runBatch(
       break;
     }
     call.progress(
-      `Processing ${basename(file)} · ${position + 1} of ${files.length}`,
+      `Processing ${file.name} · ${position + 1} of ${files.length}`,
       position / files.length,
     );
     try {
@@ -83,8 +98,8 @@ export async function runBatch(
         recipe: text,
         batchId,
         batchName: options.batchName ?? recipe.name,
-        itemId: itemIdFromFileName(recipe, basename(file)),
-        file: fileRef(file),
+        itemId: itemIdFromFileName(recipe, file.name),
+        file: file.file,
         ...(options.channelMap ? { channelMap: options.channelMap } : {}),
       });
     } catch (error) {
@@ -93,7 +108,7 @@ export async function runBatch(
         cancelled = true;
         break;
       }
-      failures.push({ name: basename(file), message });
+      failures.push({ name: file.name, message });
     }
   }
   const reply = await backend.request({
@@ -157,7 +172,11 @@ export function workflowTools(context: ServerContext): Tool[] {
           recording: { type: 'string', description: 'Recording ID or name.' },
           name: { type: 'string', description: 'Workflow name.' },
           stepIds: stringList('Only these steps (default: all eligible).'),
-          savePath: { type: 'string' },
+          savePath: {
+            type: 'string',
+            description: 'Also write the workflow file here.',
+          },
+          overwrite: OVERWRITE,
           target: TARGET,
         },
         required: ['recording', 'name'],
@@ -175,8 +194,14 @@ export function workflowTools(context: ServerContext): Tool[] {
             : {}),
         });
         const text = serializeWorkflow(extracted.recipe);
-        const path = args.savePath ? context.path(args.savePath as string) : '';
-        if (path) writeFileSync(path, text);
+        const path = args.savePath
+          ? context.save(
+              new TextEncoder().encode(text),
+              args.savePath as string,
+              'workflow.stratum.yaml',
+              !!args.overwrite,
+            )
+          : '';
         return {
           content: [
             {
@@ -236,11 +261,16 @@ export function workflowTools(context: ServerContext): Tool[] {
           kind: { type: 'string', enum: ['samples', 'summary'] },
           path: {
             type: 'string',
-            description: 'Destination (default outputs/mcp/<kind>-<time>.csv).',
+            description:
+              context.mode === 'app'
+                ? 'Full path of the CSV file to write.'
+                : 'Destination (default outputs/mcp/<kind>-<time>.csv).',
           },
+          overwrite: OVERWRITE,
           target: TARGET,
         },
-        required: ['ids', 'kind'],
+        required:
+          context.mode === 'app' ? ['ids', 'kind', 'path'] : ['ids', 'kind'],
       },
       run: async (args, call) => {
         const reply = await context.backend(args.target).request(
@@ -255,6 +285,7 @@ export function workflowTools(context: ServerContext): Tool[] {
           reply.bytes,
           args.path as string | undefined,
           `${args.kind as string}-${Date.now()}.csv`,
+          !!args.overwrite,
         );
         const text = new TextDecoder().decode(reply.bytes.slice(0, 1500));
         return {

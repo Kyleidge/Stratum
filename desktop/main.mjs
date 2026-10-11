@@ -13,6 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { registerDesktopFiles } from './files.mjs';
+import { registerAssistant } from './assistant.mjs';
 import { watchAutomationParent } from './automation.mjs';
 import { attachBackupSmoke } from './backup-smoke.mjs';
 import { applicationMenu } from './menu.mjs';
@@ -70,7 +71,7 @@ const hidden = smoke || automation;
 // A running user app must not cause a smoke test to exit without testing.
 const singleInstance = isolated || app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
-let window, desktopFiles;
+let window, desktopFiles, assistant;
 const updater = createUpdater({
   enabled: !isolated,
   beforeInstall: () => desktopFiles?.backupBeforeQuit(),
@@ -115,6 +116,7 @@ async function createWindow() {
     },
   });
   desktopFiles.attachWindow(window);
+  assistant.attachWindow(window);
   if (backupSmoke) attachBackupSmoke(window);
   if (automation) watchAutomationParent(Number(option('automation-parent')));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -421,6 +423,9 @@ if (singleInstance) {
     .then(async () => {
       Menu.setApplicationMenu(isolated ? null : applicationMenu({ updater }));
       // Smoke runs (temporary profile) answer file dialogs without showing them.
+      // AI assistant access; off unless the user allowed it in this profile.
+      assistant = registerAssistant({ getWindow: () => window });
+      app.on('will-quit', () => void assistant.stop());
       desktopFiles = registerDesktopFiles({
         test: smoke
           ? {

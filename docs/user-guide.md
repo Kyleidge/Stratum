@@ -279,6 +279,14 @@ ordinary History operation, and one Undo removes the whole batch. Choose
 [the end-of-line rig data](../examples/eol-rig), and read
 [batch workflows](batch-workflows.md) for the guide and file format.
 
+## AI assistants
+
+Workspace → **AI assistants** lets an MCP app such as Claude Desktop work in
+the workspace, after you choose **Allow AI assistants** and paste the copied
+configuration into the app. An assistant's steps appear in History like
+yours, each announced at the bottom of the window, and Undo reverses them.
+What it reads is sent to its AI service. See [AI assistants](ai-assistants.md).
+
 ## Earlier names and compatibility
 
 Stratum keeps the original desktop profile, storage keys and internal origin so

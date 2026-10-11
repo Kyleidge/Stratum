@@ -1,6 +1,6 @@
 /**
- * A minimal MCP client over stdio for tests: starts `node mcp/start.mjs`,
- * initialises and calls tools. `call` returns the parsed JSON of a tool's
+ * A minimal MCP client over stdio for tests: starts a server (by default
+ * `node mcp/start.mjs`), initialises and calls tools. `call` returns the parsed JSON of a tool's
  * first text block (or the text), with `images` alongside.
  */
 import { spawn } from 'node:child_process';
@@ -9,9 +9,18 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-export async function startMcp() {
-  const child = spawn(process.execPath, ['mcp/start.mjs'], {
+/**
+ * Starts a server: the developer harness by default, or another command
+ * (such as Stratum's bundled assistant server run by Electron as Node).
+ */
+export async function startMcp({
+  command = process.execPath,
+  args = ['mcp/start.mjs'],
+  env = process.env,
+} = {}) {
+  const child = spawn(command, args, {
     cwd: root,
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = '';

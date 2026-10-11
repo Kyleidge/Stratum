@@ -41,7 +41,7 @@ const START_TIMEOUT = 15000;
 const CLOSE_TIMEOUT = 10 * 60 * 1000;
 
 /** Only the app's own top-level page may use the bridge. */
-function trusted(event) {
+export function trusted(event) {
   const frame = event.senderFrame;
   if (!frame || frame.parent) return false;
   try {

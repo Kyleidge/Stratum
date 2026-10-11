@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { READ_REQUESTS } from '@/lib/assistant-protocol';
 import { createSignalWorker } from '@/lib/create-signal-worker';
 import type {
   EngineRequest,
@@ -128,8 +129,10 @@ export function useSignalEngine(
       waiting.clear();
     };
   }, [request, initialization]);
-  // UI automation (`?automation`, set only by the MCP server's sessions):
-  // the workbench's own requests, with committed projects applied to it.
+  // The workbench's requests for an AI assistant (the desktop assistant
+  // channel) and for UI automation (`?automation` pages, which the MCP
+  // developer harness opens): committed projects are applied as the user's
+  // own changes are, and a request returns once the window shows them.
   const snapshot = {
     project,
     revision,
@@ -146,13 +149,20 @@ export function useSignalEngine(
   useEffect(() => {
     state.current = snapshot;
   });
-  useEffect(() => {
-    if (!new URL(location.href).searchParams.has('automation')) return;
-    const automation = {
-      get state() {
-        return state.current;
-      },
-      async request(message: EngineRequest) {
+  const revealer = useRef<(id: string) => string>(undefined);
+  // One object for the hook's life: everything it uses is stable.
+  const [automation] = useState(() => ({
+    get state() {
+      return state.current;
+    },
+    async request(message: EngineRequest) {
+      const writes = !READ_REQUESTS.has(message.type);
+      if (writes) {
+        setBusy(true);
+        setError('');
+        setStatus('AI assistant is working…');
+      }
+      try {
         const response = await request(message);
         if (response.type === 'project') {
           setProject(response.project);
@@ -161,22 +171,44 @@ export function useSignalEngine(
           setCanRedo(!!response.canRedo);
           setUndoLabel(response.undoLabel);
           setRedoLabel(response.redoLabel);
+          for (
+            let wait = 0;
+            wait < 250 && state.current.revision !== response.revision;
+            wait++
+          )
+            await new Promise((done) => setTimeout(done, 20));
         }
         return response;
-      },
-      cancel() {
-        worker.current?.postMessage({
-          type: 'cancel',
-          requestIds: [...pending.current.keys()],
-        });
-      },
-    };
+      } finally {
+        if (writes) {
+          setBusy(false);
+          setStatus('Saved · source data unchanged');
+        }
+      }
+    },
+    cancel() {
+      worker.current?.postMessage({
+        type: 'cancel',
+        requestIds: [...pending.current.keys()],
+      });
+    },
+    /** Selects an ID in the window, through the workbench's revealer. */
+    show(id: string) {
+      if (!revealer.current) throw new Error('The workspace is not open.');
+      return revealer.current(id);
+    },
+    setRevealer(reveal: (id: string) => string) {
+      revealer.current = reveal;
+    },
+  }));
+  useEffect(() => {
+    if (!new URL(location.href).searchParams.has('automation')) return;
     Object.assign(globalThis, { stratumAutomation: automation });
     return () => {
       if (Reflect.get(globalThis, 'stratumAutomation') === automation)
         Reflect.deleteProperty(globalThis, 'stratumAutomation');
     };
-  }, [request]);
+  }, [automation]);
   async function mutate(
     message: EngineRequest,
     label: string,
@@ -274,6 +306,8 @@ export function useSignalEngine(
     error,
     status,
     request,
+    /** Requests for AI assistants and UI automation; see above. */
+    automation,
     mutate,
     sequence,
     preview,

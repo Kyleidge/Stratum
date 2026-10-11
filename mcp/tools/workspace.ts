@@ -1,11 +1,25 @@
 /** Workspace tools: status, reset, backups, examples, Undo/Redo, raw requests. */
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import type { EngineCommand } from '../../lib/engine-requests';
+import {
+  PHASER_UNITS,
+  PHASER_WORKFLOW,
+  phaserRecording,
+} from '../../lib/cam-phaser-example';
+import {
+  componentRecording,
+  EOL_COMPONENTS,
+  EOL_WORKFLOW,
+} from '../../lib/eol-example';
 import type { Project } from '../../lib/signal-types';
 import { fileRef } from '../backend';
 import { batches, history, recordings } from '../describe';
-import { commit, objectArg, TARGET, type ServerContext } from '../context';
+import {
+  commit,
+  objectArg,
+  OVERWRITE,
+  TARGET,
+  type ServerContext,
+} from '../context';
 import type { Tool } from '../protocol';
 import { runBatch } from './workflows';
 
@@ -58,26 +72,33 @@ export function workspaceTools(context: ServerContext): Tool[] {
             name: step.name,
             outputs: step.outputCount,
           })),
-          ui: context.ui?.alive
-            ? {
-                source: context.ui.source,
-                url: context.ui.url,
-                size: `${context.ui.width}×${context.ui.height}`,
-                filesDir: context.ui.filesDir,
-              }
-            : null,
+          ...(context.mode === 'app'
+            ? {}
+            : {
+                ui: context.ui?.alive
+                  ? {
+                      source: context.ui.source,
+                      url: context.ui.url,
+                      size: `${context.ui.width}×${context.ui.height}`,
+                      filesDir: context.ui.filesDir,
+                    }
+                  : null,
+              }),
         };
       },
     },
     {
       name: 'workspace_reset',
+      developer: true,
       title: 'Start an empty engine workspace',
       description:
         'Discards the engine workspace (in memory) and starts an empty one. For the UI, close and relaunch its session instead.',
       inputSchema: { type: 'object', properties: {} },
       annotations: { destructiveHint: true },
       run: async () => {
-        await context.engine.reset();
+        if (!context.primary.reset)
+          throw new Error('This workspace cannot be reset here.');
+        await context.primary.reset();
         return 'The engine workspace is empty.';
       },
     },
@@ -92,10 +113,14 @@ export function workspaceTools(context: ServerContext): Tool[] {
           path: {
             type: 'string',
             description:
-              'Destination; relative to the repository root. Default outputs/mcp/workspace-<time>.stratum.',
+              context.mode === 'app'
+                ? 'Full path of the .stratum file to write.'
+                : 'Destination; relative to the repository root. Default outputs/mcp/workspace-<time>.stratum.',
           },
+          overwrite: OVERWRITE,
           target: TARGET,
         },
+        ...(context.mode === 'app' ? { required: ['path'] } : {}),
       },
       run: async (args, call) => {
         const reply = await context
@@ -106,6 +131,7 @@ export function workspaceTools(context: ServerContext): Tool[] {
           reply.bytes,
           args.path as string | undefined,
           `workspace-${Date.now()}.stratum`,
+          !!args.overwrite,
         );
         return { path, bytes: reply.bytes.length };
       },
@@ -157,16 +183,22 @@ export function workspaceTools(context: ServerContext): Tool[] {
         const backend = context.backend(args.target);
         if (args.example === 'motor-test')
           return commit(backend, { type: 'demo-workflow' }, call);
-        const folder = join(context.root, 'examples', String(args.example));
-        const names = readdirSync(folder);
-        const recipe = names.find((name) => name.endsWith('.stratum.yaml'));
-        if (!recipe) throw new Error(`${folder} has no workflow file.`);
+        const example =
+          args.example === 'eol-rig'
+            ? {
+                recipe: EOL_WORKFLOW,
+                files: EOL_COMPONENTS.map(({ serial, variant }) =>
+                  componentRecording(serial, variant),
+                ),
+              }
+            : {
+                recipe: PHASER_WORKFLOW,
+                files: PHASER_UNITS.map(({ serial, variant }) =>
+                  phaserRecording(serial, variant),
+                ),
+              };
         return runBatch(context, backend, call, {
-          recipe: join(folder, recipe),
-          files: names
-            .filter((name) => name.endsWith('.csv'))
-            .sort()
-            .map((name) => join(folder, name)),
+          ...example,
           batchName: `${args.example as string} example`,
         });
       },
@@ -189,6 +221,7 @@ export function workspaceTools(context: ServerContext): Tool[] {
     },
     {
       name: 'get_project',
+      developer: true,
       title: 'Raw project records',
       description:
         'Returns raw project records (the persisted model) for debugging: one section, optionally only some IDs, or the whole project written to a JSON file.',
@@ -247,6 +280,7 @@ export function workspaceTools(context: ServerContext): Tool[] {
     },
     {
       name: 'engine_request',
+      developer: true,
       title: 'Send any engine request',
       description:
         'Sends one raw worker-protocol request (EngineRequest in lib/signal-types.ts, handled by lib/engine-requests.ts) and returns its reply. Any request type the workbench uses works here, including ones added later. Put {"$file": "path"} wherever a File or Blob goes (import, restore-workspace, run-workflow). Project replies are summarised (changed steps) unless fullProject is set; export/backup bytes are saved to savePath.',
