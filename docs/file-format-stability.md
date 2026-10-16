@@ -124,7 +124,7 @@ IndexedDB database `stratus-workbench-v1` with stores `chunks` (raw columns as
 `project` (`current`, `revision`, `history` with 20 Undo/Redo snapshots and
 labels, and `['pending-import', id]` markers). The project record has no
 version field of its own: the **database version** is the workspace schema
-version (`WORKSPACE_SCHEMA_VERSION` in `lib/signal-engine.ts`).
+version (`WORKSPACE_SCHEMA_VERSION` in `lib/engine/store.ts`).
 
 - Version 2 added file segments (see the backup above); version 1
   workspaces open and are upgraded in place.

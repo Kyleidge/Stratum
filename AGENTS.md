@@ -431,9 +431,16 @@ There are no server API routes or cloud signal uploads.
   and publishes every chosen table in one commit; multi-table files open
   `components/workflow-import-dialog.tsx`, and batch items use `bestTable`.
   Fixtures in `tests/fixtures/formats/` come from its `generate_*.py` scripts.
-- `lib/signal-engine.ts`: append-only IndexedDB columns, CSV import, lazy derived
-  evaluation, segmentation, and samples/summary exports. `signal-math.ts` holds numerical
-  helpers; `signal-types.ts` defines the domain and worker protocol.
+- `lib/signal-engine.ts`: `SignalEngine`, the workflow commands, Edit, checks
+  and batch runs, on a chain of abstract layers in `lib/engine/`, each calling
+  only those below it: `store.ts` (project, IndexedDB, save/Undo, raw columns,
+  storage keys and `WORKSPACE_SCHEMA_VERSION`), `evaluation.ts` (lazy derived
+  evaluation, checkpoints, bindings, segment crops), `plots.ts`, `segments.ts`,
+  `values.ts`, `derive.ts`, `imports.ts`, `regions.ts` (legacy regions and
+  worked examples) and `files.ts` (backups, restore, samples/summary exports).
+  Put a method in the lowest layer whose members it uses; members another
+  layer calls are `protected`. `signal-math.ts` holds numerical helpers;
+  `signal-types.ts` defines the domain and worker protocol.
 - `lib/segmentation.ts`: stateful generic threshold crossings. No hidden smoothing
   or engine-ramp heuristics. Optional hysteresis (re-arm distance) and
   debounce (seconds held) reject chatter; at zero the detector must equal the
