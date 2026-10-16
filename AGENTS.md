@@ -36,6 +36,16 @@ There are no server API routes or cloud signal uploads.
 - `app/page.tsx`: homepage; `app/layout.tsx`: root document, metadata, Geist fonts.
 - `components/workflow-workbench.tsx`: active desktop/browser workspace. Original
   and derived signals can be processed, segmented again, or reduced to values.
+  It holds selection, scope and dialog state and composes `workflow-topbar`,
+  `workflow-sidebar` (History pane), `workflow-batch-area`, `workflow-step-dock`
+  (with `workflow-outputs-panel`), `workflow-value-tiles`, `workflow-status-bar`,
+  `workflow-detail-dialog`, `workflow-operation-dialog` (Derive/Segment/Value)
+  and `workflow-commands` (palette commands). Hooks: `use-workflow-batches`,
+  `use-report-workspace`, `use-recording-import`, `use-active-plot` and
+  `use-workbench-shortcuts` (global keys). Pure helpers: `lib/active-plot.ts`,
+  `lib/workflow-editor.ts` (editor state, reopening a step),
+  `lib/workflow-navigation.ts` (History scope, Undo/Redo and batch item
+  targets) and `lib/workflow-preferences.ts` (stored selection and signals).
   `components/workflow-history.tsx` is a virtualized two-level chronological tree;
   `lib/workflow-tree.ts` bounds output previews and reveals selected members.
   Do not encode dependency depth as recursive indentation or regroup by names.

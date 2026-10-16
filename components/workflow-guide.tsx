@@ -9,8 +9,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CSV_FORMAT_EXAMPLE } from '@/lib/csv-import-messages';
 
-// Every entry is implemented in workflow-workbench.tsx (global keys),
-// workflow-history.tsx (the History tree) or signal-chart.tsx (plots).
+// Every entry is implemented in hooks/use-workbench-shortcuts.ts (global
+// keys), workflow-history.tsx (the History tree) or signal-chart.tsx (plots).
 // Each entry lists alternative key combinations.
 type Shortcut = [combos: string[][], action: string];
 const SHORTCUTS: { group: string; items: Shortcut[] }[] = [

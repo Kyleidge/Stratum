@@ -285,3 +285,6 @@ export function useSignalEngine(
       }),
   };
 }
+
+/** The engine client's state and requests, as passed to workbench parts. */
+export type SignalEngineState = ReturnType<typeof useSignalEngine>;
