@@ -382,15 +382,6 @@
   place-items: center;
   color: var(--rb-accent);
 }
-.rb-asset-text .rb-asset-icon {
-  color: var(--kind-segment);
-}
-.rb-asset-image .rb-asset-icon {
-  color: var(--kind-value);
-}
-.rb-asset-table .rb-asset-icon {
-  color: var(--good);
-}
 .rb-asset strong {
   display: block;
   font-size: var(--text-xs);
@@ -1567,7 +1558,6 @@
   font-size: var(--text-xs);
   margin-bottom: 6px;
 }
-.rb-template.is-pending,
 .rb-template[aria-pressed='true'] {
   outline: 2px solid var(--rb-accent);
 }

@@ -2036,9 +2036,6 @@ export async function recipeHash(recipe: WorkflowRecipe): Promise<string> {
 // ---------------------------------------------------------------------------
 // Binding a recipe to one recording
 
-/** CSV header parsing shared with the importer: "Torque [Nm]" → name and unit. */
-export { headerChannel } from './formats/recording';
-
 const comparable = (text: string) => text.trim().toLowerCase();
 
 /**

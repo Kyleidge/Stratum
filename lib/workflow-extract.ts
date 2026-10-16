@@ -78,7 +78,7 @@ function fromRecording(
 }
 
 /** Segmentation clock start, matching the engine's axis offsets. */
-export function clockStart(project: Project, graph: SignalGraph, id: string) {
+export function clockStart(graph: SignalGraph, id: string) {
   const node = graph.nodes.get(id);
   const range = graph.ranges.get(id);
   if (!node || !range) return 0;
@@ -414,7 +414,7 @@ export function extractWorkflow(
               origin === 'recording-start'
                 ? -source.start
                 : origin === 'input-start'
-                  ? -clockStart(project, graph, command.referenceId!)
+                  ? -clockStart(graph, command.referenceId!)
                   : 0,
             );
             if (origin === 'recording')
@@ -459,7 +459,7 @@ export function extractWorkflow(
               origin === 'recording-start'
                 ? -source.start
                 : origin === 'input-start'
-                  ? -clockStart(project, graph, command.targetIds[0])
+                  ? -clockStart(graph, command.targetIds[0])
                   : 0,
             );
           }

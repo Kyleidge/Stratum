@@ -263,7 +263,6 @@ export function columnCheck(
 }
 
 export function columnValue(
-  project: Project,
   index: WorkflowIndex,
   run: WorkflowRun,
   column: BatchColumn,
@@ -319,9 +318,7 @@ export function batchSummaryCsv(
             .join(' | '),
         ),
         csvText(mappedChannels(recipe?.text, run).join(' | ')),
-        ...columns.map((column) =>
-          numeric(columnValue(project, index, run, column)),
-        ),
+        ...columns.map((column) => numeric(columnValue(index, run, column))),
         csvText(recipe?.name ?? batch.name),
         csvText(recipe?.revision ?? ''),
         csvText(batch.recipeHash),

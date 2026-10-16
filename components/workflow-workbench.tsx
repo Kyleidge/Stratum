@@ -1223,11 +1223,7 @@ export default function WorkflowWorkbench() {
       );
     }
   }
-  function plotAcross(
-    batch: WorkflowBatch,
-    recipeStepId: string,
-    runs: WorkflowRun[],
-  ) {
+  function plotAcross(recipeStepId: string, runs: WorkflowRun[]) {
     const traces = runs.flatMap((run) => {
       const item = index.steps.get(run.steps[recipeStepId] ?? '');
       return item
@@ -2889,9 +2885,7 @@ export default function WorkflowWorkbench() {
                     onPreviewReport={(run) =>
                       void previewReport(displayBatch, run)
                     }
-                    onPlotAcross={(recipeStepId, runs) =>
-                      plotAcross(displayBatch, recipeStepId, runs)
-                    }
+                    onPlotAcross={plotAcross}
                     reportJob={reportJob}
                     onCancelReports={() => reportAbort.current?.abort()}
                   />

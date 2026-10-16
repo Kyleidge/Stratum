@@ -438,7 +438,7 @@ export default function WorkflowBatchView({
                   )}
                 </td>
                 {columns.map((column) => {
-                  const value = columnValue(project, index, row.run, column);
+                  const value = columnValue(index, row.run, column);
                   const check = columnCheck(index, row.run, column);
                   return (
                     <td

@@ -143,8 +143,6 @@
     max-width: 40%;
   }
 }
-.scratchpad-heading,
-.scratchpad-heading > div,
 .scratchpad-plot-toolbar,
 .scratchpad-chart-tools,
 .scratchpad-zoom,
@@ -159,24 +157,11 @@
   align-items: center;
   gap: 7px;
 }
-.scratchpad-heading {
-  margin: 5px 0 12px;
-}
-.scratchpad-heading > div {
-  flex: 1;
-  min-width: 0;
-}
-.scratchpad-heading > div > svg {
-  color: var(--primary);
-  flex-shrink: 0;
-}
-.scratchpad-heading > span,
 .scratchpad-plot-title small,
 .scratchpad-axis-label,
 .scratchpad-axis-footer,
 .scratchpad-trace small,
 .scratchpad-trace-heading,
-.scratchpad-stats small,
 .scratchpad-choices small {
   color: var(--muted-foreground);
   font-size: var(--text-sm);
@@ -234,12 +219,6 @@
   max-width: 170px;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.scratchpad-live {
-  color: var(--primary);
-  font-size: var(--text-sm);
-  letter-spacing: 0.06em;
-  margin-left: 5px;
 }
 .scratchpad-tab-count {
   color: var(--muted-foreground);
@@ -413,40 +392,10 @@
   line-height: 1.7;
   margin: 0;
 }
-.scratchpad-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 12px 0;
-}
-.scratchpad-stats > div {
-  padding: 0 13px;
-  border-right: 1px solid var(--border);
-  min-width: 0;
-}
-.scratchpad-stats > div:last-child {
-  border-right: 0;
-}
-.scratchpad-stats small {
-  display: block;
-  letter-spacing: 0.045em;
-}
-.scratchpad-stats strong {
-  display: block;
-  margin-top: 7px;
-  font-family: var(--font-mono);
-  font-size: var(--text-lg);
-  font-weight: 450;
-  overflow-wrap: anywhere;
-}
 .scratchpad-sample-actions {
   justify-content: space-between;
   padding: 7px 13px;
   border-top: 1px solid var(--border);
-}
-.scratchpad-output-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 7px;
 }
 .scratchpad-tabs .workflow-output-panel {
   border: 0;
@@ -607,35 +556,13 @@
   padding: 7px;
 }
 @media (max-width: 1100px) {
-  .scratchpad-heading > span {
-    display: none;
-  }
-  .scratchpad-stats strong {
-    font-size: var(--text-md);
-  }
-  .scratchpad-stats > div {
-    padding-inline: 8px;
-  }
 }
 @media (max-width: 600px) {
-  .scratchpad-heading {
-    flex-wrap: wrap;
-  }
-  .scratchpad-heading > div {
-    flex-basis: 180px;
-  }
   .scratchpad-plot-toolbar {
     padding: 10px;
   }
   .scratchpad-chart-tools {
     padding: 7px;
-  }
-  .scratchpad-stats {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px 0;
-  }
-  .scratchpad-stats > div:nth-child(2) {
-    border: 0;
   }
   .scratchpad-axis-label {
     padding-left: 14px;
@@ -648,10 +575,6 @@
 .time-dialog {
   width: min(1000px, calc(100vw - 32px));
   max-width: 1000px;
-}
-.time-open {
-  float: right;
-  margin: 0 0 6px 8px;
 }
 .time-controls {
   display: grid;
@@ -707,26 +630,6 @@
   color: var(--muted-foreground);
   border-left: 3px solid var(--primary);
   padding-left: 7px;
-}
-.time-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  list-style: none;
-  padding: 0;
-  font-size: var(--text-md);
-}
-.workflow-management {
-  display: flex;
-  gap: 6px 11px;
-  flex-wrap: wrap;
-  margin: 5px 0;
-}
-.workflow-management button {
-  font-size: var(--text-md);
-}
-.workflow-delete {
-  color: var(--danger);
 }
 .workflow-impact {
   max-height: 240px;
@@ -1086,8 +989,7 @@
   color: var(--ink-2);
 }
 .workflow-provenance summary,
-.workflow-settings summary,
-.workflow-editor-inputs summary {
+.workflow-settings summary {
   cursor: pointer;
   font-size: var(--text-sm);
   color: var(--ink-1);
@@ -1554,23 +1456,6 @@ fieldset:disabled .workflow-choice-card {
   font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--ink-2);
-}
-.workflow-editor-inputs {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 7px;
-}
-.workflow-editor-inputs ul {
-  max-height: 180px;
-  overflow: auto;
-  list-style: none;
-  padding: 0;
-  margin: 6px 0 0;
-  color: var(--ink-1);
-}
-.workflow-editor-inputs li {
-  padding: 5px 0;
-  border-top: 1px solid var(--border);
 }
 .workflow-function-editor {
   border: 0;
@@ -2259,8 +2144,7 @@ fieldset:disabled .workflow-choice-card {
 .workflow-dialog .number-field input {
   border: 0;
 }
-.workflow-dialog .number-field,
-.workflow-dialog .region-text {
+.workflow-dialog .number-field {
   min-height: 28px;
   height: 28px;
 }
@@ -2289,15 +2173,6 @@ fieldset:disabled .workflow-choice-card {
 }
 .workflow-storage-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.workflow-dialog .time-plot-unit {
-  padding: 4px 8px;
-  color: var(--muted-foreground);
-  font-size: var(--text-xs);
-}
-.workflow-dialog .time-legend {
-  font-size: var(--text-xs);
-  margin: 4px 0;
 }
 .workflow-dialog .signal-chart svg text {
   font-size: var(--text-tick);

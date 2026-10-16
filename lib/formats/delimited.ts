@@ -269,7 +269,7 @@ export async function openDelimited(
     columns: {
       headers,
       rows: rows.slice(0, SHOWN_ROWS),
-      numeric: suggested.map((column, c) =>
+      numeric: suggested.map((_, c) =>
         rows.every((row) => !row[c].trim() || Number.isFinite(number(row[c]))),
       ),
       suggested,

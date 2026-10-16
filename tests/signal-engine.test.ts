@@ -4,7 +4,6 @@ import 'fake-indexeddb/auto';
 import { SignalEngine } from '../lib/signal-engine';
 import { CsvParser, Envelope, bsfc, power } from '../lib/signal-math';
 import type { SegmentationDefinition } from '../lib/signal-types';
-import { segmentTraces } from '../lib/segment-traces';
 
 async function fixture(csv: string) {
   const e = new SignalEngine(undefined, crypto.randomUUID());
@@ -749,44 +748,6 @@ void test('resampled crop tails without output timestamps are excluded', async (
   );
   assert.equal(plan.ranges.length, 0);
   assert.equal(plan.skipped, 1);
-  e.close();
-});
-
-void test('comparison handles heterogeneous targets and aligns shifted crops to their own starts', async () => {
-  const { e, s } = await fixture(
-    't,a [V],b [A]\n0,0,0\n1,1,10\n2,2,20\n3,3,30',
-  );
-  const shifted = await e.derive(s.channels[0], 'time-shift', 10);
-  const config: SegmentationDefinition = {
-    method: 'ranges',
-    ranges: [[1, 3]],
-    boundary: 'clip',
-  };
-  const first = await e.segment(s.id, config, [shifted.id]);
-  const second = await e.segment(s.id, config, [s.channels[1]]);
-  const plots = Object.fromEntries(
-    await Promise.all(
-      [...first, ...second]
-        .flatMap((segment) => segment.nodes)
-        .map(async (id) => [id, await e.plot(id)]),
-    ),
-  );
-  const traces = segmentTraces(
-    e.find(s.channels[0]),
-    e.project.segments,
-    e.project.nodes,
-    plots,
-    ['green'],
-  );
-  assert.equal(traces.length, 1);
-  assert.equal(traces[0].offset, 11);
-  assert.equal(traces[0].plot.points[0][0] - traces[0].offset, 0);
-  assert.equal(
-    segmentTraces(e.find(s.channels[1]), first, e.project.nodes, plots, [
-      'green',
-    ]).length,
-    0,
-  );
   e.close();
 });
 

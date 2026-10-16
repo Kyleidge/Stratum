@@ -65,21 +65,6 @@ export type RecordingFile = {
   read(table: number): AsyncGenerator<RecordingBlock>;
 };
 
-export type RecordingReader = {
-  id: string;
-  /** Short name shown in menus and messages, such as “MDF 4”. */
-  label: string;
-  /** Lower-case extensions including the dot. */
-  extensions: readonly string[];
-  /**
-   * True when the first bytes (up to 4 KiB) identify this format. Readers that
-   * cannot be recognised from content (delimited text) return false and are
-   * chosen by extension.
-   */
-  sniff(head: Uint8Array): boolean;
-  open(file: Blob): Promise<RecordingFile>;
-};
-
 /** Channels in one recording; larger groups are rejected with a clear message. */
 export const MAX_RECORDING_CHANNELS = 1024;
 /** Rows per streamed block that readers aim for. */

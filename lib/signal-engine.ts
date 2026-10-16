@@ -1774,7 +1774,7 @@ export class SignalEngine {
               Math.min(99, ((position + fraction) / tables.length) * 100),
             ),
         );
-        const channels = table.channels.map((channel, c) =>
+        const channels = table.channels.map((_, c) =>
           this.node(
             id,
             names.get(index)![c],

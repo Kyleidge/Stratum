@@ -1,6 +1,5 @@
 'use client';
 import { useState } from 'react';
-import { Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -34,67 +33,6 @@ export type WorkflowManagementRequest = {
   step: WorkflowStep;
   outputId?: string;
 };
-
-export default function WorkflowManagement({
-  step,
-  outputId,
-  busy,
-  onAction,
-}: {
-  step: WorkflowStep;
-  outputId?: string;
-  busy: boolean;
-  onAction: (action: WorkflowManagementAction) => void;
-}) {
-  return (
-    <div className="workflow-management">
-      {!['import', 'regions'].includes(step.kind) && (
-        <button
-          className="workflow-link"
-          disabled={busy}
-          onClick={() => onAction('edit')}
-        >
-          <Pencil size={14} />
-          Edit settings
-        </button>
-      )}
-      {step.kind !== 'import' && (
-        <button
-          className="workflow-link"
-          disabled={busy}
-          onClick={() => onAction('duplicate')}
-        >
-          <Copy size={14} />
-          New version…
-        </button>
-      )}
-      <button
-        className="workflow-link"
-        disabled={busy}
-        onClick={() => onAction('rename')}
-      >
-        Rename {outputId ? 'output' : 'step'}
-      </button>
-      {step.kind === 'import' && (
-        <button
-          className="workflow-link"
-          disabled={busy}
-          onClick={() => onAction('rename-recording')}
-        >
-          Rename recording
-        </button>
-      )}
-      <button
-        className="workflow-link workflow-delete"
-        disabled={busy}
-        onClick={() => onAction('delete')}
-      >
-        <Trash2 size={14} />
-        {step.kind === 'import' ? 'Remove recording' : 'Delete step'}
-      </button>
-    </div>
-  );
-}
 
 export function WorkflowManagementDialogs({
   project,
