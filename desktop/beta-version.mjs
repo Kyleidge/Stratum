@@ -4,22 +4,38 @@
 // has a stable tag, betas move on to the next patch, so they still outrank
 // the stable release beta testers may have updated to.
 //
-//   node desktop/beta-version.mjs <n>    prints the version
+// A pull request's test build (.github/workflows/test-build.yml) uses
+// `-pr.<number>.<n>` instead: a channel of its own that beta installs never
+// take, ordered within the pull request by the run number.
+//
+//   node desktop/beta-version.mjs <n>                    prints the version
+//   node desktop/beta-version.mjs <n> --pull-request <p> a test build's
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-/** `version` may carry a prerelease; `tags` are the repository's tags. */
-export function betaVersion(version, number, tags) {
+/**
+ * `version` may carry a prerelease; `tags` are the repository's tags.
+ * `pullRequest` makes a test build of that pull request.
+ */
+export function betaVersion(version, number, tags, pullRequest) {
   if (!Number.isSafeInteger(number) || number < 1)
     throw new Error(`Beta number must be a positive integer, not ${number}.`);
+  if (
+    pullRequest !== undefined &&
+    (!Number.isSafeInteger(pullRequest) || pullRequest < 1)
+  )
+    throw new Error(`Not a pull request number: ${pullRequest}.`);
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-.*)?$/.exec(version);
   if (!match) throw new Error(`Cannot make a beta of version ${version}.`);
   const [major, minor] = [match[1], match[2]];
   const released = new Set(tags);
   let patch = Number(match[3]);
   while (released.has(`v${major}.${minor}.${patch}`)) patch += 1;
-  return `${major}.${minor}.${patch}-beta.${number}`;
+  const core = `${major}.${minor}.${patch}`;
+  return pullRequest === undefined
+    ? `${core}-beta.${number}`
+    : `${core}-pr.${pullRequest}.${number}`;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -31,7 +47,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   })
     .split('\n')
     .filter(Boolean);
+  const flag = process.argv.indexOf('--pull-request');
+  const pullRequest = flag > 0 ? Number(process.argv[flag + 1]) : undefined;
   process.stdout.write(
-    `${betaVersion(manifest.version, Number(process.argv[2]), tags)}\n`,
+    `${betaVersion(manifest.version, Number(process.argv[2]), tags, pullRequest)}\n`,
   );
 }

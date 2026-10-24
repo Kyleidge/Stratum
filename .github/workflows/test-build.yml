@@ -1,0 +1,148 @@
+# Pull request test builds (see docs/releasing.md). While a pull request from
+# this repository has the `test-build` label, every push builds its Windows
+# installer into the prerelease `pr-<number>`, replacing the previous build.
+# Installed copies choose one in Help → Test a Pull Request… and follow it.
+# The release and its tag are removed when the pull request closes or loses
+# the label.
+#
+# CI (ci.yml) typechecks and tests the same push in parallel, so this only
+# builds. Tags `pr-<number>` are not versions, so beta installs never take
+# these builds. Fork pull requests never build: their token is read-only.
+name: Test build
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'test-build') &&
+      contains(fromJSON('["opened", "synchronize", "reopened", "labeled"]'), github.event.action) &&
+      (github.event.action != 'labeled' || github.event.label.name == 'test-build') &&
+      !vars.STRATUM_UPDATE_URL && !vars.STRATUM_UPDATE_OWNER && !vars.STRATUM_UPDATE_REPO
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # On the job, so skipped runs (other labels) never displace a waiting
+    # build. A run stopped while replacing files would leave the release
+    # half-updated, so runs queue; a newer push replaces a waiting one.
+    concurrency:
+      group: test-build-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      # Through the environment, never interpolated into scripts.
+      PR: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The pull request's own commit, not the merge preview.
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Tags for the version.
+          fetch-depth: 0
+          persist-credentials: false
+      # Uses the pnpm version pinned in package.json's packageManager.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Choose the version
+        shell: bash
+        run: |
+          version=$(node desktop/beta-version.mjs "$GITHUB_RUN_NUMBER" --pull-request "$PR")
+          echo "STRATUM_VERSION=$version" >> "$GITHUB_ENV"
+          echo "::notice::Building Stratum $version"
+      - run: pnpm desktop:build
+      - name: Package
+        shell: bash
+        run: node desktop/package.mjs
+        env:
+          STRATUM_COMMIT: ${{ github.event.pull_request.head.sha }}
+          STRATUM_BRANCH: ${{ github.event.pull_request.head.ref }}
+          STRATUM_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          # Signing happens only when these secrets exist; otherwise unsigned.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+      - name: Publish the test build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="pr-$PR"
+          dir=build/releases
+          exe="Stratum-Setup-$STRATUM_VERSION.exe"
+          for file in "$exe" "$exe.blockmap" latest.yml; do
+            if [ ! -f "$dir/$file" ]; then
+              echo "::error::$file was not built."
+              exit 1
+            fi
+          done
+          node desktop/test-build-notes.mjs > test-build-notes.md
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" \
+              >/dev/null 2>&1 || true
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$tag" -f sha="$HEAD_SHA" >/dev/null
+            gh release create "$tag" --verify-tag --prerelease \
+              --title "Test build: PR #$PR" --notes-file test-build-notes.md
+          fi
+          # The installer before the latest.yml naming it, so a copy never
+          # reads a latest.yml whose installer is missing.
+          gh release upload "$tag" "$dir/$exe" "$dir/$exe.blockmap" --clobber
+          gh release upload "$tag" "$dir/latest.yml" --clobber
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" \
+            -f sha="$HEAD_SHA" -F force=true >/dev/null
+          gh release edit "$tag" --prerelease \
+            --title "Test build: PR #$PR" --notes-file test-build-notes.md
+          # Earlier builds' installers.
+          gh release view "$tag" --json assets --jq '.assets[].name' |
+            while read -r name; do
+              case "$name" in
+                "$exe" | "$exe.blockmap" | latest.yml) ;;
+                *) gh release delete-asset "$tag" "$name" --yes ;;
+              esac
+            done
+          echo "::notice::Published Stratum $STRATUM_VERSION as $tag"
+
+  remove:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action == 'closed' ||
+        (github.event.action == 'unlabeled' && github.event.label.name == 'test-build'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: test-build-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Remove the test build
+        shell: bash
+        run: |
+          tag="pr-$PR"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$tag" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          fi
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" \
+            >/dev/null 2>&1 || true

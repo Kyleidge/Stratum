@@ -75,6 +75,7 @@ let window, desktopFiles, assistant;
 const updater = createUpdater({
   enabled: !isolated,
   beforeInstall: () => desktopFiles?.backupBeforeQuit(),
+  autoBackups: () => desktopFiles?.autoBackups() ?? false,
 });
 const downloads = [];
 const downloaded = new Set();
