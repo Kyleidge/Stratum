@@ -111,14 +111,25 @@ jobs:
             -f sha="$HEAD_SHA" -F force=true >/dev/null
           gh release edit "$tag" --prerelease \
             --title "Test build: PR #$PR" --notes-file test-build-notes.md
-          # Earlier builds' installers.
-          gh release view "$tag" --json assets --jq '.assets[].name' |
-            while read -r name; do
-              case "$name" in
-                "$exe" | "$exe.blockmap" | latest.yml) ;;
-                *) gh release delete-asset "$tag" "$name" --yes ;;
-              esac
-            done
+          # Earlier builds' installers go. The newest few of their blockmaps
+          # stay, so a copy on an earlier build downloads only changed blocks.
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+            --jq '.assets | sort_by(.created_at) | reverse | .[].name' |
+            {
+              kept=0
+              while read -r name; do
+                case "$name" in
+                  "$exe" | "$exe.blockmap" | latest.yml) ;;
+                  *.exe.blockmap)
+                    kept=$((kept + 1))
+                    if [ "$kept" -gt 5 ]; then
+                      gh release delete-asset "$tag" "$name" --yes
+                    fi
+                    ;;
+                  *) gh release delete-asset "$tag" "$name" --yes ;;
+                esac
+              done
+            }
           echo "::notice::Published Stratum $STRATUM_VERSION as $tag"
 
   remove:

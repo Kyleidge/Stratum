@@ -68,7 +68,8 @@ latest full release.
 1. Add the **`test-build`** label to the pull request. The **Test build**
    workflow (`.github/workflows/test-build.yml`) builds its Windows installer
    in about three minutes and publishes it as the prerelease `pr-<number>`
-   ("Test build: PR #<number>"). Every later push replaces that build.
+   ("Test build: PR #<number>"). Every later push replaces that build,
+   keeping the previous builds' blockmaps so updates download only changes.
    It does not typecheck or test again: CI checks the same push alongside.
 2. In Stratum, choose **Help → Test a Pull Request…**. It lists the test
    builds of open pull requests (from the repository itself, never forks)
