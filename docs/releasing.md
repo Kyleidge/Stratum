@@ -63,10 +63,55 @@ latest full release.
    quit.
 3. **Help → About Stratum** shows the version you are running.
 
-To try a branch before merging it, open **Actions → Release → Run
+### Test a pull request before merging it
+
+1. Add the **`test-build`** label to the pull request. The **Test build**
+   workflow (`.github/workflows/test-build.yml`) builds its Windows installer
+   in about three minutes and publishes it as the prerelease `pr-<number>`
+   ("Test build: PR #<number>"). Every later push replaces that build,
+   keeping the previous builds' blockmaps so updates download only changes.
+   It does not typecheck or test again: CI checks the same push alongside.
+2. In Stratum, choose **Help → Test a Pull Request…**. It lists the test
+   builds of open pull requests (from the repository itself, never forks)
+   with their branch, commit and age. Choosing one shows what it is, warns
+   if it raises a workspace, backup or workflow format version, says whether
+   an automatic backup will be made, and installs it after you confirm.
+3. From then on the copy follows only that pull request: each push
+   downloads its newer build and asks to restart. Help → Check for Updates…,
+   the hourly check and coming back to the window (at most every five
+   minutes) all look for it.
+4. To stop, choose **Help → Test a Pull Request… → Return to regular
+   updates**. Stratum installs the newest beta (or release, without beta
+   updates) even though it is a lower version. When the pull request is
+   merged or closed, the workflow removes its build and Stratum offers the
+   same return.
+
+Test build versions are `<version>-pr.<number>.<run>`, so they order by run
+within a pull request, and their tags (`pr-<number>`) are not versions, so
+beta installs never take them. The app follows one through a generic feed on
+`releases/download/pr-<number>/`, and sets electron-updater's channel
+explicitly (`beta` or `latest`) so the GitHub feed never picks a test
+build's release. `updates.json` records the followed pull request
+(`pullRequest`, or `null` after returning) and the format versions of the
+regular build left behind, for the warning when returning. A test build
+installed by hand from its release follows its own pull request.
+
+**Format versions.** If a pull request raises `WORKSPACE_SCHEMA_VERSION`, the
+test copy's workspace is upgraded in place once the test build opens it,
+and regular builds refuse it until the change is released. The app warns
+before switching either way; restore the backup made before switching (made
+automatically when automatic backups are on) to go back. Packaging records
+each build's format versions (`desktop/format-versions.mjs`) and its commit,
+branch and pull request in the app's `package.json`
+(`desktop/build-info.mjs`); **Help → About Stratum** shows where the build
+came from.
+
+The workflow file must be on the pull request's branch, so rebase branches
+made before it existed. To publish a branch as an ordinary beta instead,
+which every beta install then takes, open **Actions → Release → Run
 workflow**, choose the branch and tick **Publish a beta release of this
-branch**. Its beta number is higher than every earlier beta, so test copies
-take it; the next beta from `main` replaces it again.
+branch**. Its beta number is higher than every earlier beta; the next beta
+from `main` replaces it again.
 
 The workflow keeps the ten newest betas and deletes older ones with their
 tags. A run that fails after tagging removes its tag and release, so a beta
@@ -156,11 +201,13 @@ yourself. Never point the feed at a private repository: reading it
 would require a token inside every installed copy.
 
 At run time (`desktop/updater.mjs`) the installed app checks quietly ten
-seconds after startup, every hour and from **Help → Check for Updates…**,
+seconds after startup, every hour, on returning to the window (at most every
+five minutes) and from **Help → Check for Updates…**,
 downloads in the background, then asks to restart. **Help → Get Beta
 Updates** (stored in the profile's `updates.json`; on by default for a beta)
-sets electron-updater's `allowPrerelease`, so the copy takes the newest
-release, beta or stable. Choosing **Later** installs the update when
+sets electron-updater's `allowPrerelease` and the `beta` channel, so the
+copy takes the newest release, beta or stable, but never a pull request's
+test build. Choosing **Later** installs the update when
 Stratum quits. Updates are off for development runs, smoke tests, the report
 mockup, non-Windows builds and copies without the installer's uninstaller
 (such as `win-unpacked`).

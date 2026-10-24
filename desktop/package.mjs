@@ -9,7 +9,10 @@
 //                                      and latest.yml to the update feed
 //
 // STRATUM_VERSION overrides package.json's version (automatic betas, see
-// desktop/beta-version.mjs).
+// desktop/beta-version.mjs). The app's package.json also records the format
+// versions it writes and where it was built from (desktop/build-info.mjs):
+// STRATUM_COMMIT, STRATUM_BRANCH and STRATUM_PULL_REQUEST, by default the
+// GitHub Actions commit and ref.
 //
 // The renderer is pre-bundled in dist-desktop, so electron-builder packages a
 // minimal staged app: the main-process modules, dist-desktop, the icon and
@@ -21,6 +24,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { repositoryFormatVersions } from './format-versions.mjs';
 import {
   NOTICES_FILE,
   RUNTIME_DEPENDENCIES,
@@ -44,10 +48,23 @@ const BUILD_ONLY = new Set([
   'icons.mjs',
   'notices.mjs',
   'beta-version.mjs',
+  'format-versions.mjs',
+  'test-build-notes.mjs',
 ]);
 const version = env.STRATUM_VERSION || manifest.version;
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version))
   throw new Error(`Invalid version ${version}.`);
+
+/** Read by desktop/build-info.mjs; undefined entries are left out. */
+function buildMetadata() {
+  const pullRequest = Number(env.STRATUM_PULL_REQUEST);
+  return {
+    formats: repositoryFormatVersions(),
+    commit: env.STRATUM_COMMIT || env.GITHUB_SHA || undefined,
+    branch: env.STRATUM_BRANCH || env.GITHUB_REF_NAME || undefined,
+    pullRequest: pullRequest > 0 ? pullRequest : undefined,
+  };
+}
 
 async function stage() {
   // Outside the checkout, so electron-builder cannot mistake the staged app
@@ -91,6 +108,7 @@ async function stage() {
         license: manifest.license,
         type: 'module',
         main: 'desktop/main.mjs',
+        stratum: buildMetadata(),
         dependencies: Object.fromEntries(
           RUNTIME_DEPENDENCIES.map((name) => [
             name,

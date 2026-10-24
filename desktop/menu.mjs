@@ -1,5 +1,5 @@
 // The desktop application menu: File, Edit, View and Help (About, licences,
-// Check for updates…, Get Beta Updates). The workbench owns its own shortcuts (Ctrl+Z/Y/K/D,
+// Check for updates…, Get Beta Updates, Test a Pull Request…). The workbench owns its own shortcuts (Ctrl+Z/Y/K/D,
 // Alt+arrows, Escape), so Edit items show their usual keys without
 // registering them: Chromium keeps handling copy/paste in fields exactly as
 // it did with no menu, and no accelerator can swallow a workbench shortcut.
@@ -7,6 +7,7 @@ import { app, Menu, dialog, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildOrigin } from './build-info.mjs';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const ICON = fileURLToPath(new URL('./icons/icon.png', import.meta.url));
@@ -49,6 +50,7 @@ async function showAbout(window) {
     detail:
       'Signal workflow workbench. Your recordings and workspace stay on ' +
       'this device.\n\n' +
+      (buildOrigin() ? `${buildOrigin()}\n` : '') +
       `Electron ${process.versions.electron} · Chromium ${process.versions.chrome} · Node.js ${process.versions.node}\n\n` +
       'Copyright (c) 2026 Kyle Webb. Released under the MIT licence.\n' +
       'Stratum includes open-source software listed in its third-party notices.',
@@ -111,6 +113,14 @@ export function applicationMenu({ updater }) {
                 type: 'checkbox',
                 checked: updater.betaUpdates(),
                 click: (item) => void updater.setBetaUpdates(item.checked),
+              },
+            ]
+          : []),
+        ...(updater.testBuilds
+          ? [
+              {
+                label: 'Test a &Pull Request…',
+                click: () => void updater.chooseTestBuild(),
               },
             ]
           : []),

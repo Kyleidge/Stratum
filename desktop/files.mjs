@@ -499,5 +499,10 @@ export function registerDesktopFiles({ test } = {}) {
     timer.unref?.();
     window.on('closed', () => clearInterval(timer));
   }
-  return { attachWindow, backupBeforeQuit };
+  return {
+    attachWindow,
+    backupBeforeQuit,
+    /** Whether automatic backups are on (a folder is chosen). */
+    autoBackups: () => !!auto().folder,
+  };
 }

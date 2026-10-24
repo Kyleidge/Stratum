@@ -475,7 +475,11 @@ the user explicitly allows receives what its tools read.
   merge finished, checked work, and keep `main` releasable. When the user asks
   to test a branch, push it, then publish it as a beta with
   `gh workflow run release.yml --ref <branch> -f beta=true` (about 10 minutes;
-  the test copy installs the newest beta via Help → Check for Updates…). Say
+  the test copy installs the newest beta via Help → Check for Updates…).
+  Faster: the `test-build` label on a pull request publishes each push as
+  the prerelease `pr-<number>` (`.github/workflows/test-build.yml`, about
+  3 minutes), which the test copy picks in Help → Test a Pull Request… and
+  then follows (`desktop/test-builds.mjs`, `desktop/updater.mjs`). Say
   if the branch raises a workspace, backup or workflow format version: the
   test copy upgrades its workspace one way, so the user should back up first.
 - `app/globals.css`: Tailwind CSS v4 imports and the colour role tokens
