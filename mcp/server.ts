@@ -1,11 +1,14 @@
 /**
- * The Stratum MCP server: engine, workflow and UI tools for testing Stratum
- * quickly from an MCP client. Start it with `node mcp/start.mjs` (see
- * docs/mcp-server.md). New tool groups are added to TOOL_GROUPS.
+ * The developer harness: every tool, with a headless engine and UI sessions,
+ * started with `node mcp/start.mjs` from the repository (see
+ * docs/mcp-server.md). The user-facing server is `app-server.ts`. New tool
+ * groups go in TOOL_GROUPS (and in its USER_TOOL_GROUPS when they are for
+ * users).
  */
 import { fileURLToPath } from 'node:url';
 import { ServerContext } from './context';
-import { McpServer, type Tool } from './protocol';
+import { assemble, type ToolGroup } from './assemble';
+import { EngineBackend } from './engine-backend';
 import { referenceTools, resources } from './reference';
 import { inspectTools } from './tools/inspect';
 import { operationTools } from './tools/operations';
@@ -17,7 +20,7 @@ export const SERVER_NAME = 'stratum';
 export const SERVER_VERSION = '1.0.0';
 
 /** Every tool group; each is a function of the shared context. */
-export const TOOL_GROUPS: ((context: ServerContext) => Tool[])[] = [
+export const TOOL_GROUPS: ToolGroup[] = [
   workspaceTools,
   inspectTools,
   operationTools,
@@ -35,15 +38,13 @@ Two places to work:
 Typical flow: stratum_status → load_example or import_recording → list_history/describe for IDs → derive / calculate_values / segment (preview first if unsure) → read_samples, signal_statistics or plot to check → edit_step/delete_step/undo. catalog lists every operation and setting. engine_request sends any raw worker request. Relative paths are from the repository root; outputs go to outputs/mcp/.`;
 
 export function createServer(root: string) {
-  const context = new ServerContext(root);
-  const server = new McpServer({
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-    instructions: INSTRUCTIONS,
-  });
-  for (const group of TOOL_GROUPS) server.addTools(group(context));
-  server.addResources(resources(context));
-  server.onClose(() => context.closeAll());
+  const context = new ServerContext('developer', new EngineBackend(), root);
+  const server = assemble(
+    context,
+    { name: SERVER_NAME, version: SERVER_VERSION, instructions: INSTRUCTIONS },
+    TOOL_GROUPS,
+    resources(context),
+  );
   return { server, context };
 }
 

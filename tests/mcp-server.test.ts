@@ -182,7 +182,7 @@ void test('MCP engine tools create, inspect, edit and undo steps', async () => {
   );
   const requests = await call('catalog', { section: 'requests' });
   assert.match(String(requests.EngineRequest), /'derive-many'/);
-  context.engine.close();
+  context.primary.close?.();
 });
 
 void test('MCP batch runs report the expected item statuses', async () => {

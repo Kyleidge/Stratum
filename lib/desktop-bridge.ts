@@ -41,6 +41,17 @@ export type AutoBackupSettings = {
 export type AutoBackupReason = 'close' | 'interval' | 'manual';
 export type AutoBackupRequest = { id: number; reason: AutoBackupReason };
 
+/** AI assistant access, as the main process reports it. */
+export type AssistantStatus = {
+  enabled: boolean;
+  /** Assistants connected now. */
+  connections: number;
+  /** How an MCP client starts Stratum's assistant server. */
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+};
+
 export type StratumDesktop = {
   version: 1;
   saveFile(options: {
@@ -80,6 +91,18 @@ export type StratumDesktop = {
     dismissNotice(): Promise<void>;
     /** Main asks for a backup (on close or after a period of changes). */
     onRequest(callback: (request: AutoBackupRequest) => void): () => void;
+  };
+  assistant?: {
+    settings(): Promise<AssistantStatus>;
+    setEnabled(enabled: boolean): Promise<AssistantStatus>;
+    onStatus(callback: (status: AssistantStatus) => void): () => void;
+    /** Answers calls from a connected assistant (lib/assistant-host.ts). */
+    onCall(
+      handler: (call: {
+        method: import('./assistant-protocol').AssistantMethod;
+        params?: Record<string, unknown>;
+      }) => Promise<unknown>,
+    ): () => void;
   };
 };
 
